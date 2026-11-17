@@ -49,7 +49,7 @@
       ? "Phone address: " + status.addresses.join(" or ") + ". "
       : "This PC has no network address a phone could use right now. ") + (status.httpsNote || "");
     $("warn").textContent = status.https
-      ? "The first time, the phone warns that the connection is not private. That is expected: this PC made its own certificate. Tap Advanced, then Proceed (Safari: Show Details, then visit this website)."
+      ? "The first time, the phone warns that the connection is not private. That is expected: the link is encrypted, but only this PC vouches for it, not a known company. Tap Advanced, then Proceed (Safari: Show Details, then visit this website)."
       : "The link to the phone is not encrypted. Use it only on a network you trust.";
   }
 

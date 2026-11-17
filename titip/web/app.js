@@ -167,15 +167,22 @@
     return node;
   }
 
-  function shortTime(iso) {
+  function dayStart(date) { return new Date(date.getFullYear(), date.getMonth(), date.getDate()); }
+
+  // The heading over a day's mail: Today, Yesterday, then the date in full.
+  function dayLabel(iso) {
     if (!iso) return "";
     var date = new Date(iso);
-    var now = new Date();
-    var days = Math.floor((new Date(now.getFullYear(), now.getMonth(), now.getDate()) -
-      new Date(date.getFullYear(), date.getMonth(), date.getDate())) / 86400000);
-    if (days <= 0) return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    if (days < 7) return date.toLocaleDateString([], { weekday: "short" });
-    return date.toLocaleDateString([], { day: "numeric", month: "short" });
+    var days = Math.round((dayStart(new Date()) - dayStart(date)) / 86400000);
+    if (days <= 0) return "Today";
+    if (days === 1) return "Yesterday";
+    var options = { weekday: "long", day: "numeric", month: "long" };
+    if (date.getFullYear() !== new Date().getFullYear()) options.year = "numeric";
+    return date.toLocaleDateString([], options);
+  }
+
+  function clockTime(iso) {
+    return iso ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
   }
 
   function longTime(iso) {
@@ -202,10 +209,28 @@
   function hideToast() { clearTimeout(toastTimer); $("toast").hidden = true; }
 
   // ------------------------------------------------------------ list
-  function showState(title, detail, retry) {
+  var SEALS = {
+    mail: "M4 6h16v12H4z M4 7l8 6 8-6",
+    search: "M11 4.5a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13z M16 16l5 5",
+    away: "M4 5h16v11H4z M9 20h6 M12 16v4 M3 3l18 18"
+  };
+
+  // Each state of the list gets a postmark: a ring with one small drawing, then plain words.
+  function showState(title, detail, retry, seal) {
     var box = $("state");
     box.textContent = "";
     if (!title) return;
+    if (seal) {
+      var ring = el("span", "seal");
+      var drawing = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      drawing.setAttribute("viewBox", "0 0 24 24");
+      drawing.setAttribute("aria-hidden", "true");
+      var stroke = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      stroke.setAttribute("d", SEALS[seal]);
+      drawing.appendChild(stroke);
+      ring.appendChild(drawing);
+      box.appendChild(ring);
+    }
     box.appendChild(el("strong", "", title));
     if (detail) box.appendChild(document.createTextNode(detail));
     if (retry) {
@@ -231,7 +256,10 @@
   function renderRows() {
     var list = $("rows");
     list.textContent = "";
+    var day = null;
     view.rows.forEach(function (mail) {
+      var label = dayLabel(mail.time);
+      if (label !== day) { day = label; if (label) list.appendChild(el("li", "day", label)); }
       var item = el("li");
       var unread = view.folder === "inbox" && mail.unread && opened.indexOf(mail.id) < 0;
       var row = el("button", "row" + (unread ? " unread" : ""));
@@ -240,7 +268,7 @@
       row.appendChild(el("span", "mark"));
       var who = view.folder === "inbox" ? mail.from : (mail.to ? "To " + mail.to : "(no recipient yet)");
       row.appendChild(el("span", "who", who));
-      row.appendChild(el("span", "time", shortTime(mail.time)));
+      row.appendChild(el("span", "time", clockTime(mail.time)));
       var subject = el("span", "subject");
       if (unread) subject.appendChild(el("span", "sr", "Unread. "));
       if (mail.attachments) {
@@ -263,9 +291,9 @@
     });
     $("more").hidden = !view.more;
     if (!view.rows.length) {
-      if (view.query) showState("No match", "Nothing in " + FOLDERS[view.folder] + " matches \u201c" + view.query + "\u201d.");
-      else if (view.folder === "drafts") showState("No drafts", "Mail you save from the phone waits here, and in Outlook's Drafts.");
-      else showState("Nothing here yet", "New mail shows up on its own once a minute.");
+      if (view.query) showState("No match", "Nothing in " + FOLDERS[view.folder] + " matches \u201c" + view.query + "\u201d. Search looks at the subject and the person, not the text.", false, "search");
+      else if (view.folder === "drafts") showState("No drafts", "Mail you save from the phone waits here, and in Outlook's Drafts.", false, "mail");
+      else showState("Nothing here yet", "New mail shows up on its own once a minute.", false, "mail");
     } else {
       showState("");
     }
@@ -287,7 +315,7 @@
       renderRows();
     }).catch(function (error) {
       if (silent) return;
-      if (!append) { $("rows").textContent = ""; showState("Can't show your mail", error.message, true); }
+      if (!append) { $("rows").textContent = ""; showState("Can't show your mail", error.message + " Titip tries again on its own every minute.", true, "away"); }
       else toast(error.message);
     }).then(function () {
       view.loading = false;
@@ -321,7 +349,7 @@
         'style-src \'unsafe-inline\'; img-src data:">' +
         '<style>body{margin:12px;font:15px/1.5 system-ui,sans-serif;color:#16202b;background:#fff;overflow-wrap:anywhere}' +
         'img{max-width:100%;height:auto}table{border-collapse:collapse;overflow-wrap:normal;word-break:normal}' +
-        'td,th{padding:4px 10px 4px 0;text-align:left;vertical-align:top}</style>' + item.html;
+        'td,th{padding:4px 10px 4px 0;text-align:left;vertical-align:top}th{white-space:nowrap}</style>' + item.html;
       frame.onload = function () {
         try { frame.style.height = Math.min(frame.contentDocument.documentElement.scrollHeight + 24, 20000) + "px"; }
         catch (error) { frame.style.height = "70vh"; }

@@ -14,11 +14,16 @@
 <body>
 <header class="bar">
   <h1 class="brand"><img src="icon.svg" alt="" width="26" height="26">Titip</h1>
-  <nav class="tabs" aria-label="Folders">
-    <a href="#/inbox" data-folder="inbox">Inbox</a>
-    <a href="#/sent" data-folder="sent">Sent</a>
-    <a href="#/drafts" data-folder="drafts">Drafts<span class="count" id="draftCount" hidden></span></a>
-  </nav>
+  <div class="dock">
+    <nav class="tabs" aria-label="Folders">
+      <a href="#/inbox" data-folder="inbox">Inbox</a>
+      <a href="#/sent" data-folder="sent">Sent</a>
+      <a href="#/drafts" data-folder="drafts">Drafts<span class="count" id="draftCount" hidden></span></a>
+    </nav>
+    <button class="write" id="write" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/></svg>Write
+    </button>
+  </div>
   <div class="tools">
     <button class="icon" id="searchToggle" type="button" aria-label="Search mail" aria-expanded="false" aria-controls="searchBox">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/></svg>
@@ -44,6 +49,7 @@
     <div class="state" id="state" role="status"></div>
     <ul id="rows"></ul>
     <button class="more" id="more" type="button" hidden>Show older mail</button>
+    <p class="served" id="served">Served by your own PC. Only phones you paired can open it.</p>
   </section>
 
   <article class="reader" id="reader" aria-live="polite">
@@ -72,10 +78,6 @@
     </div>
   </article>
 </main>
-
-<button class="write" id="write" type="button">
-  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/></svg>Write
-</button>
 
 <section class="composer" id="composer" role="dialog" aria-labelledby="composeTitle" hidden>
   <div class="stripe" aria-hidden="true"></div>

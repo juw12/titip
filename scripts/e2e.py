@@ -151,6 +151,8 @@ def main() -> None:
             page.fill("#bodyInput", "Thursday works.")
             page.click("#send")
             check(page.inner_text("#composeError") == "Add at least one recipient.", "sending without a recipient is stopped")
+            page.fill("#subjectInput", "Drop test")
+            page.screenshot(path=SHOTS / "phone-new.png")
             page.fill("#toInput", "jonas.weber@lumenworks.example")
             page.fill("#subjectInput", "Drop test")
             page.click("#saveDraft")
