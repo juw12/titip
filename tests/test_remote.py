@@ -362,5 +362,82 @@ class MailFromAnywhere(unittest.TestCase):
             link.mail_step()
 
 
+
+class WaysOut(unittest.TestCase):
+    """A dead proxy or a different network must not cut the PC off from the relay."""
+
+    PROXY, OFFICE, STRAIGHT = {"https": "http://localhost:3128"}, {"https": "http://proxy.office:80"}, {}
+
+    def setUp(self):
+        remote._good_way[0] = 0
+        self.addCleanup(remote._good_way.__setitem__, 0, 0)
+        self.tried, self.requests = [], []
+
+    def ask(self, behaviour, ways=None):
+        def open_with(way, request):
+            self.tried.append(way)
+            self.requests.append(request)
+            result = behaviour(way)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        return remote.http("GET", "https://relay.example/c/x/state", ways=lambda: ways or [self.PROXY, self.OFFICE, self.STRAIGHT],
+                           open_with=open_with)
+
+    def test_the_first_way_is_used_when_it_works(self):
+        self.assertEqual(self.ask(lambda way: (200, b"sealed")), (200, b"sealed"))
+        self.assertEqual(self.tried, [self.PROXY])
+
+    def test_a_dead_proxy_is_passed_over_and_not_tried_first_again(self):
+        refused = ConnectionRefusedError("nothing listens there")
+        behaviour = lambda way: refused if way == self.PROXY else (200, b"sealed")  # noqa: E731
+        self.assertEqual(self.ask(behaviour), (200, b"sealed"))
+        self.assertEqual(self.tried, [self.PROXY, self.OFFICE])
+        self.tried.clear()
+        self.assertEqual(self.ask(behaviour), (200, b"sealed"))
+        self.assertEqual(self.tried, [self.OFFICE])  # the one that worked goes first now
+
+    def test_when_the_remembered_way_stops_working_the_others_are_tried(self):
+        remote._good_way[0] = 1
+        behaviour = lambda way: (200, b"sealed") if way == self.STRAIGHT else OSError("unknown host")  # noqa: E731
+        self.assertEqual(self.ask(behaviour), (200, b"sealed"))
+        self.assertEqual(self.tried, [self.OFFICE, self.PROXY, self.STRAIGHT])
+        self.assertEqual(remote._good_way[0], 2)
+
+    def test_a_proxy_that_wants_a_password_counts_as_no_way(self):
+        import urllib.error
+
+        wants_password = urllib.error.HTTPError("https://relay.example", 407, "Proxy Authentication Required", None, None)
+        behaviour = lambda way: wants_password if way == self.OFFICE else OSError("refused") if way == self.PROXY else (200, b"ok")  # noqa: E731
+        self.assertEqual(self.ask(behaviour), (200, b"ok"))
+        self.assertEqual(len(self.tried), 3)
+
+    def test_what_the_relay_refuses_is_an_answer_not_a_reason_to_go_another_way(self):
+        import urllib.error
+
+        refused = urllib.error.HTTPError("https://relay.example", 403, "Forbidden", None, None)
+        self.assertEqual(self.ask(lambda way: refused), (403, b""))
+        self.assertEqual(self.tried, [self.PROXY])
+
+    def test_no_way_at_all_is_an_error_the_caller_reports(self):
+        with self.assertRaises(OSError):
+            self.ask(lambda way: OSError("refused"))
+        self.assertEqual(len(self.tried), 3)
+
+    def test_every_way_gets_a_request_of_its_own(self):
+        # urllib writes the proxy into the request it sends; a second way must not inherit the first one's
+        with self.assertRaises(OSError):
+            self.ask(lambda way: OSError("refused"))
+        self.assertEqual(len({id(request) for request in self.requests}), 3)
+        self.assertTrue(all(request.host == "relay.example" for request in self.requests))
+
+    def test_the_ways_are_different_from_each_other_and_end_with_straight_out(self):
+        ways = remote.ways_out()
+        self.assertEqual(ways[-1], {})
+        self.assertEqual(len(ways), len({json.dumps(way, sort_keys=True) for way in ways}))
+        self.assertTrue(all(set(way) <= {"http", "https"} for way in ways))
+
+
 if __name__ == "__main__":
     unittest.main()
