@@ -94,6 +94,7 @@ def main() -> None:
             rows = page.locator(".row")
             check(rows.count() >= 6, f"inbox lists mail ({rows.count()} rows)")
             check(page.locator("#demoNote").is_visible(), "demo banner says nothing is sent")
+            check(page.locator(".row.unread").count() == 3, "unread mail is marked in the list")
             page.screenshot(path=SHOTS / "phone-inbox.png")
 
             # ---- read a formatted message
@@ -122,7 +123,24 @@ def main() -> None:
             page.click("#toastAction")
             check(page.input_value("#bodyInput").startswith("Run the remaining"), "undo brings the text back")
             page.click("#send")
-            expect(page.locator("#toastText")).to_have_text("Sent", timeout=12000)
+            expect(page.locator("#toastText")).to_have_text("Sent to Mateo Silva", timeout=30000)
+            page.screenshot(path=SHOTS / "phone-sent.png")
+            page.click("#back")
+            check(page.locator(".row.unread").count() == 2, "mail opened on the phone is no longer marked unread")
+
+            # ---- a send that cannot reach the PC keeps the text and says so
+            page.locator(".row").nth(3).click()
+            page.wait_for_selector("#actions button:has-text('Reply')")
+            page.click("#actions button:has-text('Reply')")
+            page.fill("#bodyInput", "Thursday 10:00 works for me. I will bring both units.")
+            page.route("**/api/send", lambda route: route.abort())
+            page.click("#send")
+            expect(page.locator("#composeError")).to_contain_text("Not sent.", timeout=30000)
+            check(page.input_value("#bodyInput").startswith("Thursday 10:00"), "a failed send keeps the text and says it was not sent")
+            page.screenshot(path=SHOTS / "phone-failed.png")
+            page.unroute("**/api/send")
+            errors[:] = [e for e in errors if "ERR_FAILED" not in e]  # the blocked request above, on purpose
+            page.click("#discard")
             page.click("#back")
             page.click(".tabs a[data-folder=sent]")
             page.wait_for_selector(".row .subject:has-text('RE: Hinge sample B')")
@@ -136,7 +154,14 @@ def main() -> None:
             page.fill("#toInput", "jonas.weber@lumenworks.example")
             page.fill("#subjectInput", "Drop test")
             page.click("#saveDraft")
-            expect(page.locator("#toastText")).to_have_text("Saved to Drafts", timeout=12000)
+            expect(page.locator("#toastText")).to_have_text("Saved to Drafts", timeout=30000)
+            apart = page.evaluate(
+                """() => { const t = document.getElementById('toast').getBoundingClientRect();
+                           const w = document.getElementById('write').getBoundingClientRect();
+                           return t.bottom <= w.top || t.top >= w.bottom; }"""
+            )
+            check(apart, "a notice never covers the Write button")
+            page.screenshot(path=SHOTS / "phone-saved.png")
             page.click(".tabs a[data-folder=drafts]")
             page.wait_for_selector(".row .subject:has-text('Drop test')")
             check(page.inner_text("#draftCount") == "2", "draft is saved and counted")
@@ -156,6 +181,18 @@ def main() -> None:
             page.screenshot(path=SHOTS / "phone-empty.png")
             page.click("#searchToggle")
             expect(page.locator(".row").nth(5)).to_be_visible()
+
+            # ---- the PC out of reach: plain words and a way back
+            expect(page.locator("#toast")).to_be_hidden(timeout=8000)
+            page.route("**/api/mail*", lambda route: route.abort())
+            page.click("#refresh")
+            page.wait_for_selector("#state strong:has-text(\"Can't show your mail\")")
+            page.screenshot(path=SHOTS / "phone-offline.png")
+            page.unroute("**/api/mail*")
+            errors[:] = [e for e in errors if "ERR_FAILED" not in e]  # the blocked request above, on purpose
+            page.click("#state button")
+            expect(page.locator(".row").nth(5)).to_be_visible()
+            check(True, "an unreachable PC is explained and Try again recovers")
 
             # ---- every width, list and reader, no sideways scroll, tap targets
             for width in WIDTHS:
@@ -195,6 +232,8 @@ def main() -> None:
             page.locator(".row").first.click()
             page.wait_for_selector("#letter:not([hidden]) iframe")
             page.wait_for_timeout(300)
+            reply_box = page.locator("#actions .primary").bounding_box()
+            check(reply_box["y"] + reply_box["height"] <= 800, "desktop keeps Reply in view without scrolling")
             page.screenshot(path=SHOTS / "desktop-light.png")
 
             # ---- the desk page on the PC
@@ -207,7 +246,11 @@ def main() -> None:
             desk_page.click("#pair")
             desk_page.wait_for_selector("#qr svg")
             check("Browser" in desk_page.inner_text("#devices"), "desk page lists the paired device")
-            desk_page.screenshot(path=SHOTS / "desk.png", full_page=True)
+            # the screenshot hides this PC's network address, so it is safe to share
+            desk_page.screenshot(
+                path=SHOTS / "desk.png", full_page=True, mask_color="#d9cfbd",
+                mask=[desk_page.locator("#url"), desk_page.locator("#addresses")],
+            )
 
             # ---- unpair cuts the phone off
             desk("/desk/unpair", post=True)

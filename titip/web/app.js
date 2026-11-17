@@ -14,7 +14,7 @@
   var draft = null;       // what the composer is writing: {mode, id, title, note}
   var pending = null;     // a send waiting out its undo window
   var store = safeStorage();
-  var seenAtStart = store.get("titip.seen") || new Date().toISOString();
+  var opened = openedHere();   // ids of mail read on this phone; Outlook keeps its own unread flag
 
   // ------------------------------------------------------------ storage that cannot throw
   function safeStorage() {
@@ -34,6 +34,18 @@
         drop: function (key) { delete memory[key]; }
       };
     }
+  }
+
+  function openedHere() {
+    var ids = [];
+    try { ids = JSON.parse(store.get("titip.opened") || "[]"); } catch (error) { ids = []; }
+    return Array.isArray(ids) ? ids : [];
+  }
+  function markOpened(id) {
+    if (opened.indexOf(id) >= 0) return;
+    opened.push(id);
+    if (opened.length > 300) opened = opened.slice(-300);
+    store.set("titip.opened", JSON.stringify(opened));
   }
 
   // ------------------------------------------------------------ the two back ends: your PC, or the demo
@@ -104,7 +116,7 @@
           more: rows.length > offset + PAGE,
           mail: rows.slice(offset, offset + PAGE).map(function (mail) {
             return {
-              id: mail.id, subject: mail.subject, from: mail.from, to: mail.to, time: mail.time,
+              id: mail.id, subject: mail.subject, from: mail.from, to: mail.to, time: mail.time, unread: !!mail.unread,
               attachments: mail.attachments.length > 0, preview: mail.body.replace(/\s+/g, " ").slice(0, 180)
             };
           })
@@ -185,7 +197,7 @@
     button.textContent = actionLabel || "";
     button.onclick = action || null;
     $("toast").hidden = false;
-    if (!stay) toastTimer = setTimeout(hideToast, 4000);
+    if (!stay) toastTimer = setTimeout(hideToast, 5000);
   }
   function hideToast() { clearTimeout(toastTimer); $("toast").hidden = true; }
 
@@ -221,8 +233,8 @@
     list.textContent = "";
     view.rows.forEach(function (mail) {
       var item = el("li");
-      var isNew = view.folder === "inbox" && mail.time > seenAtStart;
-      var row = el("button", "row" + (isNew ? " new" : ""));
+      var unread = view.folder === "inbox" && mail.unread && opened.indexOf(mail.id) < 0;
+      var row = el("button", "row" + (unread ? " unread" : ""));
       row.type = "button";
       if (mail.id === view.id) row.setAttribute("aria-current", "true");
       row.appendChild(el("span", "mark"));
@@ -230,7 +242,7 @@
       row.appendChild(el("span", "who", who));
       row.appendChild(el("span", "time", shortTime(mail.time)));
       var subject = el("span", "subject");
-      if (isNew) subject.appendChild(el("span", "sr", "New. "));
+      if (unread) subject.appendChild(el("span", "sr", "Unread. "));
       if (mail.attachments) {
         var clip = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         clip.setAttribute("viewBox", "0 0 24 24");
@@ -308,7 +320,8 @@
       frame.srcdoc = '<base target="_blank"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; ' +
         'style-src \'unsafe-inline\'; img-src data:">' +
         '<style>body{margin:12px;font:15px/1.5 system-ui,sans-serif;color:#16202b;background:#fff;overflow-wrap:anywhere}' +
-        'img{max-width:100%;height:auto}</style>' + item.html;
+        'img{max-width:100%;height:auto}table{border-collapse:collapse;overflow-wrap:normal;word-break:normal}' +
+        'td,th{padding:4px 10px 4px 0;text-align:left;vertical-align:top}</style>' + item.html;
       frame.onload = function () {
         try { frame.style.height = Math.min(frame.contentDocument.documentElement.scrollHeight + 24, 20000) + "px"; }
         catch (error) { frame.style.height = "70vh"; }
@@ -321,6 +334,7 @@
 
   function openItem(id) {
     view.id = id;
+    markOpened(id);
     document.body.classList.add("reading");
     $("readerHint").hidden = true;
     $("letter").hidden = true;
@@ -396,7 +410,7 @@
     if (saved) {
       draft = saved.draft;
     } else {
-      draft = { mode: mode, id: source ? source.id : "", title: TITLES[mode], note: composerNote(mode, source) };
+      draft = { mode: mode, id: source ? source.id : "", title: TITLES[mode], note: composerNote(mode, source), who: source ? source.from : "" };
       if (mode === "draft") fields = { to: source.to, cc: source.cc, subject: source.subject, body: source.body };
     }
     var answering = draft.mode === "reply" || draft.mode === "replyAll";
@@ -473,18 +487,30 @@
     tick();
   }
 
+  function sentText(payload, values) {
+    var who = values.draft.who;
+    if (payload.mode === "reply" && !who) return "Reply sent";
+    if (payload.mode === "replyAll") return who ? "Sent to " + who + " and everyone else on the message" : "Reply sent to everyone";
+    if (payload.mode !== "reply") {
+      var people = values.to.split(/[;,]/).map(function (part) { return part.trim(); }).filter(Boolean);
+      if (!people.length) return "Sent";
+      who = people[0] + (people.length > 1 ? " and " + (people.length - 1) + " more" : "");
+    }
+    return "Sent to " + who;
+  }
+
   function deliver(payload, values) {
     toast(payload.action === "draft" ? "Saving\u2026" : "Sending\u2026", "", null, true);
     api.send(payload).then(function (result) {
       store.drop("titip.compose");
-      toast(result.saved ? "Saved to Drafts" : "Sent");
+      toast(result.saved ? "Saved to Drafts" : sentText(payload, values));
       refreshCounts();
       if (view.folder !== "inbox") load(false, true);
       if (payload.mode === "draft") location.hash = "#/" + view.folder;
     }).catch(function (error) {
       hideToast();
       openComposer("", null, values);
-      showComposeError(error.message);
+      showComposeError((payload.action === "draft" ? "Not saved. " : "Not sent. ") + error.message + " Your text is still here.");
     });
   }
 
@@ -564,11 +590,8 @@
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) {
       if (pending) { clearTimeout(pending.timer); var job = pending; pending = null; deliver(job.payload, job.values); }
-      var newest = view.folder === "inbox" && view.rows[0] ? view.rows[0].time : "";
-      if (newest && newest > (store.get("titip.seen") || "")) store.set("titip.seen", newest);
     }
   });
-  if (!store.get("titip.seen")) store.set("titip.seen", seenAtStart);
 
   setInterval(function () {
     if (!document.hidden && !view.query && view.rows.length <= PAGE && $("composer").hidden) load(false, true);
