@@ -240,7 +240,7 @@ class BusyOutlook(unittest.TestCase):
         box = OutlookMailbox()
         box._do = lambda fn, *args, timeout=20: {"ok": True, "counts": {"inbox": 3}}
         self.assertEqual(box.quick_state()["counts"]["inbox"], 3)
-        box._state_cache = (0.0, box._state_cache[1])  # long ago
+        box._state_cache = (time.monotonic() - 3600, box._state_cache[1])  # long ago, also on a PC that just started
 
         def busy(fn, *args, timeout=20):
             raise OutlookBusy()
