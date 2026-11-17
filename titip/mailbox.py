@@ -9,6 +9,7 @@ Both expose the same five calls: state, list, get, attachment, send.
 
 from __future__ import annotations
 
+import collections
 import datetime as dt
 import hashlib
 import html
@@ -28,6 +29,22 @@ STATE_SECONDS = 10
 READ_SECONDS = 20  # how long the phone waits for Outlook before it is told "busy"
 SEND_SECONDS = 120
 REFRESH_SECONDS = 300  # the PC page's own look at Outlook runs in the background and may wait this long
+
+# Copies kept in memory only (never on disk, gone when Titip stops), so a tap on the phone does not
+# have to wait for Outlook's one busy thread: the first page of each folder and the messages on it.
+ASK_SECONDS = 120  # a read stays in Outlook's queue this long, also after the phone stopped waiting
+QUICK_SECONDS = 3  # with a copy in hand, wait only this long for a newer answer
+LIST_FRESH_SECONDS = 10  # a first page this new is shown without asking Outlook again
+KEEP_MESSAGES = 120
+KEEP_CHARACTERS = 40_000_000
+KEEP_ROWS = 3000  # listed messages remembered, to find one again after it was moved
+MAX_ASKING = 12  # reads waiting for Outlook at one time
+PAGE = 40  # the phone's page size, until it asks for another
+WARM_SECONDS = 600  # keep the copies up to date this long after the phone last asked for anything
+WARM_EVERY = 30
+WARM_PAUSE = 0.2  # between two questions, so Outlook's own window gets its turn
+WARM_MESSAGES = {"inbox": 25, "sent": 10, "drafts": 5}  # newest messages read ahead in each folder
+FIND_AGAIN_ROWS = 100
 
 PROP = "http://schemas.microsoft.com/mapi/proptag/"
 P_DELIVERED = PROP + "0x0E060040"  # PR_MESSAGE_DELIVERY_TIME (UTC)
@@ -169,6 +186,17 @@ class _ComThread:
         raise value
 
 
+class _Ask:
+    """One question to Outlook that any number of callers may be waiting for."""
+
+    __slots__ = ("done", "value", "error")
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.value = None
+        self.error: Exception | None = None
+
+
 def _utc_iso(value) -> str:
     """A COM date read through a MAPI property tag is UTC; pywin32 hands it over as a datetime."""
     try:
@@ -182,7 +210,8 @@ def _utc_iso(value) -> str:
 class OutlookMailbox:
     demo = False
 
-    def __init__(self):
+    def __init__(self, read_ahead: bool = True):
+        self._read_ahead = read_ahead
         self._thread: _ComThread | None = None
         self._app = None
         self._ns = None
@@ -192,6 +221,17 @@ class OutlookMailbox:
         self._state_problem: MailError | None = None
         self._refresh: threading.Thread | None = None
         self._refresh_lock = threading.Lock()
+        # copies in memory (see the constants at the top); every change happens under _lock
+        self._lock = threading.Lock()
+        self._asking: dict[tuple, _Ask] = {}
+        self._lists: dict[tuple, tuple[float, str, dict]] = {}  # (folder, limit) -> (monotonic, UTC time, page)
+        self._messages: collections.OrderedDict[str, dict] = collections.OrderedDict()
+        self._kept_characters = 0
+        self._rows: collections.OrderedDict[str, tuple] = collections.OrderedDict()  # id -> (folder, time, subject, from)
+        self._moved: dict[str, str] = {}  # id the phone still holds -> id the message has now
+        self._page = PAGE
+        self._phone_at = 0.0
+        self._warmer: threading.Thread | None = None
 
     # every public method hops to the COM thread and maps COM failures to MailError
     def _do(self, fn, *args, timeout: float = READ_SECONDS):
@@ -270,6 +310,108 @@ class OutlookMailbox:
         self._folders[name] = found
         return found
 
+    # -------------------------------------------------- one question per thing, and the copies it leaves
+    def _shared(self, key: tuple, fn, *args, wait: float):
+        """Ask Outlook once for `key`, however many callers want it, and wait up to `wait` seconds.
+
+        The question stays in Outlook's queue for ASK_SECONDS even when every caller has given up, and
+        its answer is kept as a copy. So while Outlook is busy the phone's next try does not start
+        again at the back of the queue: it gets the answer the moment Outlook gives it.
+        Reads only. A send never comes through here.
+        """
+        with self._lock:
+            ask = self._asking.get(key)
+            if ask is None:
+                if len(self._asking) >= MAX_ASKING:
+                    raise OutlookBusy()
+                ask = self._asking[key] = _Ask()
+                threading.Thread(target=self._answer, args=(key, ask, fn, args), daemon=True, name="titip-ask").start()
+        if not ask.done.wait(wait):
+            raise OutlookBusy()
+        if ask.error is not None:
+            raise ask.error
+        return ask.value
+
+    def _answer(self, key: tuple, ask: _Ask, fn, args: tuple) -> None:
+        try:
+            ask.value = self._do(fn, *args, timeout=ASK_SECONDS)
+            self._keep(key, ask.value)
+        except MailError as error:
+            ask.error = error
+        except Exception:
+            ask.error = MailError("Outlook could not be reached on this PC.")
+        finally:
+            with self._lock:
+                self._asking.pop(key, None)
+            ask.done.set()
+
+    def _keep(self, key: tuple, value: dict) -> None:
+        with self._lock:
+            if key[0] == "list":
+                stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                self._lists[key[1:]] = (time.monotonic(), stamp, value)
+                return
+            self._drop_message(key[1])
+            self._drop_message(value["id"])
+            size = len(value.get("html") or "") + len(value.get("body") or "")
+            if size > KEEP_CHARACTERS // 4:
+                return  # one huge message is not worth pushing all the others out
+            self._messages[value["id"]] = value
+            self._kept_characters += size
+            while len(self._messages) > KEEP_MESSAGES or self._kept_characters > KEEP_CHARACTERS:
+                self._drop_message(next(iter(self._messages)))
+
+    def _drop_message(self, mail_id: str) -> None:  # call with _lock held
+        old = self._messages.pop(mail_id, None)
+        if old is not None:
+            self._kept_characters -= len(old.get("html") or "") + len(old.get("body") or "")
+
+    def _kept_message(self, mail_id: str) -> dict | None:
+        with self._lock:
+            kept = self._messages.get(self._moved.get(mail_id, mail_id))
+            if kept is not None:
+                self._messages.move_to_end(kept["id"])
+            return kept
+
+    def _phone_asked(self) -> None:
+        """A phone is in use: keep the copies up to date for the next few minutes."""
+        self._phone_at = time.monotonic()
+        if not self._read_ahead:
+            return
+        with self._lock:
+            if self._warmer is None or not self._warmer.is_alive():
+                self._warmer = threading.Thread(target=self._warm, daemon=True, name="titip-warm")
+                self._warmer.start()
+
+    def _warm(self) -> None:
+        """Read the first page of each folder and its newest messages ahead of the phone.
+
+        Runs only while a phone is in use (so Titip never starts Outlook by itself), one small
+        question at a time with a pause in between. A received or sent message is read once; a draft
+        again when it changed.
+        """
+        draft_read_at: dict[str, str] = {}  # draft id -> its "last changed" time when it was read
+        while time.monotonic() - self._phone_at < WARM_SECONDS:
+            try:
+                for folder in FOLDERS:
+                    page = self._shared(("list", folder, self._page), self._list, folder, self._page, 0, "", wait=ASK_SECONDS)
+                    for row in page["mail"][: WARM_MESSAGES[folder]]:
+                        kept = self._kept_message(row["id"])
+                        if kept is not None and (folder != "drafts" or draft_read_at.get(row["id"]) == row["time"]):
+                            continue
+                        time.sleep(WARM_PAUSE)
+                        try:
+                            self._shared(("item", row["id"]), self._get, row["id"], wait=ASK_SECONDS)
+                            draft_read_at[row["id"]] = row["time"]
+                        except OutlookBusy:
+                            raise
+                        except MailError:
+                            continue  # deleted in the meantime, or a kind of item that cannot be read
+                    time.sleep(WARM_PAUSE)
+            except MailError:
+                pass  # Outlook is busy or closed: try again on the next round
+            time.sleep(WARM_EVERY)
+
     # -------------------------------------------------- state
     def _fresh_state(self) -> dict | None:
         cached = self._state_cache
@@ -336,7 +478,31 @@ class OutlookMailbox:
 
     # -------------------------------------------------- list
     def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "") -> dict:
-        return self._do(self._list, folder, limit, offset, query)
+        """One page of a folder. The first page comes from the copy in memory when Outlook is slow.
+
+        A copy older than LIST_FRESH_SECONDS is only a fallback: Outlook is asked first, and when it
+        does not answer within QUICK_SECONDS the copy is returned marked `saved`, with its time.
+        Searches and older pages always wait for Outlook.
+        """
+        if folder not in FOLDERS:
+            raise MailError("Unknown folder.")
+        limit = max(1, min(int(limit), 100))
+        self._phone_asked()
+        if int(offset) > 0 or (query or "").strip():
+            return self._do(self._list, folder, limit, offset, query)
+        self._page = limit
+        kept = self._lists.get((folder, limit))
+        if kept and time.monotonic() - kept[0] < LIST_FRESH_SECONDS:
+            return kept[2]
+        try:
+            return self._shared(
+                ("list", folder, limit), self._list, folder, limit, 0, "",
+                wait=QUICK_SECONDS if kept else READ_SECONDS,
+            )
+        except OutlookBusy:
+            if not kept:
+                raise
+            return {**kept[2], "saved": True, "savedAt": kept[1]}
 
     def _list(self, folder: str, limit: int, offset: int, query: str) -> dict:
         if folder not in FOLDERS:
@@ -388,10 +554,16 @@ class OutlookMailbox:
                 break  # a search scans every message of a data file: stop once the page is full
         rows.sort(key=lambda mail: mail["time"], reverse=True)
         page = rows[offset:want]
+        for mail in page:  # remembered so the message can be found again after it was moved
+            self._rows[mail["id"]] = (folder, mail["time"], mail["subject"], mail["from"])
+            self._rows.move_to_end(mail["id"])
+        while len(self._rows) > KEEP_ROWS:
+            self._rows.popitem(last=False)
         return {"folder": folder, "mail": page, "more": len(rows) > want and want < MAX_LIST}
 
     # -------------------------------------------------- one message
     def _item(self, mail_id: str):
+        mail_id = self._moved.get(mail_id, mail_id)
         store_key, _, entry_id = mail_id.partition(".")
         if not re.fullmatch(r"[0-9A-Fa-f]{16,}", entry_id):
             raise MailError("That message link is not valid.")
@@ -405,13 +577,56 @@ class OutlookMailbox:
         try:
             return self._ns.GetItemFromID(entry_id, store_id)
         except Exception:
-            raise MailError("That message was moved or deleted. Refresh the list.")
+            now_id = self._find_again(mail_id)
+            if now_id is None:
+                raise MailError("That message was moved or deleted. Refresh the list.")
+            return self._item(now_id)
+
+    def _find_again(self, mail_id: str) -> str | None:
+        """The id a moved message has now, or None.
+
+        A rule or an archiving tool moves mail into another data file seconds after it arrives or is
+        sent, and that changes its id while the phone still shows the old one. The same message is
+        looked up among the newest ones of that folder by time, subject and sender. Only an exact,
+        single match counts.
+        """
+        known = self._rows.get(mail_id)
+        if known is None or not known[1]:
+            return None
+        folder = known[0]
+        self._rows.pop(mail_id)  # whatever comes out, this id is gone: never search for it twice
+        try:
+            rows = self._list(folder, FIND_AGAIN_ROWS, 0, "")["mail"]
+        except Exception:
+            return None
+        same = [row["id"] for row in rows if (folder, row["time"], row["subject"], row["from"]) == known and row["id"] != mail_id]
+        if len(same) != 1:
+            return None
+        self._moved[mail_id] = same[0]
+        if len(self._moved) > KEEP_ROWS:
+            self._moved.pop(next(iter(self._moved)))
+        return same[0]
 
     def get(self, mail_id: str) -> dict:
-        return self._do(self._get, mail_id)
+        """One message. A received or sent message that was read before comes from memory at once.
+
+        A draft can change, so Outlook is asked first; when it does not answer within QUICK_SECONDS
+        the copy is returned marked `saved`.
+        """
+        self._phone_asked()
+        kept = self._kept_message(mail_id)
+        if kept is not None and not kept["draft"]:
+            return kept
+        try:
+            return self._shared(("item", mail_id), self._get, mail_id, wait=QUICK_SECONDS if kept else READ_SECONDS)
+        except OutlookBusy:
+            if kept is None:
+                raise
+            return {**kept, "saved": True}
 
     def _get(self, mail_id: str) -> dict:
         item = self._item(mail_id)
+        mail_id = self._moved.get(mail_id, mail_id)
         access = item.PropertyAccessor
 
         def prop(tag, default=""):
@@ -482,6 +697,11 @@ class OutlookMailbox:
                     "Look in Sent and Drafts before you send it again, so it does not go twice."
                 )
             raise MailError("Outlook on your PC is busy, so nothing was sent. Your text is kept here. Try again in a moment.")
+        finally:
+            with self._lock:  # Sent and Drafts have changed (or may have): no old copy of them is shown
+                self._lists.clear()
+                if request["mode"] == "draft":
+                    self._drop_message(self._moved.get(request["id"], request["id"]))
 
     def _send(self, request: dict) -> dict:
         mode = request["mode"]

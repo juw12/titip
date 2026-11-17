@@ -51,7 +51,9 @@
   }
 
   // ------------------------------------------------------------ the back ends: your PC, your PC through the relay, or the demo
-  var BUSY_WAIT = 60000;  // a read keeps asking this long while Outlook on the PC is busy
+  var BUSY_WAIT = 300000;  // a read keeps asking this long while Outlook on the PC is busy
+  var BUSY_AGAIN = 1000;  // the PC keeps the question in Outlook's queue, so asking again costs nothing
+  var SAVED_AGAIN = 5000;  // a list shown from the PC's copy is asked for again this soon
   var BUSY_TEXT = "Outlook on your PC is busy. Still trying\u2026";
   function request(path, body, since) {
     var started = since || Date.now();
@@ -71,7 +73,7 @@
         // only reading is asked again; a send is never repeated, so it can't go out twice
         if (reply.status === 503 && data.busy && !body && Date.now() - started < BUSY_WAIT) {
           toast(BUSY_TEXT);
-          return new Promise(function (resolve) { setTimeout(resolve, 3000); }).then(function () {
+          return new Promise(function (resolve) { setTimeout(resolve, BUSY_AGAIN); }).then(function () {
             return request(path, null, started);
           });
         }
@@ -227,6 +229,10 @@
     return date.toLocaleDateString([], { day: "numeric", month: "short" });
   }
 
+  function clockTime(iso) {
+    return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  }
+
   function longTime(iso) {
     if (!iso) return "";
     return new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
@@ -326,7 +332,7 @@
     var folder = view.folder;
     var query = view.query;
     var offset = append ? view.rows.length : 0;
-    if (!append && !silent) { showState(""); skeleton(); $("more").hidden = true; }
+    if (!append && !silent) { showState(""); skeleton(); $("more").hidden = true; showSaved({}); }
     if (!silent) $("refresh").classList.add("busy");
     if (query && !append) showState("Searching\u2026", "Looking through every mail file. This can take a few seconds.");
     return api.list(folder, offset, query).then(function (page) {
@@ -334,6 +340,7 @@
       view.rows = append ? view.rows.concat(page.mail) : page.mail;
       view.more = page.more;
       renderRows();
+      if (!append) showSaved(page);
     }).catch(function (error) {
       if (silent) return;
       if (!append) { $("rows").textContent = ""; showState("Can't show your mail", error.message, true); }
@@ -342,6 +349,20 @@
       view.loading = false;
       $("refresh").classList.remove("busy");
     });
+  }
+
+  // Outlook was busy, so the PC sent the list it had: say from when, and ask again quietly
+  var savedTimer = 0;
+  function showSaved(page) {
+    clearTimeout(savedTimer);
+    var note = $("savedNote");
+    note.hidden = !page.saved;
+    if (!page.saved) return;
+    note.textContent = "Outlook on your PC is busy. This is the list from " + clockTime(page.savedAt) + ".";
+    savedTimer = setTimeout(function () {
+      if (document.hidden || view.query || view.rows.length > PAGE || !$("composer").hidden) return;
+      load(false, true);
+    }, SAVED_AGAIN);
   }
 
   function refreshCounts() {
@@ -399,6 +420,7 @@
       if (view.id !== id) return;
       view.item = item;
       view.formatted = true;
+      if (item.saved) toast("Outlook on your PC is busy. This draft may not show your latest changes.");
       $("letter").classList.remove("opening");
       $("subject").textContent = item.subject;
       $("from").textContent = item.from + (item.fromAddress && item.fromAddress !== item.from ? "  <" + item.fromAddress + ">" : "");

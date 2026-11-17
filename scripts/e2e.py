@@ -276,6 +276,27 @@ def main() -> None:
             page.unroute("**/api/item*")
             errors[:] = [e for e in errors if "503" not in e]  # the busy answer above, on purpose
             page.click("#back")
+
+            # ---- Outlook busy but the PC has the list in memory: the phone shows it, says so, asks again
+            saved_replies = []
+
+            def saved_once(route):
+                if saved_replies:
+                    return route.continue_()
+                saved_replies.append(1)
+                reply = route.fetch()
+                data = reply.json()
+                data.update(saved=True, savedAt=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                route.fulfill(response=reply, json=data)
+
+            page.route("**/api/mail*", saved_once)
+            page.click("#refresh")
+            expect(page.locator("#savedNote")).to_contain_text("This is the list from", timeout=5000)
+            check(page.locator(".row").count() > 3, "a list from the PC's copy is shown with a note that says from when")
+            page.screenshot(path=SHOTS / "phone-saved.png")
+            expect(page.locator("#savedNote")).to_be_hidden(timeout=15000)
+            check(True, "the fresh list replaces it by itself and the note goes away")
+            page.unroute("**/api/mail*")
             page.click(".tabs a[data-folder=sent]")
             page.wait_for_selector(".row .subject:has-text('RE: Hinge sample B')")
             check(True, "the reply shows up in Sent")

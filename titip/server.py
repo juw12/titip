@@ -408,8 +408,8 @@ class Titip:
                     return 200, self.mailbox.send(params)
                 except MailError as error:
                     return 400, {"error": str(error)}
-            if route == "state":
-                return 200, {**self.mailbox.state(), "version": __version__}
+            if route == "state":  # last known counts when Outlook is busy: lists and messages do not wait for them
+                return 200, {**self.mailbox.quick_state(), "version": __version__}
             if route == "mail":
                 return 200, self.mailbox.list(
                     str(params.get("folder", "inbox")),

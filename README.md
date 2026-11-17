@@ -21,7 +21,9 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   If a send fails, the message comes back with your text and the reason.
 - Search by subject or person. Light and dark. Works as a home-screen app.
 
-It stores no password and no mail. It drives the Outlook that is already signed in on your PC.
+It stores no password and writes no mail to disk. It drives the Outlook that is already signed in on
+your PC. While a phone is in use, Titip keeps the first page of each folder and the messages on it in
+its own memory, so a tap opens at once. Those copies are gone when Titip stops.
 It keeps itself up to date (see [Updates](#updates)).
 
 ## Autopilot for Gmail
@@ -173,8 +175,18 @@ Titip opens a door from your network to your mailbox. Read this first.
 - The PC must be on, awake and running Outlook. Titip is a window onto that Outlook, not a mail server.
   If a tool on the PC lowers the priority of background programs, Titip puts itself back to normal
   (never higher), so the phone still gets an answer while the PC is busy.
-- Outlook answers one program at a time. While it is busy with something else, the phone says so and
-  keeps asking for up to a minute. Only reading is asked again. A send is never repeated.
+- Outlook answers one program at a time, and a full PC can keep any program waiting. So Titip reads
+  ahead while a phone is in use: the newest 25 messages of the Inbox, 10 of Sent and 5 drafts. Those
+  open at once whatever Outlook is doing. When Outlook is busy the list is shown from memory with a
+  note that says from when, and is replaced as soon as Outlook answers.
+- A message Titip has not read yet still needs Outlook. The phone says so and keeps asking for up to
+  five minutes. The question waits in Outlook's queue once, however often the phone asks. Only reading
+  is asked again. A send is never repeated.
+- A rule or tool that moves new mail into a data file changes the message's id. Titip finds the same
+  message again by time, subject and sender, so it still opens and can be answered.
+- If you run a tool that slows background programs (for example
+  [CPU Eco Toggle](https://github.com/juw12/cpu-eco-toggle)), exempt Titip there. Titip restores its
+  own priority, but a program that is not given the processor cannot even do that quickly.
 
 ## Limits
 
