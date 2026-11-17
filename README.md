@@ -12,11 +12,12 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 ## What it does
 
 - Shows Inbox, Sent and Drafts from the classic Outlook desktop app, newest first, including mail that
-  rules or archivers moved into `.pst` data files.
+  rules or archivers moved into `.pst` data files. Unread mail carries a red dot.
 - Opens a message with its formatting in a frame that cannot run scripts or load remote pictures,
   or as plain text. Attachments download to the phone.
 - Reply, Reply all, Forward and new mail. Outlook adds the earlier thread. (No automatic signature: type it, or keep it in a draft.)
 - Every send waits 5 seconds behind an **Undo** button. **Save as draft** puts it in Outlook's Drafts.
+  If a send fails, the message comes back with your text and the reason.
 - Search by subject or person. Light and dark. Works as a home-screen app.
 
 It stores no password and no mail. It drives the Outlook that is already signed in on your PC.
@@ -82,6 +83,7 @@ Titip opens a door from your network to your mailbox. Read this first.
   edit on the phone goes as plain text.
 - Search looks at subject and sender (recipient in Sent), not the message body.
 - Calendar invitations can be read, not accepted.
+- Opening a message on the phone clears its red dot on that phone only. Outlook still shows it as unread.
 
 ## Develop
 
