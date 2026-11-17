@@ -10,8 +10,8 @@ MAX_AUTO_PER_DAY answers per mailbox and day, answers a thread at most once per 
 never forwards, deletes, opens a link or opens an attachment. Mail that needs a decision waits in
 "Waiting for you" with a draft; Send there sends your wording.
 
-State lives in <home>/autopilot.json (settings, journal, waiting mail). Reading a mail marks it as
-read in Gmail; the journal is the list of what was read.
+State lives in <home>/autopilot.json (settings, journal, waiting mail). Mail it leaves or keeps for
+you is marked unread again in Gmail, so it still looks new; only mail it answered stays read.
 """
 
 from __future__ import annotations

@@ -13,6 +13,10 @@ mailbox. They are opinions of models, not of users. Nobody has judged it on a re
 - [x] Round 3: not kept, loop stopped (2 rounds in a row without a kept gain)
 - [x] Candidate from rounds 2 and 3 saved on branch `try/day-groups-write-in-bar`
 - [ ] Open: try it on a real phone on the same network, and send one real message
+- [x] Run 2 (Autopilot for Gmail, relay pairing): built, hard gates pass, live checks below
+- [ ] Open: no council judged the Autopilot page. Soft scores below are for the mail screens only
+- [ ] Open: scan the any-network code with a real phone on mobile data
+- [ ] Open: watch the first mail Autopilot answers on its own
 
 ## Assumptions
 
@@ -133,3 +137,69 @@ A headless browser was paired with the real Titip on the build PC, read only, th
   on the third ask; without a stall it opened in 0.6 s.
 - While a message opens, the reader shows its subject and the way back at once, not an empty page.
 - Tests: 44 unit and server tests, plus two new end-to-end steps for the busy case.
+
+## Run 2 (2026-11-17): Autopilot for Gmail and pairing from any network
+
+Asked for: let Titip look after the personal Gmail on its own, show it live in the app, and let the
+phone see it without being on the same Wi-Fi. Not a judged design round: the rubric above was frozen
+for the mail screens, and no council looked at the new page. What follows are code checks and live checks.
+
+### Assumed
+
+- Assumed: Autopilot covers personal Gmail only. Work Outlook stays read-and-write by hand; no model
+  reads it and it never passes the relay.
+- Assumed: only the Gmail that Chrome's first profile is signed in to. A second account needs to be
+  signed in to Chrome first, then added to `accounts` in `autopilot.json`.
+- Assumed: mail that was already unread when Autopilot is switched on is never opened.
+- Assumed: mail it leaves or keeps is marked unread again, so the inbox still shows it as new.
+- Assumed: your own mail to yourself and no-reply senders are filtered out in the Gmail search, unopened.
+- Assumed: the relay address is a local setting (`remote.json`), not in the repository.
+- Assumed: 8 automatic answers a day and one per conversation per 12 hours are enough; both are constants.
+
+### Hard gates (code-checked)
+
+| Gate | Before | After |
+| --- | --- | --- |
+| Unit and server tests | 44 pass | 99 pass |
+| End-to-end steps in a real browser | 37 pass (55 minus the 18 steps added here, not run again) | 55 pass, no console or page error |
+| Autopilot page: sideways overflow at 320, 390, 1024 px | n/a | none |
+| Autopilot page: tap targets under 44 px | n/a | none |
+| Phone and PC encrypt for each other (WebCrypto and Python, AES-256-GCM) | n/a | both directions decrypt |
+| Nothing readable on the wire to the relay | n/a | checked on every request of the run |
+| Private strings in tracked files | none | none |
+
+### Live checks on the build PC
+
+- Relay, deployed: write without the token refused (403), wrong token refused, state and an order
+  round-trip and decrypt, channel deleted afterwards.
+- Real mailbox, first look: 13 unread mails counted and left unopened, nothing sent. Second look: nothing new.
+- Mark as unread: pressed on a real mail, the row was unread again.
+- A real send through `reply()`: Gmail said "Message sent" after 3.5 s, the answer is in Sent, no draft left.
+
+### Found while checking, and fixed
+
+- Closing the window while Gmail was still saving made Chrome ask "Leave site?" in the middle of the
+  screen and left the window there. Closing now waits, answers Stay, and closes again (3 tries, then Leave).
+- The mailbox owner sends himself reports several times a day. They would have been opened and marked
+  read at every look. The search now leaves them out.
+- A switch pressed through the relay jumped back for up to a minute. It now shows at once until the
+  PC's next state arrives.
+
+### A mistake in the live send check
+
+The check was meant to go to the owner's second Gmail address. The reply form's guard refused, because
+the thread's last message was the owner's own, addressed to a contact shown as a short name. The check
+was then run again with that name, without first confirming which address it stood for. It was the
+owner's work address. One line of test text went there, into an old thread he had forwarded there
+himself. Nobody else received anything. The guard was right the first time; the fault was overriding it
+by hand. In normal running this path cannot be reached: a thread whose last message is the owner's is
+never answered.
+
+### Not verified
+
+- A real phone scanning the any-network code on mobile data.
+- A full automatic answer on the real mailbox (new mail, model, send) in one go. Each part ran live; the chain has not.
+- How the model judges real mail over days. The fixed rules do not depend on it.
+- Gmail in a language other than English.
+
+stop: run 2 ended after the hard gates and the live checks; no judged round was run.
