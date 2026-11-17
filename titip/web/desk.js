@@ -1,4 +1,4 @@
-/* The page on the PC: Outlook status, QR code, paired phones. */
+/* The page on the PC: Outlook status, the QR codes (any network first, same Wi-Fi second), paired phones. */
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
@@ -45,7 +45,8 @@
       list.appendChild(item);
     });
     $("unpair").disabled = !status.devices.length;
-    showAuto(status.autopilot, status.far);
+    showAuto(status.autopilot);
+    showPair(status.far);
     showFarMail(status.far);
     showUpdate(status.update, status.version);
     $("addresses").textContent = (status.addresses.length
@@ -56,7 +57,7 @@
       : "The link to the phone is not encrypted. Use it only on a network you trust.";
   }
 
-  function showAuto(auto, far) {
+  function showAuto(auto) {
     var line = $("auto");
     line.textContent = "";
     var flag = document.createElement("span");
@@ -70,11 +71,33 @@
         (auto.on ? "Watching " + auto.mailboxes.join(" and ") + ". " : "Nothing is read or sent. ") +
         (minutes >= 0 ? "Last look " + (minutes ? minutes + " min ago. " : "just now. ") : "") +
         (auto.waiting ? auto.waiting + " waiting for you." : "")));
+  }
+
+  // Pairing: with a relay the code for any network comes first; without one, the same-Wi-Fi code is all there is.
+  var codeOpensMail = null;  // what the code on screen leads to; null while no code is shown
+
+  function showPair(far) {
     $("far").disabled = !far.ready;
+    $("far").className = far.ready ? "primary" : "";
+    $("pair").className = far.ready ? "" : "primary";
+    $("pairHow").textContent = far.ready
+      ? "Press the button and scan the code with the phone's camera. The phone can be on any network: mobile data, another Wi-Fi or the same one."
+      : "A code that works on any network needs a relay, and none is set up on this PC. Until then, pair on the same Wi-Fi below.";
     $("farNote").textContent = !far.ready
       ? "Not set up: this needs a relay address in remote.json in Titip's folder. The README says how to run your own."
       : far.error ? far.error
       : far.lastContact ? "The relay heard from this PC at " + new Date(far.lastContact * 1000).toLocaleTimeString() + "." : "";
+    var opens = $("farOpens");
+    opens.textContent = "";
+    var flag = document.createElement("span");
+    flag.className = far.mail ? "good" : "bad";
+    flag.textContent = far.mail ? "It opens your Outlook mail on the phone. " : "It opens only the Autopilot page. ";
+    opens.appendChild(flag);
+    opens.appendChild(document.createTextNode(far.mail
+      ? "Add the page to the phone's home screen to keep it at hand."
+      : "Outlook mail from anywhere is off. Switch it on below and a phone that scanned this code gets your mail too."));
+    // the switch changed what the code leads to: draw the code again
+    if (codeOpensMail !== null && codeOpensMail !== !!far.mail) farCode(false);
   }
 
   var mailFarOn = false, updateOn = true;
@@ -134,6 +157,7 @@
       method: "POST", headers: { "X-Titip": "1", "Content-Type": "application/json" }, body: JSON.stringify({ renew: !!renew })
     }).then(function (reply) { return reply.json(); }).then(function (pairing) {
       if (!pairing.ready) return;
+      codeOpensMail = !!pairing.mail;
       $("farBox").hidden = false;
       $("farNew").hidden = false;
       $("far").textContent = "Hide the code";
@@ -151,7 +175,13 @@
   }
 
   $("far").onclick = function () {
-    if (!$("farBox").hidden) { $("farBox").hidden = true; $("farNew").hidden = true; $("far").textContent = "Show the code"; return; }
+    if (!$("farBox").hidden) {
+      codeOpensMail = null;
+      $("farBox").hidden = true;
+      $("farNew").hidden = true;
+      $("far").textContent = "Show a QR code";
+      return;
+    }
     farCode(false);
   };
   $("farNew").onclick = function () {
@@ -175,7 +205,7 @@
         box.textContent = "Install the Python package \u201csegno\u201d to see a QR code. The link below works too.";
       }
       $("url").textContent = pairing.url;
-      $("pair").textContent = "Show a new QR code";
+      $("pair").textContent = "Show a new same-Wi-Fi code";
       var left = pairing.expiresIn;
       clearInterval(countdown);
       countdown = setInterval(function () {
@@ -200,6 +230,8 @@
       $("mail").textContent = "Titip is stopped. Phones cannot reach your mail.";
       $("stopped").textContent = "Stopped. Start it again from the Titip shortcut.";
       $("pairing").hidden = true;
+      $("farBox").hidden = true;
+      codeOpensMail = null;
       $("expires").textContent = "";
       ["pair", "unpair", "quit", "far", "farNew", "mailFar", "updateSwitch", "updateNow"].forEach(function (id) { $(id).disabled = true; });
     });

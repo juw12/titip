@@ -222,11 +222,18 @@ class Remote:
         return f"{self.settings['relay'].rstrip('/')}/c/{self.settings['channel']}/{what}"
 
     def link(self) -> str:
-        """The address the phone opens. Everything after # stays in the phone's browser."""
+        """The address the phone opens. Everything after # stays in the phone's browser.
+
+        It leads to the mail app while Outlook mail may pass through the relay, else to the Autopilot
+        page next to it. The code after # is the same for both, so a phone that scanned one can use the other.
+        """
         if not self.ready:
             return ""
         ticket = {"u": self.settings["relay"].rstrip("/"), "c": self.settings["channel"], "k": self.settings["key"]}
-        return f"{self.settings['page']}#r={b64(json.dumps(ticket, separators=(',', ':')).encode('utf-8'))}"
+        page = self.settings["page"]
+        if self.mail_on and self.mail is not None:
+            page = page.rsplit("/", 1)[0] + "/"
+        return f"{page}#r={b64(json.dumps(ticket, separators=(',', ':')).encode('utf-8'))}"
 
     def renew(self) -> None:
         """A new channel and key: every phone paired with the old code is cut off."""

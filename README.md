@@ -22,8 +22,8 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - Search by subject or person. Light and dark. Works as a home-screen app.
 
 It stores no password and writes no mail to disk. It drives the Outlook that is already signed in on
-your PC. While a phone is in use, Titip keeps the first page of each folder and the messages on it in
-its own memory, so a tap opens at once. Those copies are gone when Titip stops.
+your PC. Once a phone has asked for mail, Titip keeps the first page of each folder and the messages on
+it in its own memory, so a tap opens at once. Those copies are gone when Titip stops.
 It keeps itself up to date (see [Updates](#updates)).
 
 ## Autopilot for Gmail
@@ -76,8 +76,8 @@ The relay keeps the Autopilot state in that KV namespace and passes mail through
 (SQLite storage, which Cloudflare's free plan includes). `wrangler deploy` sets up both.
 
 Put that address into `~/.titip/remote.json` as `{"relay": "https://titip-relay.<you>.workers.dev"}`,
-start Titip again, and on the PC page press **Show the code** under *From anywhere*. Scan it
-once. **Make a new code** cuts off every phone that scanned the old one.
+start Titip again, and on the PC page press **Show a QR code** under *Pair a phone*. Scan it
+once, on any network. **Make a new code** cuts off every phone that scanned the old one.
 
 The PC reaches the relay the way its environment says (`HTTPS_PROXY`), then through the proxy Windows
 is set to, then straight out, and remembers which one worked. So it keeps working when the PC moves
@@ -87,8 +87,10 @@ between an office and home, or when a local proxy program is not running.
 
 With the relay in place, your Outlook mail can pass through it too: inbox, sent, drafts, reading,
 attachments, writing, replying. It is **off** until you press **Switch on** next to *Outlook mail from
-anywhere* on the PC page. Then the Autopilot page on the phone gets a **Mail** tab, and the mail app
-behind it works on any network.
+anywhere* on the PC page. From then on the code under *Pair a phone* opens the mail app itself, so
+scanning it is all the pairing a phone needs: the phone can be on mobile data, and the PC on an office
+network the phone could never join. A phone that scanned the code earlier gets a **Mail** tab on its
+Autopilot page; the code is the same.
 
 - The phone seals each question (show my inbox, open this mail, send this) with the key from the QR
   code. The PC picks it up, lets Outlook do it, and seals the answer. The relay passes both on and
@@ -126,7 +128,8 @@ time.
 
 - Windows with classic Outlook (the desktop app, not "new Outlook") open and signed in
 - Python 3.10 or newer
-- The phone on the same network as the PC, or [Tailscale](https://tailscale.com) on both
+- The phone on the same network as the PC, or [Tailscale](https://tailscale.com) on both, or your
+  own relay (see [Mail from anywhere](#mail-from-anywhere)) and then any network will do
 - For Autopilot: Google Chrome signed in to Gmail, and [OpenCode](https://opencode.ai) with a model
 
 ## Start
@@ -138,7 +141,8 @@ pip install -r requirements.txt
 python -m titip
 ```
 
-A page opens on the PC. Press **Show a QR code** and scan it with the phone's camera.
+A page opens on the PC. Press **Show a same-Wi-Fi code** and scan it with the phone's camera.
+(With a relay set up, **Show a QR code** at the top gives a code that works on any network instead.)
 
 The first time, the phone warns that the connection is not private. That is expected: the PC made its
 own certificate, so the link is encrypted but no authority vouches for it. Tap *Advanced*, then
@@ -156,8 +160,12 @@ own certificate, so the link is encrypted but no authority vouches for it. Tap *
 
 ## How the phone is trusted
 
-- The QR code holds a random code that works once, for five minutes. It sits in the part of the link
-  that browsers never send to a server or write to a log.
+- The same-Wi-Fi QR code holds a random code that works once, for five minutes. It sits in the part
+  of the link that browsers never send to a server or write to a log.
+- The QR code for any network is another kind: it does not expire, and it carries the key that seals
+  everything the phone and the PC say to each other through the relay. It also sits after the `#`,
+  and the phone takes it out of the address bar once it has kept it. Treat a picture of that code like
+  a password. **Make a new code** makes the old one worthless.
 - The phone trades it for a random device cookie (HttpOnly, SameSite=Strict, Secure). The PC keeps only
   a hash of it in `~/.titip/devices.json`.
 - A phone without that cookie gets one page: "scan the QR code". No mail, no subject, no count.
@@ -181,17 +189,21 @@ Titip opens a door from your network to your mailbox. Read this first.
   If a tool on the PC lowers the priority of background programs, Titip puts itself back to normal
   (never higher), so the phone still gets an answer while the PC is busy.
 - Outlook answers one program at a time, and a full PC can keep any program waiting. So Titip reads
-  ahead while a phone is in use: the newest 25 messages of the Inbox, 10 of Sent and 5 drafts. Those
-  open at once whatever Outlook is doing. When Outlook is busy the list is shown from memory with a
-  note that says from when, and is replaced as soon as Outlook answers.
+  ahead once a phone has asked for mail: the newest 40 messages of the Inbox, 20 of Sent and 10 drafts,
+  and whatever an older page or a search showed the phone. Those open at once whatever Outlook is
+  doing. When Outlook is busy the list is shown from memory with a note that says from when, and is
+  replaced as soon as Outlook answers.
+- After the phone is put down, Titip goes on looking for new mail every five minutes for eight hours,
+  so what arrived in the meantime is already there when the phone is picked up again. It stops the
+  first time it finds Outlook closed, and never opens Outlook for a phone nobody holds.
 - While Outlook answers Titip its own window waits. Counting the folders is the slowest question when
   mail is kept in several data files, so the counts on the PC page and the drafts number on the phone
   are asked for at most every five minutes, and right after a send or a saved draft. The first
   question after Titip starts looks through every data file once, which can take a minute or two on
   a busy PC.
-- A message Titip has not read yet still needs Outlook. The phone says so and keeps asking for up to
-  five minutes. The question waits in Outlook's queue once, however often the phone asks. Only reading
-  is asked again. A send is never repeated.
+- A message Titip has not read yet still needs Outlook. The phone shows how it starts (the list knows
+  the first lines) and keeps asking for up to five minutes. The question waits in Outlook's queue
+  once, however often the phone asks. Only reading is asked again. A send is never repeated.
 - A rule or tool that moves new mail into a data file changes the message's id. Titip finds the same
   message again by time, subject and sender, so it still opens and can be answered.
 - If you run a tool that slows background programs (for example

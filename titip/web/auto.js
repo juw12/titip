@@ -180,7 +180,7 @@
 
   var hosted = /\.github\.io$/.test(location.hostname) || location.protocol === "file:";
   var forcedDemo = /[?&]demo\b/.test(location.search);
-  var ticket = ticketFromAddress() || (hosted ? storedTicket() : null);
+  var ticket = ticketFromAddress() || storedTicket();  // the mail app next door keeps the same code (far.js)
   var api = forcedDemo ? demo : ticket ? relayFrom(ticket) : hosted ? demo : pc;
 
   // ------------------------------------------------------------ drawing

@@ -135,6 +135,20 @@ class Link(unittest.TestCase):
         self.assertNotIn(link.settings["write"], link.link())  # the phone can never overwrite the state
         self.assertEqual(self.make(relay="").link(), link.link())
 
+    def test_the_code_opens_the_mail_app_only_while_mail_from_anywhere_is_on(self):
+        link = self.make()
+        link.mail = lambda route, params: (200, {})
+        autopilot_page = link.link()
+        link.set_mail(True)
+        address, _, ticket = link.link().partition("#r=")
+        self.assertEqual(address, remote.PAGE.rsplit("/", 1)[0] + "/")
+        self.assertEqual(ticket, autopilot_page.partition("#r=")[2], "the same code: only the page it opens differs")
+        link.set_mail(False)
+        self.assertEqual(link.link(), autopilot_page)
+        link.mail = None  # a Titip without a mailbox has no mail app to show
+        link.set_mail(True)
+        self.assertEqual(link.link(), autopilot_page)
+
     def test_nothing_is_written_twice_and_bursts_wait(self):
         link = self.make()
         link.step()

@@ -310,3 +310,59 @@ once. After the fix: 170 unit and server tests pass (4 new), the 73 browser step
   and 13,000 GB-seconds a day) were read from Cloudflare's pages, not measured.
 
 stop: run 3 ended after the hard gates and the live checks; no judged round was run.
+
+## Run 4 (2026-11-17): pair from any network, and messages that open at once
+
+Asked for: "fix the open, for pairing show qr without on same wifi". Version 0.5.0.
+
+### Assumed
+
+- "Fix the open" means: a message should open when tapped although Outlook on this PC stops
+  answering for up to half a minute at a time. Outlook itself cannot be made faster from here, so
+  Titip reads further ahead and shows what it already has.
+- "QR without the same Wi-Fi" means: the code on the PC page that works from any network becomes the
+  main one, and scanning it lands in the mail, not on the Autopilot page.
+
+### Changed
+
+- The PC page leads with "Show a QR code" for any network. While "Outlook mail from anywhere" is on,
+  the code opens the mail app; while it is off, the Autopilot page as before, and the page says
+  which. Switching it on redraws the code. The same-Wi-Fi code is kept as the second way.
+- The mail app takes the code from its own address, keeps it and removes it from the address bar.
+  The Autopilot page next to it now uses a kept code on any host, as the mail app does.
+- Read-ahead: Inbox 40, Sent 20, Drafts 10 (was 25, 10, 5), 240 messages kept (was 120). Rows of
+  older pages and of searches are read ahead too. After the active rounds, Titip looks every five
+  minutes for eight hours after the phone last asked, and stops at once when Outlook is closed, so
+  it never opens Outlook by itself. A phone that comes back starts a round right away.
+- While a message opens, the phone shows how it starts (the list knows that) under the subject.
+- The four tab names at the bottom of the phone stay on one line each at 320, 390 and 768 px.
+
+### Hard gates (code-checked)
+
+- 173 unit and server tests pass (3 new: read-ahead of older pages and searches, slow rounds that
+  never reopen Outlook, the code opens the mail app only while its switch is on).
+- 81 browser steps pass (was 73), with no console error, page error or sideways overflow. New: tab
+  names on one line, the code opens the mail app and the key leaves its address bar, Autopilot and
+  back with the same code, the main button on the PC page, the line under the code for off and on,
+  the redraw.
+
+### Found while checking, and fixed
+
+- The Autopilot tab of a phone that had scanned the code into the mail app fell back to "this PC"
+  on a host that is not github.io. Seen in the browser run, where the public pages are served
+  locally; on github.io it was right. Now the same rule in both pages.
+- The picture of the PC page covered the wrong lines once the page had scrolled, and showed this
+  PC's network address. The run scrolls to the top before taking it.
+- `test_stop_button_needs_the_header_and_only_then_stops` failed once on a full PC: it looked for
+  the stop flag in the instant after the answer. It now waits for it.
+- One browser run failed because another run on this PC was using the same two ports at the same
+  time and its drafts showed up. Run again alone: passed. The run still uses fixed ports.
+
+### Not verified
+
+- A real phone scanning the code on mobile data. The run used a headless browser and a stand-in
+  relay; the live check after the release used the real relay from this PC.
+- How much Outlook's stalls still show on the phone over a working day. A message that was never
+  read ahead still waits for Outlook, and after Titip restarts the kept copies start empty.
+
+stop: run 4 ended after the hard gates and the live checks; no judged round was run.

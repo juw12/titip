@@ -6,8 +6,8 @@ Starts Titip with invented mail on spare ports, pairs a browser through the real
 PC's network address), then reads, answers, undoes, sends, saves a draft and searches, at phone and
 desktop sizes, light and dark. Then Autopilot: on the paired phone, on the public page (demo), and
 through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
-trip: the public page asks, a stand-in relay with the worker's rules passes sealed text, this Titip
-answers. Fails on any console error, page error or sideways overflow.
+trip: the code for any network opens the public mail app, a stand-in relay with the worker's rules
+passes sealed text, this Titip answers. Fails on any console error, page error or sideways overflow.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def desk(path: str, post: bool = False, body: dict | None = None) -> dict:
         headers={"X-Titip": "1", "Content-Type": "application/json"},
     )
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(request, timeout=10) as reply:
+    with opener.open(request, timeout=30) as reply:  # a full PC can keep the server waiting for its turn
         return json.load(reply)
 
 
@@ -357,6 +357,15 @@ def main() -> None:
                 page.goto(page.url.split("#")[0] + "#/inbox")
                 page.wait_for_selector(".row")
                 over_list = overflow(page)
+                if width < 860:  # the folder names sit at the thumb: each on one line, none cut off
+                    cramped = page.evaluate(
+                        """() => [...document.querySelectorAll('.tabs a')].filter(a => {
+                                const name = document.createRange();
+                                name.selectNodeContents(a.firstChild);
+                                return name.getClientRects().length > 1 || a.scrollWidth > a.clientWidth;
+                            }).map(a => a.textContent.trim())"""
+                    )
+                    check(not cramped, f"every tab name fits on one line at {width}px {cramped if cramped else ''}")
                 page.locator(".row").first.click()
                 page.wait_for_selector("#letter:not([hidden]) #body > *")
                 page.wait_for_timeout(250)
@@ -508,14 +517,22 @@ def main() -> None:
             away.route("https://relay.invalid/**", through)
             real_ticket = remote.b64(json.dumps(
                 {"u": "https://relay.invalid", "c": settings["channel"], "k": settings["key"]}).encode())
-            away.goto(f"{public}/auto.html#r={real_ticket}")
-            away.wait_for_selector("#feed .entry")
-            expect(away.locator("#mailTab")).to_be_visible(timeout=20000)
-            check(True, "the Autopilot page shows the Mail tab once the PC says Mail from anywhere is on")
-            away.click("#mailTab")
+            code = desk("/desk/far", post=True)["url"]
+            mail_page, _, told = code.partition("#r=")
+            check(mail_page == remote.PAGE.rsplit("/", 1)[0] + "/"
+                  and json.loads(remote.unb64(told)) == {"u": stand_in.url, "c": settings["channel"], "k": settings["key"]},
+                  "with Mail from anywhere on, the code for any network leads to the mail app and carries the key after #")
+            away.goto(f"{public}/#r={real_ticket}")  # what the phone's camera opens, on a network that is not this PC's
             away.wait_for_selector(".row", timeout=40000)
             check(away.locator(".row").count() >= 6 and len(stand_in.asked) >= 2,
-                  f"the inbox arrives through the relay ({away.locator('.row').count()} rows, {len(stand_in.asked)} asks)")
+                  f"scanning it shows the inbox through the relay ({away.locator('.row').count()} rows, {len(stand_in.asked)} asks)")
+            check("r=" not in away.url, "the key leaves the address bar of the mail app once the phone has kept it")
+            away.click(".tabs a[href='auto.html']")
+            away.wait_for_selector("#feed .entry")
+            expect(away.locator("#mailTab")).to_be_visible(timeout=20000)
+            check(True, "the Autopilot page next to it uses the same code and shows the Mail tab")
+            away.click("#mailTab")
+            away.wait_for_selector(".row", timeout=40000)
             away.click(".tabs a[data-folder=sent]")
             away.wait_for_selector(".row .subject:has-text('RE: Hinge sample B')", timeout=40000)
             check(True, "Sent through the relay shows what this PC sent earlier in the run")
@@ -574,12 +591,31 @@ def main() -> None:
             desk_page.wait_for_timeout(300)
             check(len(asked) == 1 and "any network" in asked[0] and desk("/desk/status")["far"]["mail"] is False,
                   "switching it on asks first, and saying no leaves it off")
+            check(desk_page.locator(".primary:visible").count() == 1 and desk_page.locator("#far.primary").count() == 1,
+                  "with a relay, the code for any network is the one main button on the PC page")
+            desk_page.click("#far")
+            desk_page.wait_for_selector("#farQr svg")
+            expect(desk_page.locator("#farOpens")).to_contain_text("only the Autopilot page")
+            check(desk("/desk/far", post=True)["url"].startswith(remote.PAGE + "#r="),
+                  "with Mail from anywhere off, the code leads to the Autopilot page and the PC page says so")
+            first_code = desk_page.inner_html("#farQr")
+            desk_page.once("dialog", lambda dialog: dialog.accept())
+            desk_page.click("#mailFar")
+            expect(desk_page.locator("#farOpens")).to_contain_text("opens your Outlook mail")
+            expect(desk_page.locator("#farQr svg")).to_be_visible()
+            for _ in range(50):
+                if desk_page.inner_html("#farQr") != first_code:
+                    break
+                desk_page.wait_for_timeout(100)
+            check(desk_page.inner_html("#farQr") != first_code and desk("/desk/status")["far"]["mail"] is True,
+                  "switching it on redraws the code on screen, which now leads to the mail app")
             expect(desk_page.locator("#updateLine")).to_contain_text("not installed with git")
             check(desk_page.locator("#updateSwitch").is_disabled() and desk_page.locator("#updateNow").is_disabled(),
                   "the demo never updates itself, and the PC page says so")
             desk_page.click("#pair")
             desk_page.wait_for_selector("#qr svg")
             check("Browser" in desk_page.inner_text("#devices"), "desk page lists the paired device")
+            desk_page.evaluate("window.scrollTo(0, 0)")  # the masks land where the page is scrolled to, so start at the top
             # the screenshot hides this PC's network address, so it is safe to share
             desk_page.screenshot(
                 path=SHOTS / "desk.png", full_page=True, mask_color="#d9cfbd",

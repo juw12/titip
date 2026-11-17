@@ -280,7 +280,7 @@ class DeskHandler(_Handler):
             return None
         if route == "/api/auto":
             return self._auto_order(body)
-        if route == "/desk/far":  # the code a phone scans to see Autopilot from any network
+        if route == "/desk/far":  # the code a phone scans on any network: the mail app, or Autopilot only
             if body.get("renew"):
                 self.app.remote.renew()
             return self._json(200, self.app.far_pairing())
@@ -460,7 +460,7 @@ class Titip:
         return {**(snapshot or self.autopilot.snapshot()), "version": __version__}
 
     def far_pairing(self) -> dict:
-        """The address (with the key after #) that shows Autopilot from any network, as a QR code."""
+        """The address (with the key after #) a phone opens from any network, as a QR code."""
         url = self.remote.link()
         return {"ready": bool(url), "url": url, "qr": qr_svg(url) if url else "", **self.remote.status()}
 

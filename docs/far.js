@@ -2,7 +2,9 @@
 
    Both travel as AES-GCM ciphertext. The key came from the QR code on the PC (after the # of the
    address) and stays in this browser; the relay never has it. Used by the mail app (app.js) when
-   this phone has scanned that code and "Mail from anywhere" is switched on in Titip on the PC. */
+   this phone has scanned that code and "Mail from anywhere" is switched on in Titip on the PC.
+   The code may open the mail app directly: it is kept here and taken out of the address bar
+   before the app starts. */
 window.TitipFar = (function () {
   "use strict";
   var KEY = "titip.relay";
@@ -20,11 +22,22 @@ window.TitipFar = (function () {
     return btoa(plain).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
 
+  function good(found) { return found && /^https:\/\//.test(found.u) && found.c && found.k ? found : null; }
+
+  // the code this page was opened with (#r=...), if any; a browser that cannot store keeps it until the page closes
+  var scanned = (function () {
+    var found = /^#r=([A-Za-z0-9_-]+)$/.exec(location.hash);
+    if (!found) return null;
+    var read = null;
+    try { read = good(JSON.parse(new TextDecoder().decode(fromBase64(found[1])))); } catch (error) { read = null; }
+    try { history.replaceState(null, "", location.pathname + location.search); } catch (error) { location.hash = ""; }  // keep the key out of the address bar
+    if (read) { try { localStorage.setItem(KEY, JSON.stringify(read)); } catch (error) { /* private browsing */ } }
+    return read;
+  }());
+
   function ticket() {
-    try {
-      var found = JSON.parse(localStorage.getItem(KEY) || "null");
-      return found && /^https:\/\//.test(found.u) && found.c && found.k ? found : null;
-    } catch (error) { return null; }
+    if (scanned) return scanned;
+    try { return good(JSON.parse(localStorage.getItem(KEY) || "null")); } catch (error) { return null; }
   }
 
   function pause(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }

@@ -141,6 +141,8 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 /* ---------- reader */
 .reader { display: none; padding: var(--s3) var(--s4) calc(var(--tap) + var(--s6)); }
 .hint, .wait { color: var(--muted); padding: var(--s6) 0; text-align: center; }
+.peek { padding-top: var(--s4); overflow-wrap: anywhere; }
+.peek + .wait { padding-top: var(--s4); }
 #letter.opening .meta, #letter.opening .files, #letter.opening .view, #letter.opening .actions { display: none; }
 .back, .link {
   min-height: var(--tap); padding: 0 var(--s2) 0 0;
@@ -222,7 +224,10 @@ button:disabled { opacity: 0.55; cursor: default; }
     background: var(--paper); border-top: 1px solid var(--line);
     padding-bottom: env(safe-area-inset-bottom);
   }
-  .tabs a { flex: 1; justify-content: center; min-height: 56px; border-bottom: 0; border-top: 3px solid transparent; }
+  .tabs a {
+    flex: 1 1 0; min-width: 0; padding: 0 var(--s1); gap: var(--s1); white-space: nowrap;  /* four names on one line each, down to 320 px */
+    justify-content: center; min-height: 56px; border-bottom: 0; border-top: 3px solid transparent;
+  }
   .tabs a[aria-current="page"] { border-top-color: currentColor; }
   .list { padding-bottom: calc(56px + 76px); }
   body.reading .list, body.reading .tabs, body.reading .write, body.reading .search, body.reading .demo { display: none; }

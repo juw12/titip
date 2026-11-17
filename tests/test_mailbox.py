@@ -382,13 +382,17 @@ class FakeOutlook:
         self.free.set()
         self.asked = []
         self.drafts = set(drafts)
+        self.new = ()  # numbers of messages that arrived since
+        self.closed = False
 
     def silent(self, yes=True):
         (self.free.clear if yes else self.free.set)()
 
-    def rows(self, folder):
+    def rows(self, folder, further=False):
+        """The first page, or with `further` what an older page or a search shows."""
+        numbers = (4, 3) if further else (*self.new, 2, 1)
         return [{"id": f"s1.{folder.encode().hex().upper():0<16}{n}", "subject": f"{folder} {n}", "from": "Rina",
-                 "time": f"2026-11-17T10:0{n}:00Z"} for n in (2, 1)]
+                 "time": f"2026-11-17T10:0{n}:00Z"} for n in numbers]
 
     def __call__(self, fn, *args, timeout=20):
         self.asked.append((fn.__name__, args[0] if args else None))
@@ -396,8 +400,10 @@ class FakeOutlook:
             raise OutlookBusy(started=False)
         if not self.free.wait(timeout):
             raise OutlookBusy()
+        if self.closed:
+            raise MailError("Outlook on your PC did not answer. Open Outlook and try again.")
         if fn.__name__ == "_list":
-            return {"folder": args[0], "mail": self.rows(args[0]), "more": False}
+            return {"folder": args[0], "mail": self.rows(args[0], further=bool(args[2] or args[3])), "more": False}
         if fn.__name__ == "_get":
             return {"id": args[0], "subject": "S", "time": "2026-11-17T10:02:00Z", "draft": args[0] in self.drafts,
                     "body": "text " + str(len(self.asked)), "html": ""}
@@ -537,6 +543,43 @@ class CopiesInMemory(unittest.TestCase):
         self.assertEqual(box.get(rows[1]["id"])["id"], rows[1]["id"])
         self.assertLess(time.monotonic() - started, 0.05, "a message nobody opened yet is already there")
         box._phone_at = -1e9  # the phone has been away for a long time: reading ahead ends by itself
+
+    def test_what_the_phone_was_shown_further_down_is_read_ahead_too(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook, read_ahead=True)
+        found = box.list("inbox", query="gasket")["mail"]
+        older = box.list("sent", offset=40)["mail"]
+        wanted = [row["id"] for row in found + older]
+        self.assertTrue(wait_until(lambda: all(mail_id in box._messages for mail_id in wanted) and not box._wanted))
+        outlook.silent()
+        started = time.monotonic()
+        self.assertEqual(box.get(found[0]["id"])["id"], found[0]["id"])
+        self.assertLess(time.monotonic() - started, 0.05, "a search result opens from memory")
+        box._phone_at = -1e9
+
+    def test_reading_ahead_goes_on_slowly_after_the_phone_is_put_down_and_never_reopens_outlook(self):
+        from titip import mailbox
+
+        slow = mailbox.WARM_LONG_EVERY
+        mailbox.WARM_LONG_EVERY = 0.02
+        self.addCleanup(lambda: setattr(mailbox, "WARM_LONG_EVERY", slow))
+        outlook = FakeOutlook()
+        box = box_with(outlook, read_ahead=True)
+        box.list("inbox")
+        self.assertTrue(wait_until(lambda: len(box._messages) == 6))
+        box._phone_at = time.monotonic() - mailbox.WARM_SECONDS - 1  # the phone was put down ten minutes ago
+        box._nudge.set()
+        outlook.new = (5,)  # and then a mail arrives
+        arrived = outlook.rows("inbox")[0]["id"]
+        self.assertTrue(wait_until(lambda: arrived in box._messages), "new mail is read before the phone is picked up")
+        outlook.closed = True
+        self.assertTrue(wait_until(lambda: not box._warmer.is_alive()), "the slow rounds end when Outlook is closed")
+        asked = len(outlook.asked)
+        time.sleep(0.1)
+        self.assertEqual(len(outlook.asked), asked, "a closed Outlook is not asked again until a phone asks")
+        outlook.closed = False
+        outlook.silent()
+        self.assertEqual(box.get(arrived)["id"], arrived)
 
 
 class FakeNamespace:

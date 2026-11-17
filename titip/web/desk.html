@@ -15,15 +15,28 @@
   <p id="mail" role="status">Checking Outlook…</p>
 
   <h2>Pair a phone</h2>
-  <p>Put the phone on the same Wi-Fi as this PC, press the button and scan the code with the phone's camera.</p>
-  <div class="rowline"><button class="primary" id="pair" type="button">Show a QR code</button><span class="soft" id="expires"></span></div>
+  <p id="pairHow">Press the button and scan the code with the phone's camera. The phone can be on any network: mobile data, another Wi-Fi or the same one.</p>
+  <div class="rowline"><button class="primary" id="far" type="button">Show a QR code</button><button id="farNew" type="button" hidden>Make a new code</button></div>
+  <div id="farBox" hidden>
+    <div class="qr" id="farQr"></div>
+    <p id="farOpens" role="status"></p>
+    <p class="soft">The code does not expire and it carries the key. Whoever has it can read the Autopilot page and press its buttons and, while the switch below is on, read and send your Outlook mail. Do not share a picture of it. “Make a new code” cuts off every phone that used the old one.</p>
+  </div>
+  <p class="soft" id="farNote"></p>
+  <p id="mailFarLine" role="status">Outlook mail from anywhere: checking…</p>
+  <p class="soft">On: a phone that scanned the code can read, answer and write your Outlook mail from any network. Each request and its answer pass through the relay, encrypted on the phone and on this PC with a key the relay never gets. If this is a work mailbox, check that your employer allows reading it this way.</p>
+  <div class="rowline"><button id="mailFar" type="button" disabled>Switch on</button></div>
+
+  <h2>Pair on the same Wi-Fi</h2>
+  <p>Without the relay: mail goes straight from this PC to the phone. Put the phone on the same Wi-Fi as this PC, press the button and scan the code with the phone's camera.</p>
+  <div class="rowline"><button id="pair" type="button">Show a same-Wi-Fi code</button><span class="soft" id="expires"></span></div>
   <div id="pairing" hidden>
     <div class="qr" id="qr"></div>
     <p class="soft" id="warn"></p>
     <p class="soft">No camera? Type this on the phone: <code id="url"></code></p>
   </div>
 
-  <h2>Paired phones</h2>
+  <h2>Phones paired on the same Wi-Fi</h2>
   <ul id="devices"></ul>
   <div class="rowline"><button id="unpair" type="button">Unpair all phones</button></div>
 
@@ -32,26 +45,14 @@
   <p class="soft">Reads new mail in the Gmail that Chrome is signed in to, answers what is safe to answer and keeps the rest for you. It never touches Outlook.</p>
   <div class="rowline"><a class="go" href="/auto.html">Open Autopilot</a></div>
 
-  <h2>From anywhere</h2>
-  <p>For mobile data or another Wi-Fi. Scan the code once with the phone's camera. It opens the Autopilot page; your Outlook mail is added only while the switch below is on.</p>
-  <div class="rowline"><button id="far" type="button">Show the code</button><button id="farNew" type="button" hidden>Make a new code</button></div>
-  <div id="farBox" hidden>
-    <div class="qr" id="farQr"></div>
-    <p class="soft">The code does not expire and it carries the key. Whoever has it can read the Autopilot page and press its buttons and, while the switch below is on, read and send your Outlook mail. Do not share a picture of it. “Make a new code” cuts off every phone that used the old one.</p>
-  </div>
-  <p class="soft" id="farNote"></p>
-  <p id="mailFarLine" role="status">Outlook mail from anywhere: checking…</p>
-  <p class="soft">On: a phone that scanned the code can read, answer and write your Outlook mail from any network. Each request and its answer pass through the relay, encrypted on the phone and on this PC with a key the relay never gets. If this is a work mailbox, check that your employer allows reading it this way.</p>
-  <div class="rowline"><button id="mailFar" type="button" disabled>Switch on</button></div>
-
   <h2>Updates</h2>
   <p id="updateLine" role="status">Checking…</p>
   <div class="rowline"><button id="updateSwitch" type="button" disabled>Switch off</button><button id="updateNow" type="button" disabled>Look now</button></div>
 
   <h2>Good to know</h2>
   <p class="soft" id="addresses"></p>
-  <p class="soft">Only paired phones get an answer. Your Outlook mail is never stored outside this PC. On your own network it goes straight from this PC to the phone, through no other server. Mail you send from the phone leaves from Outlook here, exactly as if you had typed it at your desk.</p>
-  <p class="soft">“From anywhere” is the one exception to “no other server”: the Autopilot page (Gmail) and, only if you switch it on, your Outlook mail pass through a relay, encrypted with a key the relay never gets.</p>
+  <p class="soft">Only a phone that scanned one of the codes gets an answer. Your Outlook mail is never stored outside this PC. On your own network it goes straight from this PC to the phone, through no other server. Mail you send from the phone leaves from Outlook here, exactly as if you had typed it at your desk.</p>
+  <p class="soft">The code for any network is the one exception to “no other server”: the Autopilot page (Gmail) and, only if you switch it on, your Outlook mail pass through a relay, encrypted with a key the relay never gets.</p>
 
   <h2>Stop</h2>
   <p class="soft">Stopping closes the door for every phone until you start Titip again. Paired phones stay paired.</p>
