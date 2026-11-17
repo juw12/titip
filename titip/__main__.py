@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         seconds = 0
         while not app.quit.wait(1):  # "Stop Titip" on the PC page sets it; the short wait keeps Ctrl+C working
             seconds += 1
-            if seconds % 20 == 0:
+            if seconds % 2 == 0:  # often: at lowered priority on a full PC, Titip may not run again for a minute
                 stay_responsive()
         time.sleep(0.3)  # let the answer to that click reach the browser
     except KeyboardInterrupt:

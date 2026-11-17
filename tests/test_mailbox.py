@@ -304,6 +304,221 @@ class BusyOutlook(unittest.TestCase):
         self.assertEqual(ran, [])
 
 
+class FakeOutlook:
+    """Stands in for OutlookMailbox._do: answers lists and messages, or stays silent while `busy` is set."""
+
+    def __init__(self, drafts=()):
+        self.free = threading.Event()
+        self.free.set()
+        self.asked = []
+        self.drafts = set(drafts)
+
+    def silent(self, yes=True):
+        (self.free.clear if yes else self.free.set)()
+
+    def rows(self, folder):
+        return [{"id": f"s1.{folder.encode().hex().upper():0<16}{n}", "subject": f"{folder} {n}", "from": "Rina",
+                 "time": f"2026-11-17T10:0{n}:00Z"} for n in (2, 1)]
+
+    def __call__(self, fn, *args, timeout=20):
+        self.asked.append((fn.__name__, args[0] if args else None))
+        if fn.__name__ == "_send" and not self.free.is_set():
+            raise OutlookBusy(started=False)
+        if not self.free.wait(timeout):
+            raise OutlookBusy()
+        if fn.__name__ == "_list":
+            return {"folder": args[0], "mail": self.rows(args[0]), "more": False}
+        if fn.__name__ == "_get":
+            return {"id": args[0], "subject": "S", "time": "2026-11-17T10:02:00Z", "draft": args[0] in self.drafts,
+                    "body": "text " + str(len(self.asked)), "html": ""}
+        return {"ok": True, "sent": True}
+
+    def count(self, name):
+        return sum(1 for asked in self.asked if asked[0] == name)
+
+
+def box_with(outlook, read_ahead=False):
+    box = OutlookMailbox(read_ahead=read_ahead)
+    box._do = outlook
+    return box
+
+
+def wait_until(condition, seconds=3):
+    end = time.monotonic() + seconds
+    while not condition() and time.monotonic() < end:
+        time.sleep(0.01)
+    return condition()
+
+
+class CopiesInMemory(unittest.TestCase):
+    """A tap on the phone must not wait for Outlook when Titip already knows the answer."""
+
+    def setUp(self):
+        from titip import mailbox
+
+        self.saved = {name: getattr(mailbox, name) for name in ("QUICK_SECONDS", "READ_SECONDS", "ASK_SECONDS", "WARM_PAUSE")}
+        mailbox.QUICK_SECONDS, mailbox.READ_SECONDS, mailbox.ASK_SECONDS, mailbox.WARM_PAUSE = 0.1, 0.2, 5, 0
+        self.addCleanup(lambda: [setattr(mailbox, name, value) for name, value in self.saved.items()])
+
+    def test_a_message_read_before_opens_at_once_while_outlook_is_silent(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook)
+        first = box.get("s1.ABCDEF0123456789")
+        outlook.silent()
+        started = time.monotonic()
+        again = box.get("s1.ABCDEF0123456789")
+        self.assertLess(time.monotonic() - started, 0.05)
+        self.assertEqual(again, first)
+        self.assertEqual(outlook.count("_get"), 1, "a received message does not change: Outlook is not asked again")
+
+    def test_tries_share_one_question_and_its_late_answer_is_kept(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook)
+        outlook.silent()
+        for _ in range(3):  # the phone asking again and again
+            with self.assertRaises(OutlookBusy):
+                box.get("s1.ABCDEF0123456789")
+        self.assertEqual(outlook.count("_get"), 1, "one question in Outlook's queue, not one per try")
+        outlook.silent(False)
+        self.assertTrue(wait_until(lambda: not box._asking))
+        outlook.silent()
+        self.assertEqual(box.get("s1.ABCDEF0123456789")["subject"], "S")  # nobody was waiting when it arrived
+        self.assertEqual(outlook.count("_get"), 1)
+
+    def test_first_page_comes_from_the_copy_marked_saved_when_outlook_is_busy(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook)
+        fresh = box.list("inbox")
+        self.assertNotIn("saved", fresh)
+        self.assertIs(box.list("inbox"), fresh)
+        self.assertEqual(outlook.count("_list"), 1, "a list a few seconds old is not asked for again")
+        key = ("inbox", 40)
+        box._lists[key] = (0.0, "2026-11-17T10:03:00Z", box._lists[key][2])  # long ago
+        outlook.silent()
+        started = time.monotonic()
+        old = box.list("inbox")
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual((old["saved"], old["savedAt"], old["mail"]), (True, "2026-11-17T10:03:00Z", fresh["mail"]))
+        outlook.silent(False)
+        self.assertTrue(wait_until(lambda: not box._asking))
+        self.assertNotIn("saved", box.list("inbox"))
+
+    def test_without_a_copy_the_phone_is_told_busy_and_searches_always_ask_outlook(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook)
+        outlook.silent()
+        with self.assertRaises(OutlookBusy):
+            box.list("sent")
+        outlook.silent(False)
+        self.assertTrue(wait_until(lambda: not box._asking))
+        box.list("sent", query="gasket")
+        box.list("sent", query="gasket")
+        box.list("sent", offset=40)
+        self.assertEqual(outlook.count("_list"), 4)
+        with self.assertRaises(MailError):
+            box.list("../secrets")
+
+    def test_a_draft_is_asked_for_again_and_the_copy_is_only_a_fallback(self):
+        draft = "s1.DDDDDD0123456789"
+        outlook = FakeOutlook(drafts=[draft])
+        box = box_with(outlook)
+        first = box.get(draft)
+        second = box.get(draft)
+        self.assertNotEqual(first["body"], second["body"], "a draft may have changed on the PC")
+        outlook.silent()
+        kept = box.get(draft)
+        self.assertEqual((kept["saved"], kept["body"]), (True, second["body"]))
+
+    def test_sending_is_asked_once_and_forgets_the_lists(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook)
+        box.list("sent")
+        box.send({"mode": "new", "to": "a@example.com", "body": "x"})
+        self.assertEqual(box._lists, {})
+        self.assertEqual(outlook.count("_send"), 1)
+        outlook.silent()
+        with self.assertRaises(MailError) as caught:
+            box.send({"mode": "new", "to": "a@example.com", "body": "x"})
+        self.assertNotIsInstance(caught.exception, OutlookBusy)  # the phone repeats only what is marked busy
+        self.assertEqual(outlook.count("_send"), 2, "a send is never shared, kept or repeated")
+        self.assertEqual(box._asking, {})
+
+    def test_memory_stays_bounded(self):
+        from titip import mailbox
+
+        outlook = FakeOutlook()
+        box = box_with(outlook)
+        for n in range(mailbox.KEEP_MESSAGES + 5):
+            box.get(f"s1.{n:016X}")
+        self.assertEqual(len(box._messages), mailbox.KEEP_MESSAGES)
+        self.assertNotIn("s1." + "0" * 16, box._messages)  # the oldest went first
+        self.assertEqual(box._kept_characters, sum(len(m["body"]) for m in box._messages.values()))
+
+    def test_messages_are_read_ahead_only_once_a_phone_asks(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook, read_ahead=True)
+        box.quick_state(wait=0.2)  # the page on the PC
+        self.assertIsNone(box._warmer, "Titip does not read mail before a phone asks")
+        rows = box.list("inbox")["mail"]
+        wanted = [row["id"] for folder in ("inbox", "sent", "drafts") for row in outlook.rows(folder)]
+        self.assertTrue(wait_until(lambda: all(mail_id in box._messages for mail_id in wanted)))
+        outlook.silent()
+        started = time.monotonic()
+        self.assertEqual(box.get(rows[1]["id"])["id"], rows[1]["id"])
+        self.assertLess(time.monotonic() - started, 0.05, "a message nobody opened yet is already there")
+        box._phone_at = -1e9  # the phone has been away for a long time: reading ahead ends by itself
+
+
+class FakeNamespace:
+    def __init__(self, items):
+        self.items = items
+
+    def GetItemFromID(self, entry_id, store_id):
+        return self.items[(store_id, entry_id)]  # KeyError: Outlook does not have it under that id
+
+
+class MovedMessages(unittest.TestCase):
+    """A rule or archiving tool moves new mail into a data file, which changes its id."""
+
+    OLD, NEW, OTHER = "live.AAAAAAAAAAAAAAAA", "arch.BBBBBBBBBBBBBBBB", "arch.CCCCCCCCCCCCCCCC"
+
+    def box(self, rows):
+        box = OutlookMailbox(read_ahead=False)
+        box._stores = {"live": "LIVE", "arch": "ARCHIVE"}
+        box._ns = FakeNamespace({("ARCHIVE", "BBBBBBBBBBBBBBBB"): "the moved message", ("ARCHIVE", "CCCCCCCCCCCCCCCC"): "another"})
+        box._rows[self.OLD] = ("inbox", "2026-11-17T10:02:00Z", "Hinge sample B", "Rina")
+        self.listed = []
+
+        def newest(folder, limit, offset, query):
+            self.listed.append(folder)
+            return {"mail": rows}
+
+        box._list = newest
+        return box
+
+    def row(self, mail_id, subject="Hinge sample B"):
+        return {"id": mail_id, "subject": subject, "from": "Rina", "time": "2026-11-17T10:02:00Z"}
+
+    def test_the_same_message_is_found_under_its_new_id(self):
+        box = self.box([self.row(self.OTHER, "Something else"), self.row(self.NEW)])
+        self.assertEqual(box._item(self.OLD), "the moved message")
+        self.assertEqual(box._item(self.OLD), "the moved message")  # reply and attachments use the old id too
+        self.assertEqual(self.listed, ["inbox"], "looked up once, then remembered")
+
+    def test_no_guessing_between_look_alikes_or_for_an_unknown_message(self):
+        box = self.box([self.row(self.NEW), self.row(self.OTHER)])  # two with the same time, subject and sender
+        with self.assertRaises(MailError):
+            box._item(self.OLD)
+        box = self.box([self.row(self.NEW)])
+        with self.assertRaises(MailError):
+            box._item("live.EEEEEEEEEEEEEEEE")  # never listed: nothing to go by
+        self.assertEqual(self.listed, [])
+        box = self.box([])  # really deleted
+        with self.assertRaises(MailError) as caught:
+            box._item(self.OLD)
+        self.assertIn("moved or deleted", str(caught.exception))
+
+
 class Demo(unittest.TestCase):
     def test_lists_are_newest_first_and_searchable(self):
         box = DemoMailbox()

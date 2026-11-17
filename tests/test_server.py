@@ -170,6 +170,17 @@ class Mail(ServerCase):
         self.assertIn("busy", body["error"])
         self.assertEqual(self.get("/api/mail?folder=inbox")[0].status, 200)
 
+    def test_the_phones_counts_never_wait_for_a_busy_outlook(self):
+        box = self.app.mailbox
+        real_state, real_quick = box.state, box.quick_state
+        box.state = lambda *args, **kwargs: (_ for _ in ()).throw(OutlookBusy())
+        box.quick_state = lambda: {"ok": True, "busy": True, "counts": {"inbox": 3, "sent": 1, "drafts": 2}}
+        try:
+            reply, body = self.get("/api/state")
+        finally:
+            box.state, box.quick_state = real_state, real_quick
+        self.assertEqual((reply.status, body["counts"]["drafts"], body["busy"]), (200, 2, True))
+
     def test_attachment_download_and_no_file_access_outside_the_app(self):
         _, page = self.get("/api/mail?folder=inbox&q=hinge")
         reply, data = self.phone("GET", f"/api/attachment?id={page['mail'][0]['id']}&index=1", cookie=self.token)
