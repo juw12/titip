@@ -1,0 +1,666 @@
+"""Mailboxes Titip can read and send from.
+
+OutlookMailbox drives the classic Outlook desktop app on this PC through COM, so it uses the account
+Outlook is already signed in to: no password, token or mail server setting is stored by Titip.
+DemoMailbox serves the invented mail in web/demo.json (tests, screenshots, the public demo).
+
+Both expose the same five calls: state, list, get, attachment, send.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import html
+import json
+import queue
+import re
+import threading
+import time
+from pathlib import Path
+
+WEB = Path(__file__).parent / "web"
+FOLDERS = ("inbox", "sent", "drafts")
+MAX_LIST = 500  # how far back the phone can page in one folder
+MAX_BODY = 200_000
+MAX_HTML = 1_500_000
+STATE_SECONDS = 10
+READ_SECONDS = 20  # how long the phone waits for Outlook before it is told "busy"
+SEND_SECONDS = 120
+REFRESH_SECONDS = 300  # the PC page's own look at Outlook runs in the background and may wait this long
+
+PROP = "http://schemas.microsoft.com/mapi/proptag/"
+P_DELIVERED = PROP + "0x0E060040"  # PR_MESSAGE_DELIVERY_TIME (UTC)
+P_SUBMITTED = PROP + "0x00390040"  # PR_CLIENT_SUBMIT_TIME (UTC)
+P_MODIFIED = PROP + "0x30080040"  # PR_LAST_MODIFICATION_TIME (UTC)
+P_HAS_ATTACH = PROP + "0x0E1B000B"
+P_DISPLAY_TO = PROP + "0x0E04001F"
+P_PREVIEW = PROP + "0x1000001F"  # PR_BODY: a table returns only its first 255 characters
+P_SMTP = PROP + "0x39FE001F"
+P_ATTACH_HIDDEN = PROP + "0x7FFE000B"
+
+OL_INBOX, OL_SENT, OL_DRAFTS = 6, 5, 16
+OL_DISCARD = 1
+RPC_BUSY = (-2147418111, -2147417846)  # RPC_E_CALL_REJECTED, RPC_E_SERVERCALL_RETRYLATER
+
+
+class MailError(Exception):
+    """A problem worth showing on the phone as-is (bad recipient, mail not found, Outlook closed)."""
+
+
+class OutlookBusy(MailError):
+    """Outlook did not get to our call in time. `started` tells whether it had begun working on it."""
+
+    def __init__(self, started: bool = False):
+        super().__init__("Outlook on your PC is busy right now. Try again in a moment.")
+        self.started = started
+
+
+def text_to_html(text: str) -> str:
+    """What the phone typed, as the HTML block that goes above the signature or the quoted thread."""
+    lines = html.escape(text.replace("\r\n", "\n").strip("\n")).split("\n")
+    body = "<br>".join(lines)
+    return f'<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">{body}</div><br>'
+
+
+def insert_into_html(existing: str, block: str) -> str:
+    """Put `block` right after <body ...> so signature and quoted mail stay below it."""
+    match = re.search(r"<body[^>]*>", existing or "", flags=re.IGNORECASE)
+    if not match:
+        return block + (existing or "")
+    return existing[: match.end()] + block + existing[match.end():]
+
+
+def split_addresses(value) -> list[str]:
+    if isinstance(value, str):
+        value = re.split(r"[;,\n]", value)
+    return [part.strip() for part in (value or []) if part and part.strip()]
+
+
+def clean_send_request(payload: dict) -> dict:
+    """Validate what the phone posted; raises MailError with a message for the composer."""
+    mode = payload.get("mode", "new")
+    action = payload.get("action", "send")
+    if mode not in ("new", "reply", "replyAll", "forward", "draft"):
+        raise MailError("Unknown kind of message.")
+    if action not in ("send", "draft"):
+        raise MailError("Unknown action.")
+    request = {
+        "mode": mode,
+        "action": action,
+        "id": str(payload.get("id") or ""),
+        "to": split_addresses(payload.get("to")),
+        "cc": split_addresses(payload.get("cc")),
+        "subject": str(payload.get("subject") or "").strip()[:255],
+        "body": str(payload.get("body") or "")[:MAX_BODY],
+    }
+    if mode != "new" and not request["id"]:
+        raise MailError("The original message is missing.")
+    if action == "send":
+        if not request["to"] and mode not in ("reply", "replyAll"):
+            raise MailError("Add at least one recipient.")
+        if not request["body"].strip() and mode != "forward":
+            raise MailError("Write a message first.")
+    return request
+
+
+# ============================================================ Outlook (COM)
+
+class _Job:
+    __slots__ = ("fn", "args", "done", "state")
+
+    def __init__(self, fn, args):
+        self.fn, self.args = fn, args
+        self.done: queue.Queue = queue.Queue(maxsize=1)
+        self.state = "waiting"  # -> "running" -> finished, or -> "dropped" when the caller gave up first
+
+
+class _ComThread:
+    """Outlook's COM objects must stay on one thread; every call is queued to this one.
+
+    Outlook answers one caller at a time. While it is busy (a big move, a dialog, another add-in) calls
+    wait here. A caller that gives up drops its job, so a busy spell does not leave a pile of stale
+    work behind, and above all a send that was given up on is never carried out later.
+    """
+
+    def __init__(self):
+        self._jobs: queue.Queue = queue.Queue()
+        self._lock = threading.Lock()
+        self._running_since: float | None = None
+        threading.Thread(target=self._run, daemon=True, name="titip-outlook").start()
+
+    def _run(self):
+        import pythoncom
+
+        pythoncom.CoInitialize()
+        while True:
+            job = self._jobs.get()
+            with self._lock:
+                if job.state == "dropped":
+                    continue
+                job.state = "running"
+                self._running_since = time.monotonic()
+            try:
+                job.done.put((True, job.fn(*job.args)))
+            except BaseException as error:  # handed back to the caller's thread
+                job.done.put((False, error))
+            finally:
+                self._running_since = None
+
+    def stuck_for(self) -> float:
+        """Seconds Outlook has been working on (or ignoring) the call it has now; 0 when idle."""
+        since = self._running_since
+        return time.monotonic() - since if since is not None else 0.0
+
+    def call(self, fn, *args, timeout: float = READ_SECONDS):
+        if self.stuck_for() >= timeout:  # Outlook has been silent longer than this caller would wait anyway
+            raise OutlookBusy(False)
+        job = _Job(fn, args)
+        self._jobs.put(job)
+        try:
+            ok, value = job.done.get(timeout=timeout)
+        except queue.Empty:
+            with self._lock:
+                started = job.state == "running"
+                job.state = "dropped"
+            raise OutlookBusy(started)
+        if ok:
+            return value
+        raise value
+
+
+def _utc_iso(value) -> str:
+    """A COM date read through a MAPI property tag is UTC; pywin32 hands it over as a datetime."""
+    try:
+        if value.year < 1980 or value.year > 4000:  # Outlook's "no date" is 4501-01-01
+            return ""
+        return dt.datetime(value.year, value.month, value.day, value.hour, value.minute, value.second).isoformat() + "Z"
+    except (AttributeError, ValueError):
+        return ""
+
+
+class OutlookMailbox:
+    demo = False
+
+    def __init__(self):
+        self._thread: _ComThread | None = None
+        self._app = None
+        self._ns = None
+        self._stores: dict[str, str] = {}  # short key -> StoreID
+        self._folders: dict[str, list] = {}
+        self._state_cache: tuple[float, dict] | None = None
+        self._state_problem: MailError | None = None
+        self._refresh: threading.Thread | None = None
+        self._refresh_lock = threading.Lock()
+
+    # every public method hops to the COM thread and maps COM failures to MailError
+    def _do(self, fn, *args, timeout: float = READ_SECONDS):
+        import pythoncom
+
+        def guarded():
+            try:
+                self._connect()
+                return fn(*args)
+            except pythoncom.com_error as error:
+                if error.hresult in RPC_BUSY:  # Outlook is showing a dialog or serving another program
+                    raise OutlookBusy()
+                self._app = None  # Outlook was closed or restarted: reconnect on the next call
+                self._folders.clear()
+                detail = ""
+                if error.excepinfo and error.excepinfo[2]:
+                    detail = str(error.excepinfo[2]).strip()
+                raise MailError(detail or "Outlook on your PC did not answer. Open Outlook and try again.")
+
+        if self._thread is None:
+            self._thread = _ComThread()
+        return self._thread.call(guarded, timeout=timeout)
+
+    def _connect(self):
+        if self._app is not None:
+            return
+        import win32com.client
+
+        self._app = win32com.client.Dispatch("Outlook.Application")
+        self._ns = self._app.GetNamespace("MAPI")
+        self._stores.clear()
+        self._folders.clear()
+
+    def _store_key(self, store_id: str) -> str:
+        key = hashlib.sha1(store_id.encode("ascii", "replace")).hexdigest()[:10]
+        self._stores[key] = store_id
+        return key
+
+    def _mail_folders(self, name: str) -> list:
+        """The default folder plus the same-named folder of every other store (archive .pst files).
+
+        Many people (and mail rules) move mail out of the live Inbox into a data file; reading only
+        the default Inbox would show an empty phone.
+        """
+        if name in self._folders:
+            return self._folders[name]
+        default_id = {"inbox": OL_INBOX, "sent": OL_SENT, "drafts": OL_DRAFTS}[name]
+        default = self._ns.GetDefaultFolder(default_id)
+        found = [default]
+        if name != "drafts":
+            wanted = default.Name.lower()
+            default_store = default.StoreID
+            for store in self._ns.Stores:
+                try:
+                    if store.StoreID == default_store:
+                        continue
+                    for folder in store.GetRootFolder().Folders:
+                        if folder.Name.lower() == wanted:
+                            found.append(folder)
+                            break
+                except Exception:  # a store that is offline or locked: skip it, keep the rest
+                    continue
+        order = {"inbox": "[ReceivedTime]", "sent": "[SentOn]", "drafts": "[LastModificationTime]"}[name]
+
+        def newest(folder) -> str:
+            try:
+                table = folder.GetTable()
+                table.Sort(order, True)
+                table.Columns.RemoveAll()
+                table.Columns.Add(order.strip("[]"))
+                return _utc_iso(table.GetArray(1)[0][0]) if table.GetRowCount() else ""
+            except Exception:
+                return ""
+
+        found[1:] = sorted(found[1:], key=newest, reverse=True)  # newest archive first: searches can stop early
+        self._folders[name] = found
+        return found
+
+    # -------------------------------------------------- state
+    def _fresh_state(self) -> dict | None:
+        cached = self._state_cache
+        if cached and time.monotonic() - cached[0] < STATE_SECONDS:
+            return cached[1]
+        return None
+
+    def state(self, timeout: float = READ_SECONDS) -> dict:
+        """Account and folder counts. Kept for a few seconds: the phone and the PC page both poll it."""
+        state = self._fresh_state()
+        if state is None:
+            state = self._do(self._state, timeout=timeout)
+            self._state_cache = (time.monotonic(), state)
+        return state
+
+    def _refresh_state(self) -> None:
+        try:
+            self.state(timeout=REFRESH_SECONDS)
+            self._state_problem = None
+        except MailError as error:
+            self._state_problem = error
+        except Exception:
+            self._state_problem = MailError("Outlook could not be reached on this PC.")
+
+    def quick_state(self, wait: float = 1.0) -> dict:
+        """For the page on the PC: answer within about a second, whatever Outlook is doing.
+
+        Outlook is asked in the background. Until it answers, the page gets the last known state
+        marked busy, with how long Outlook has been silent.
+        """
+        state = self._fresh_state()
+        if state is not None:
+            return state
+        with self._refresh_lock:
+            if self._refresh is None or not self._refresh.is_alive():
+                self._refresh = threading.Thread(target=self._refresh_state, daemon=True, name="titip-state")
+                self._refresh.start()
+            refresh = self._refresh
+        refresh.join(0.05 if self._thread and self._thread.stuck_for() > 2 else wait)
+        state = self._fresh_state()
+        if state is not None:
+            return state
+        problem = OutlookBusy() if refresh.is_alive() else self._state_problem
+        if problem is not None and not isinstance(problem, OutlookBusy):
+            return {"ok": False, "error": str(problem)}
+        silent = int(self._thread.stuck_for()) if self._thread else 0
+        if self._state_cache:
+            return {**self._state_cache[1], "busy": True, "busyFor": silent}
+        return {"ok": False, "busy": True, "busyFor": silent, "error": str(OutlookBusy())}
+
+    def _state(self) -> dict:
+        account = ""
+        try:
+            account = self._ns.Accounts.Item(1).SmtpAddress
+        except Exception:
+            pass
+        return {
+            "ok": True,
+            "demo": False,
+            "account": account,
+            "name": self._ns.CurrentUser.Name,
+            "counts": {name: sum(f.Items.Count for f in self._mail_folders(name)) for name in FOLDERS},
+        }
+
+    # -------------------------------------------------- list
+    def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "") -> dict:
+        return self._do(self._list, folder, limit, offset, query)
+
+    def _list(self, folder: str, limit: int, offset: int, query: str) -> dict:
+        if folder not in FOLDERS:
+            raise MailError("Unknown folder.")
+        limit = max(1, min(int(limit), 100))
+        offset = max(0, min(int(offset), MAX_LIST))
+        want = offset + limit
+        when = {"inbox": P_DELIVERED, "sent": P_SUBMITTED, "drafts": P_MODIFIED}[folder]  # read as UTC
+        # Table.Sort rejects property tags ("The parameter is incorrect"), so sort by the built-in name
+        order = {"inbox": "[ReceivedTime]", "sent": "[SentOn]", "drafts": "[LastModificationTime]"}[folder]
+        table_filter = ""
+        words = re.sub(r"[%_\[\]'\"]", " ", query or "").split()
+        if words:
+            text = " ".join(words)[:80]
+            who = "urn:schemas:httpmail:displayto" if folder != "inbox" else "urn:schemas:httpmail:fromname"
+            table_filter = (
+                f'@SQL=("urn:schemas:httpmail:subject" like \'%{text}%\' OR "{who}" like \'%{text}%\')'
+            )
+        rows = []
+        for mail_folder in self._mail_folders(folder):
+            store_key = self._store_key(mail_folder.StoreID)
+            table = mail_folder.GetTable(table_filter, 0) if table_filter else mail_folder.GetTable()
+            columns = table.Columns
+            columns.RemoveAll()
+            names = ["EntryID", "Subject", "SenderName", "MessageClass", "UnRead", when, P_HAS_ATTACH, P_DISPLAY_TO]
+            for column in names:
+                columns.Add(column)
+            has_preview = True
+            try:
+                columns.Add(P_PREVIEW)
+            except Exception:
+                has_preview = False
+            table.Sort(order, True)
+            if table.GetRowCount() == 0:
+                continue
+            for row in table.GetArray(want) or ():
+                rows.append({
+                    "id": f"{store_key}.{row[0]}",
+                    "subject": row[1] or "(no subject)",
+                    "from": row[2] or "",
+                    "kind": "meeting" if str(row[3] or "").startswith("IPM.Schedule") else "mail",
+                    "unread": bool(row[4]),
+                    "time": _utc_iso(row[5]),
+                    "attachments": bool(row[6]),
+                    "to": row[7] or "",
+                    "preview": " ".join(str(row[8] or "").split())[:180] if has_preview else "",
+                })
+            if table_filter and len(rows) >= want:
+                break  # a search scans every message of a data file: stop once the page is full
+        rows.sort(key=lambda mail: mail["time"], reverse=True)
+        page = rows[offset:want]
+        return {"folder": folder, "mail": page, "more": len(rows) > want and want < MAX_LIST}
+
+    # -------------------------------------------------- one message
+    def _item(self, mail_id: str):
+        store_key, _, entry_id = mail_id.partition(".")
+        if not re.fullmatch(r"[0-9A-Fa-f]{16,}", entry_id):
+            raise MailError("That message link is not valid.")
+        if store_key not in self._stores:
+            for name in FOLDERS:  # after a restart the phone still holds old ids: rebuild the store map
+                for folder in self._mail_folders(name):
+                    self._store_key(folder.StoreID)
+        store_id = self._stores.get(store_key)
+        if not store_id:
+            raise MailError("That message is in a mailbox that is no longer open in Outlook.")
+        try:
+            return self._ns.GetItemFromID(entry_id, store_id)
+        except Exception:
+            raise MailError("That message was moved or deleted. Refresh the list.")
+
+    def get(self, mail_id: str) -> dict:
+        return self._do(self._get, mail_id)
+
+    def _get(self, mail_id: str) -> dict:
+        item = self._item(mail_id)
+        access = item.PropertyAccessor
+
+        def prop(tag, default=""):
+            try:
+                return access.GetProperty(tag)
+            except Exception:
+                return default
+
+        sender_address = ""
+        try:
+            sender_address = item.SenderEmailAddress or ""
+            if "@" not in sender_address:  # Exchange gives an internal name; ask for the SMTP one
+                sender_address = item.Sender.GetExchangeUser().PrimarySmtpAddress
+        except Exception:
+            pass
+        attachments = []
+        try:
+            for index in range(1, item.Attachments.Count + 1):
+                attachment = item.Attachments.Item(index)
+                hidden = False
+                try:
+                    hidden = bool(attachment.PropertyAccessor.GetProperty(P_ATTACH_HIDDEN))
+                except Exception:
+                    pass
+                if not hidden:
+                    attachments.append({"index": index, "name": attachment.FileName, "size": attachment.Size})
+        except Exception:
+            pass
+        sent = _utc_iso(prop(P_SUBMITTED, None))
+        return {
+            "id": mail_id,
+            "subject": getattr(item, "Subject", "") or "(no subject)",
+            "from": getattr(item, "SenderName", "") or "",
+            "fromAddress": sender_address,
+            "to": getattr(item, "To", "") or "",
+            "cc": getattr(item, "CC", "") or "",
+            "time": _utc_iso(prop(P_DELIVERED, None)) or sent or _utc_iso(prop(P_MODIFIED, None)),
+            "draft": not getattr(item, "Sent", True),
+            "body": (getattr(item, "Body", "") or "")[:MAX_BODY],
+            "html": (getattr(item, "HTMLBody", "") or "")[:MAX_HTML],
+            "attachments": attachments,
+        }
+
+    def attachment(self, mail_id: str, index: int, folder: Path) -> tuple[str, Path]:
+        """Save one attachment into `folder`; returns (file name, path)."""
+        return self._do(self._attachment, mail_id, index, folder)
+
+    def _attachment(self, mail_id: str, index: int, folder: Path) -> tuple[str, Path]:
+        item = self._item(mail_id)
+        if not 1 <= index <= item.Attachments.Count:
+            raise MailError("That attachment is not there any more.")
+        attachment = item.Attachments.Item(index)
+        name = attachment.FileName or f"attachment-{index}"
+        path = Path(folder) / f"{index}{Path(name).suffix[:12]}"
+        attachment.SaveAsFile(str(path))
+        return name, path
+
+    # -------------------------------------------------- send or save a draft
+    def send(self, payload: dict) -> dict:
+        request = clean_send_request(payload)
+        self._state_cache = None
+        try:
+            return self._do(self._send, request, timeout=SEND_SECONDS)
+        except OutlookBusy as error:
+            if error.started:  # Outlook is in the middle of it: we cannot know yet whether it went out
+                raise MailError(
+                    "Outlook is taking a long time with this message. "
+                    "Look in Sent and Drafts before you send it again, so it does not go twice."
+                )
+            raise MailError("Outlook on your PC is busy, so nothing was sent. Your text is kept here. Try again in a moment.")
+
+    def _send(self, request: dict) -> dict:
+        mode = request["mode"]
+        created = True
+        if mode == "new":
+            mail = self._app.CreateItem(0)
+        else:
+            source = self._item(request["id"])
+            if mode == "draft":
+                if getattr(source, "Sent", True):
+                    raise MailError("That message is not a draft.")
+                mail, created = source, False
+            else:
+                try:
+                    mail = {"reply": source.Reply, "replyAll": source.ReplyAll, "forward": source.Forward}[mode]()
+                except AttributeError:
+                    raise MailError("This kind of item cannot be answered from Titip. Use Outlook for it.")
+        try:
+            if mode in ("reply", "replyAll"):  # Outlook already addressed it: only add to that
+                for kind, addresses in ((1, request["to"]), (2, request["cc"])):
+                    for address in addresses:
+                        mail.Recipients.Add(address).Type = kind
+            else:
+                mail.To = "; ".join(request["to"])
+                mail.CC = "; ".join(request["cc"])
+            if request["subject"]:
+                mail.Subject = request["subject"]
+            block = text_to_html(request["body"])
+            if mode == "draft":
+                # Sent as it was opened: keep Outlook's formatting, signature and pictures untouched.
+                if " ".join(request["body"].split()) != " ".join((mail.Body or "").split()):
+                    mail.HTMLBody = f"<html><body>{block}</body></html>"
+            else:
+                # No GetInspector here to pull in a signature: it would leave a hidden editor window
+                # inside Outlook for every mail. Whatever Outlook put in the body stays below the text.
+                mail.HTMLBody = insert_into_html(mail.HTMLBody, block)
+            if mail.Recipients.Count and not mail.Recipients.ResolveAll():
+                unknown = [r.Name for r in mail.Recipients if not r.Resolved]
+                raise MailError("Outlook does not know: " + ", ".join(unknown) + ". Use a full e-mail address.")
+            if request["action"] == "draft":
+                mail.Save()
+                return {"ok": True, "saved": True}
+            if not mail.Recipients.Count:
+                raise MailError("Add at least one recipient.")
+            mail.Send()
+            return {"ok": True, "sent": True}
+        except Exception:
+            if created:
+                try:
+                    mail.Close(OL_DISCARD)
+                except Exception:
+                    pass
+            raise
+
+
+# ============================================================ demo (invented mail)
+
+class DemoMailbox:
+    """The mail in web/demo.json, held in memory. Sending moves a message into Sent, nothing leaves."""
+
+    demo = True
+
+    def __init__(self):
+        data = json.loads((WEB / "demo.json").read_text(encoding="utf-8"))
+        self.me = data["me"]
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        self.mail: list[dict] = []
+        for index, mail in enumerate(data["mail"]):
+            when = now - dt.timedelta(minutes=mail.pop("minutesAgo"))
+            self.mail.append({
+                "id": f"demo.{index:016X}",
+                "time": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "cc": "",
+                "attachments": [],
+                "unread": False,
+                **mail,
+            })
+        self.lock = threading.Lock()
+
+    def state(self) -> dict:
+        counts = {name: sum(1 for mail in self.mail if mail["folder"] == name) for name in FOLDERS}
+        return {"ok": True, "demo": True, "account": self.me["address"], "name": self.me["name"], "counts": counts}
+
+    quick_state = state
+
+    def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "") -> dict:
+        if folder not in FOLDERS:
+            raise MailError("Unknown folder.")
+        needle = (query or "").lower().strip()
+        rows = [
+            mail for mail in self.mail
+            if mail["folder"] == folder
+            and (not needle or needle in (mail["subject"] + " " + mail["from"] + " " + mail["to"]).lower())
+        ]
+        rows.sort(key=lambda mail: mail["time"], reverse=True)
+        page = rows[offset: offset + limit]
+        return {
+            "folder": folder,
+            "more": len(rows) > offset + limit,
+            "mail": [{
+                "id": mail["id"],
+                "subject": mail["subject"],
+                "from": mail["from"],
+                "kind": "mail",
+                "unread": mail["unread"],
+                "time": mail["time"],
+                "attachments": bool(mail["attachments"]),
+                "to": mail["to"],
+                "preview": " ".join(mail["body"].split())[:180],
+            } for mail in page],
+        }
+
+    def _find(self, mail_id: str) -> dict:
+        for mail in self.mail:
+            if mail["id"] == mail_id:
+                return mail
+        raise MailError("That message was moved or deleted. Refresh the list.")
+
+    def get(self, mail_id: str) -> dict:
+        mail = self._find(mail_id)
+        return {
+            "id": mail["id"],
+            "subject": mail["subject"],
+            "from": mail["from"],
+            "fromAddress": mail.get("fromAddress", ""),
+            "to": mail["to"],
+            "cc": mail["cc"],
+            "time": mail["time"],
+            "draft": mail["folder"] == "drafts",
+            "body": mail["body"],
+            "html": mail.get("html", ""),
+            "attachments": [
+                {"index": index + 1, "name": a["name"], "size": a["size"]}
+                for index, a in enumerate(mail["attachments"])
+            ],
+        }
+
+    def attachment(self, mail_id: str, index: int, folder: Path) -> tuple[str, Path]:
+        mail = self._find(mail_id)
+        if not 1 <= index <= len(mail["attachments"]):
+            raise MailError("That attachment is not there any more.")
+        name = mail["attachments"][index - 1]["name"]
+        path = Path(folder) / f"{index}.txt"
+        path.write_text("Demo attachment: " + name, encoding="utf-8")
+        return name, path
+
+    def send(self, payload: dict) -> dict:
+        request = clean_send_request(payload)
+        with self.lock:
+            source = self._find(request["id"]) if request["id"] else None
+            if request["mode"] == "draft" and source["folder"] != "drafts":
+                raise MailError("That message is not a draft.")
+            to = request["to"]
+            subject = request["subject"]
+            body = request["body"]
+            if request["mode"] in ("reply", "replyAll"):
+                to = to or [source["from"]]
+                subject = subject or "RE: " + source["subject"]
+                body += f"\n\nFrom: {source['from']}\nSubject: {source['subject']}\n\n{source['body']}"
+            if request["mode"] == "forward":
+                subject = subject or "FW: " + source["subject"]
+                body += f"\n\nFrom: {source['from']}\nSubject: {source['subject']}\n\n{source['body']}"
+            for address in to:
+                if "@" not in address and " " not in address and len(address) < 3:
+                    raise MailError(f"Outlook does not know: {address}. Use a full e-mail address.")
+            if request["mode"] == "draft":
+                self.mail.remove(source)
+            folder = "drafts" if request["action"] == "draft" else "sent"
+            self.mail.append({
+                "id": f"demo.{len(self.mail) + 100:016X}{len(body):04X}",
+                "folder": folder,
+                "from": self.me["name"],
+                "fromAddress": self.me["address"],
+                "to": "; ".join(to),
+                "cc": "; ".join(request["cc"]),
+                "subject": subject or "(no subject)",
+                "body": body,
+                "time": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "attachments": [],
+                "unread": False,
+            })
+        return {"ok": True, "saved": True} if folder == "drafts" else {"ok": True, "sent": True}

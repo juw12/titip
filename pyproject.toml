@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "titip"
+dynamic = ["version"]
+description = "Read, answer and write your Outlook mail from your phone. Your own PC serves it."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Juwen Lie" }]
+requires-python = ">=3.10"
+dependencies = [
+    "pywin32>=306; sys_platform == 'win32'",
+    "segno>=1.6",
+    "cryptography>=42",
+]
+
+[project.urls]
+Homepage = "https://juw12.github.io/p/titip/"
+Demo = "https://juw12.github.io/titip/"
+Source = "https://github.com/juw12/titip"
+
+[project.scripts]
+titip = "titip.__main__:main"
+
+[tool.setuptools]
+packages = ["titip"]
+
+[tool.setuptools.dynamic]
+version = { attr = "titip.__version__" }
+
+[tool.setuptools.package-data]
+titip = ["web/*"]

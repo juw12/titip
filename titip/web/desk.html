@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Titip on this PC</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="stripe" aria-hidden="true"></div>
+<main class="sheet">
+  <h1>Titip on this PC</h1>
+  <p>Read, answer and write your Outlook mail from your phone. This PC serves it; keep it on and Outlook open.</p>
+  <p id="mail" role="status">Checking Outlook…</p>
+
+  <h2>Pair a phone</h2>
+  <p>Put the phone on the same Wi-Fi as this PC, press the button and scan the code with the phone's camera.</p>
+  <div class="rowline"><button class="primary" id="pair" type="button">Show a QR code</button><span class="soft" id="expires"></span></div>
+  <div id="pairing" hidden>
+    <div class="qr" id="qr"></div>
+    <p class="soft" id="warn"></p>
+    <p class="soft">No camera? Type this on the phone: <code id="url"></code></p>
+  </div>
+
+  <h2>Paired phones</h2>
+  <ul id="devices"></ul>
+  <div class="rowline"><button id="unpair" type="button">Unpair all phones</button></div>
+
+  <h2>Good to know</h2>
+  <p class="soft" id="addresses"></p>
+  <p class="soft">Only paired phones get an answer. Nothing is stored outside this PC and nothing goes through another server. Mail you send from the phone leaves from Outlook here, exactly as if you had typed it at your desk.</p>
+
+  <h2>Stop</h2>
+  <p class="soft">Stopping closes the door for every phone until you start Titip again. Paired phones stay paired.</p>
+  <div class="rowline"><button id="quit" type="button">Stop Titip</button><span class="soft" id="stopped" role="status"></span></div>
+</main>
+<script src="/desk.js"></script>
+</body>
+</html>

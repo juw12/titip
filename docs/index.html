@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Titip: your Outlook mail on your phone</title>
+<meta name="description" content="Read, answer and write your Outlook mail from your phone. Your own PC serves it; nothing goes through anyone else's server.">
+<meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#12171d" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="bar">
+  <h1 class="brand"><img src="icon.svg" alt="" width="26" height="26">Titip</h1>
+  <nav class="tabs" aria-label="Folders">
+    <a href="#/inbox" data-folder="inbox">Inbox</a>
+    <a href="#/sent" data-folder="sent">Sent</a>
+    <a href="#/drafts" data-folder="drafts">Drafts<span class="count" id="draftCount" hidden></span></a>
+  </nav>
+  <div class="tools">
+    <button class="icon" id="searchToggle" type="button" aria-label="Search mail" aria-expanded="false" aria-controls="searchBox">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/></svg>
+    </button>
+    <button class="icon" id="refresh" type="button" aria-label="Check for new mail">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg>
+    </button>
+    <button class="icon" id="theme" type="button" aria-label="Switch between light and dark">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg>
+    </button>
+  </div>
+</header>
+
+<form class="search" id="searchBox" role="search" hidden>
+  <label class="sr" for="q">Search this folder by subject or person</label>
+  <input id="q" type="search" placeholder="Search subject or person" autocomplete="off" enterkeyhint="search">
+</form>
+
+<p class="demo" id="demoNote" hidden>Demo with invented mail. Nothing is sent.</p>
+
+<main class="panes">
+  <section class="list" aria-label="Messages">
+    <div class="state" id="state" role="status"></div>
+    <ul id="rows"></ul>
+    <button class="more" id="more" type="button" hidden>Show older mail</button>
+  </section>
+
+  <article class="reader" id="reader" aria-live="polite">
+    <p class="hint" id="readerHint">Pick a message to read it here.</p>
+    <div id="letter" hidden>
+      <button class="back" id="back" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span id="backLabel">Inbox</span>
+      </button>
+      <h2 id="subject"></h2>
+      <dl class="meta">
+        <div><dt>From</dt><dd id="from"></dd></div>
+        <div><dt>To</dt><dd id="to"></dd></div>
+        <div id="ccRow"><dt>Cc</dt><dd id="cc"></dd></div>
+        <div><dt>When</dt><dd id="when"></dd></div>
+      </dl>
+      <ul class="files" id="files" aria-label="Attachments"></ul>
+      <div class="view" id="viewRow">
+        <button class="link" id="viewToggle" type="button"></button>
+      </div>
+      <div class="body" id="body"></div>
+      <div class="actions" id="actions">
+        <button type="button" class="primary" data-mode="reply">Reply</button>
+        <button type="button" data-mode="replyAll">Reply all</button>
+        <button type="button" data-mode="forward">Forward</button>
+      </div>
+    </div>
+  </article>
+</main>
+
+<button class="write" id="write" type="button">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/></svg>Write
+</button>
+
+<section class="composer" id="composer" role="dialog" aria-labelledby="composeTitle" hidden>
+  <div class="stripe" aria-hidden="true"></div>
+  <form id="composeForm" novalidate>
+    <div class="composeBar">
+      <button type="button" class="link" id="discard">Cancel</button>
+      <h2 id="composeTitle">New message</h2>
+      <button type="submit" class="primary" id="send">Send</button>
+    </div>
+    <p class="note" id="replyNote" hidden></p>
+    <p class="error" id="composeError" role="alert" hidden></p>
+    <label class="field" id="toField"><span>To</span>
+      <input id="toInput" type="text" inputmode="email" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="name@company.com; another@company.com">
+    </label>
+    <label class="field"><span id="ccLabel">Cc</span>
+      <input id="ccInput" type="text" inputmode="email" autocapitalize="off" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="field" id="subjectField"><span>Subject</span>
+      <input id="subjectInput" type="text" maxlength="255" autocomplete="off">
+    </label>
+    <label class="field grow"><span class="sr">Message</span>
+      <textarea id="bodyInput" rows="8" placeholder="Write your message"></textarea>
+    </label>
+    <div class="composeFoot">
+      <button type="button" id="saveDraft">Save as draft</button>
+      <span class="footNote" id="footNote">Leaves from Outlook on your PC, from your own address.</span>
+    </div>
+  </form>
+</section>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden>
+  <span id="toastText"></span>
+  <button type="button" id="toastAction" hidden></button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

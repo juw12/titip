@@ -1,0 +1,146 @@
+{
+ "me": {
+  "name": "Rin Aoki",
+  "address": "rin.aoki@lumenworks.example"
+ },
+ "mail": [
+  {
+   "folder": "inbox",
+   "minutesAgo": 6,
+   "from": "Mateo Silva",
+   "fromAddress": "mateo.silva@lumenworks.example",
+   "to": "Rin Aoki",
+   "cc": "Priya Nair",
+   "subject": "Hinge sample B: torque results",
+   "body": "Hi Rin,\n\nThe second batch of hinge samples is back from the lab. Average opening torque is 0.42 N·m against a target of 0.40 ± 0.05, so we are inside the window on all 12 pieces.\n\nTwo pieces show light scuffing on the cam after 5,000 cycles. Photos are attached. Do you want us to run the remaining 5,000 cycles before Friday's review, or stop here and section one?\n\nThanks,\nMateo",
+   "attachments": [
+    {
+     "name": "hinge-B-torque.xlsx",
+     "size": 48213
+    },
+    {
+     "name": "cam-scuffing.jpg",
+     "size": 912004
+    }
+   ],
+   "html": "<p>Hi Rin,</p><p>The second batch of hinge samples is back from the lab. All 12 pieces are inside the window.</p><table style=\"border-collapse:collapse;font-size:14px\"><tr><th style=\"border:1px solid #999;padding:4px 10px;text-align:left\">Measure</th><th style=\"border:1px solid #999;padding:4px 10px\">Target</th><th style=\"border:1px solid #999;padding:4px 10px\">Batch B</th></tr><tr><td style=\"border:1px solid #999;padding:4px 10px\">Opening torque (N·m)</td><td style=\"border:1px solid #999;padding:4px 10px\">0.40 ± 0.05</td><td style=\"border:1px solid #999;padding:4px 10px\">0.42</td></tr><tr><td style=\"border:1px solid #999;padding:4px 10px\">Cycles completed</td><td style=\"border:1px solid #999;padding:4px 10px\">10,000</td><td style=\"border:1px solid #999;padding:4px 10px\">5,000</td></tr></table><p>Two pieces show light scuffing on the cam after 5,000 cycles. Photos are attached. Do you want us to run the remaining 5,000 cycles before Friday's review, or stop here and section one?</p><p>Thanks,<br>Mateo</p>"
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 41,
+   "from": "Priya Nair",
+   "fromAddress": "priya.nair@lumenworks.example",
+   "to": "Rin Aoki; Mateo Silva",
+   "subject": "RE: Friday design review agenda",
+   "body": "Agenda looks good. Can we move the gasket topic to the first slot? Tooling needs the decision by noon to hold the mould date.\n\nPriya"
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 95,
+   "from": "Okafor Supplies",
+   "fromAddress": "orders@okafor-supplies.example",
+   "to": "Rin Aoki",
+   "subject": "Quote Q-2291: silicone gasket, 500 pcs",
+   "body": "Dear Rin,\n\nPlease find our quote for 500 pieces of the 40 Shore A gasket. Lead time is 18 working days after drawing approval. The price is valid for 30 days.\n\nKind regards,\nAda Okafor",
+   "attachments": [
+    {
+     "name": "Q-2291.pdf",
+     "size": 130551
+    }
+   ]
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 210,
+   "from": "Jonas Weber",
+   "fromAddress": "jonas.weber@lumenworks.example",
+   "to": "Rin Aoki",
+   "subject": "Drop test slot on Thursday?",
+   "body": "The drop tower is free Thursday 14:00 to 16:00. I pencilled you in for the corner drops. Tell me if you need the high-speed camera as well.\n\nJonas"
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 1500,
+   "from": "Facilities",
+   "fromAddress": "facilities@lumenworks.example",
+   "to": "All staff",
+   "subject": "Lab 2 air conditioning service on Saturday",
+   "body": "Lab 2 will be closed on Saturday from 08:00 to 13:00 while the air conditioning is serviced. Please move temperature-sensitive samples to Lab 1 by Friday evening."
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 1720,
+   "from": "Priya Nair",
+   "fromAddress": "priya.nair@lumenworks.example",
+   "to": "Rin Aoki",
+   "subject": "Tolerance stack for the lens holder",
+   "body": "Rin, I checked the stack you sent. Worst case leaves 0.03 mm of squeeze, which is thin. RSS looks fine at 0.11 mm. Shall we tighten the holder bore to ±0.02 and see what the supplier says?\n\nPriya",
+   "attachments": [
+    {
+     "name": "lens-holder-stack.xlsx",
+     "size": 22870
+    }
+   ]
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 3100,
+   "from": "Mateo Silva",
+   "fromAddress": "mateo.silva@lumenworks.example",
+   "to": "Rin Aoki",
+   "subject": "Thanks for covering the supplier call",
+   "body": "Just a note to say thanks for taking the call yesterday. The supplier confirmed the new resin lot arrives on the 24th.\n\nMateo"
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 4400,
+   "from": "Lumenworks IT",
+   "fromAddress": "it@lumenworks.example",
+   "to": "All staff",
+   "subject": "Reminder: laptop updates this week",
+   "body": "Updates install overnight on Wednesday. Leave your laptop plugged in and connected. Nothing else is needed from you."
+  },
+  {
+   "folder": "sent",
+   "minutesAgo": 30,
+   "from": "Rin Aoki",
+   "fromAddress": "rin.aoki@lumenworks.example",
+   "to": "Priya Nair; Mateo Silva",
+   "subject": "Friday design review agenda",
+   "body": "Hi both,\n\nDraft agenda for Friday:\n1. Hinge sample B results (Mateo)\n2. Gasket supplier and lead time\n3. Lens holder tolerance stack\n\nTell me if anything is missing.\n\nRin"
+  },
+  {
+   "folder": "sent",
+   "minutesAgo": 1650,
+   "from": "Rin Aoki",
+   "fromAddress": "rin.aoki@lumenworks.example",
+   "to": "Priya Nair",
+   "subject": "Lens holder stack, first pass",
+   "body": "Priya, first pass of the stack is attached. I took the diameters one side and used the FAI numbers from lot 3.\n\nRin",
+   "attachments": [
+    {
+     "name": "lens-holder-stack.xlsx",
+     "size": 22870
+    }
+   ]
+  },
+  {
+   "folder": "sent",
+   "minutesAgo": 4300,
+   "from": "Rin Aoki",
+   "fromAddress": "rin.aoki@lumenworks.example",
+   "to": "Okafor Supplies",
+   "subject": "Request for quote: silicone gasket",
+   "body": "Dear Ada,\n\nCould you quote 500 pieces of the gasket on the attached drawing, 40 Shore A, with your standard lead time?\n\nThank you,\nRin"
+  },
+  {
+   "folder": "drafts",
+   "minutesAgo": 12,
+   "from": "Rin Aoki",
+   "fromAddress": "rin.aoki@lumenworks.example",
+   "to": "Jonas Weber",
+   "subject": "RE: Drop test slot on Thursday?",
+   "body": "Thursday works. Yes please to the high-speed camera, and"
+  }
+ ]
+}
