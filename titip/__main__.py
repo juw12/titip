@@ -1,4 +1,4 @@
-"""Start Titip:  python -m titip            (serve your Outlook mail to paired phones)
+"""Start Titip:  python -m titip            (serve your Outlook mail to paired phones, run Autopilot for Gmail)
                  python -m titip --demo     (invented mail, safe to show around)
                  python -m titip unpair     (cut every paired phone off)
 """
@@ -15,6 +15,7 @@ import webbrowser
 from pathlib import Path
 
 from . import __version__
+from .autopilot import Autopilot, DemoGmail, demo_ask
 from .server import DESK_PORT, PHONE_PORT, Titip
 
 
@@ -92,13 +93,18 @@ def main(argv: list[str] | None = None) -> int:
         from .mailbox import DemoMailbox
 
         mailbox = DemoMailbox()
+        autopilot = Autopilot(home, DemoGmail(), demo_ask, interval=60)
     else:
+        from . import gmail
         from .mailbox import OutlookMailbox
 
         mailbox = OutlookMailbox()
+        autopilot = Autopilot(home, gmail.ChromeGmail() if gmail.available() else None)
 
     stay_responsive()
-    app = Titip(mailbox, home, phone_port=args.phone_port, desk_port=args.desk_port, https=not args.http)
+    app = Titip(
+        mailbox, home, phone_port=args.phone_port, desk_port=args.desk_port, https=not args.http, autopilot=autopilot,
+    )
     try:
         app.start()
     except OSError:

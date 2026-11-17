@@ -4,21 +4,27 @@
 
 Starts Titip with invented mail on spare ports, pairs a browser through the real QR link (HTTPS on this
 PC's network address), then reads, answers, undoes, sends, saves a draft and searches, at phone and
-desktop sizes, light and dark. Fails on any console error, page error or sideways overflow.
+desktop sizes, light and dark. Then Autopilot: on the paired phone, on the public page (demo), and
+through a stand-in relay that only ever gets ciphertext. Fails on any console error, page error or
+sideways overflow.
 """
 
 from __future__ import annotations
 
+import functools
+import http.server
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 SHOTS = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "shots"
 PHONE_PORT, DESK_PORT = 47891, 47892
 WIDTHS = (320, 390, 768, 1024, 1440)
@@ -35,15 +41,32 @@ def check(condition: bool, label: str) -> None:
         problems.append(label)
 
 
-def desk(path: str, post: bool = False) -> dict:
+def desk(path: str, post: bool = False, body: dict | None = None) -> dict:
     request = urllib.request.Request(
         f"http://127.0.0.1:{DESK_PORT}{path}",
-        data=b"{}" if post else None,
+        data=json.dumps(body or {}).encode("utf-8") if post or body else None,
         headers={"X-Titip": "1", "Content-Type": "application/json"},
     )
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(request, timeout=10) as reply:
         return json.load(reply)
+
+
+def autopilot(command: str, **details) -> dict:
+    return desk("/api/auto", body={"command": command, **details})
+
+
+class QuietPages(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *args) -> None:
+        pass
+
+
+def serve_public_pages() -> str:
+    """docs/ the way GitHub Pages serves it: plain files, no Titip server behind them."""
+    handler = functools.partial(QuietPages, directory=str(ROOT / "docs"))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}"
 
 
 def overflow(page) -> int:
@@ -261,6 +284,104 @@ def main() -> None:
             reply_box = page.locator("#actions .primary").bounding_box()
             check(reply_box["y"] + reply_box["height"] <= 800, "desktop keeps Reply in view without scrolling")
             page.screenshot(path=SHOTS / "desktop-light.png")
+
+            # ---- Autopilot on the paired phone: the demo mailbox gets one new mail per look
+            autopilot("switch", on=True)
+            for look in range(5):
+                before = len(desk("/api/auto")["events"])
+                autopilot("check")
+                for _ in range(40):
+                    state = desk("/api/auto")
+                    if not state["busy"] and (len(state["events"]) > before or look > 3):
+                        break
+                    time.sleep(0.25)
+            kinds = [event["kind"] for event in desk("/api/auto")["events"]]
+            check({"sent", "held", "left"} <= set(kinds), f"demo Autopilot answered one, kept one, left one ({kinds})")
+            origin = page.url.split("#")[0].rstrip("/")
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.goto(origin + "/auto.html")
+            page.wait_for_selector("#held .letter")
+            check(page.inner_text("#headline") == "On", "Autopilot page says it is on")
+            letter = page.inner_text("#held .letter")
+            check("Invoice 2291" in letter and "money" in letter, "the invoice waits with the reason it was kept")
+            check(page.locator("#feed .entry.sent blockquote").count() == 1, "the answer that went out is shown in full")
+            check(page.locator(".primary:visible").count() == 1, "one primary button on the Autopilot page")
+            page.screenshot(path=SHOTS / "phone-autopilot.png", full_page=True)
+            for width in (320, 390, 1024):
+                page.set_viewport_size({"width": width, "height": 844})
+                page.wait_for_timeout(150)
+                check(overflow(page) <= 0, f"Autopilot page has no sideways overflow at {width}px")
+            page.set_viewport_size({"width": 390, "height": 844})
+            small = page.evaluate(
+                """() => [...document.querySelectorAll('button, a, textarea, .choice label')]
+                    .filter(e => e.offsetParent !== null)
+                    .map(e => [e.id || e.className || e.textContent.trim().slice(0, 20), Math.round(e.getBoundingClientRect().height)])
+                    .filter(pair => pair[1] < 44)"""
+            )
+            check(not small, f"Autopilot tap targets are at least 44 px {small if small else ''}")
+            page.check('input[name="mode"][value="review"]')
+            expect(page.locator("#toast")).to_contain_text("Every answer waits for you")
+            check(desk("/api/auto")["mode"] == "review", "Show me first reaches the PC")
+            page.fill("#held textarea", "Hello,\n\nI will check it against my order.\n\nNadia")
+            page.click("#held .primary")
+            expect(page.locator("#held .letter")).to_have_count(0, timeout=10000)
+            expect(page.locator("#feed .entry.sent blockquote").first).to_contain_text("against my order")
+            check(True, "an edited draft is sent from the phone and shows under What it did")
+            page.click("#switch")
+            expect(page.locator("#headline")).to_have_text("Paused")
+            check(desk("/api/auto")["on"] is False, "Pause reaches the PC")
+            page.screenshot(path=SHOTS / "phone-autopilot-paused.png", full_page=True)
+
+            # ---- the public page: the demo, then a relay that is only ever handed ciphertext
+            from titip import remote
+
+            public = serve_public_pages()
+            far = context.new_page()
+            far.on("console", lambda message: errors.append("far: " + message.text) if message.type == "error" else None)
+            far.on("pageerror", lambda error: errors.append("far: " + str(error)))
+            far.goto(public + "/auto.html?demo")
+            far.wait_for_selector("#held .letter")
+            far.click("#held button:has-text(\"Don't answer\")")
+            expect(far.locator("#held .letter")).to_have_count(0)
+            check(far.locator("#demoNote").is_visible(), "the public Autopilot page is a demo that says so")
+
+            key = os.urandom(32)
+            wire: list[str] = []
+            orders: list[dict | None] = []
+
+            def relay(route) -> None:
+                request, cors = route.request, {"Access-Control-Allow-Origin": "*"}
+                if request.method == "GET":
+                    sealed = remote.seal(key, {**remote.slim(desk("/api/auto")), "published": int(time.time()) - 5})
+                    wire.append(sealed)
+                    return route.fulfill(status=200, headers=cors, content_type="text/plain", body=sealed)
+                wire.append(request.post_data or "")
+                orders.append(remote.unseal(key, request.post_data or ""))
+                route.fulfill(status=200, headers=cors, content_type="text/plain", body="ok")
+
+            far.route("https://relay.invalid/**", relay)
+            ticket = remote.b64(json.dumps({"u": "https://relay.invalid", "c": "c" * 22, "k": remote.b64(key)}).encode())
+            far.goto("about:blank")
+            far.goto(f"{public}/auto.html#r={ticket}")
+            far.wait_for_selector("#feed .entry")
+            check("#" not in far.url, "the key leaves the address bar once the phone has kept it")
+            check(far.inner_text("#headline") == "Paused" and "relay" in far.inner_text("#far"),
+                  "the phone decrypts what the PC wrote and says it came through the relay")
+            far.click("#switch")
+            for _ in range(40):
+                if orders:
+                    break
+                far.wait_for_timeout(100)
+            order = orders[0] if orders else None
+            check(bool(order) and order.get("name") == "switch" and order.get("on") is True
+                  and bool(order.get("nonce")) and abs(time.time() - order.get("at", 0)) < 120,
+                  "the phone's order decrypts on the PC side, with a nonce and a time")
+            check(far.inner_text("#headline") == "On", "the switch shows at once while the PC picks the order up")
+            check(all("Invoice" not in text and "nadia" not in text and "switch" not in text for text in wire),
+                  "nothing readable passes through the relay")
+            far.set_viewport_size({"width": 390, "height": 844})
+            far.screenshot(path=SHOTS / "phone-autopilot-far.png", full_page=True)
+            far.close()
 
             # ---- the desk page on the PC
             desk_page = context.new_page()

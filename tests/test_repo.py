@@ -38,14 +38,14 @@ class Hygiene(unittest.TestCase):
             self.assertIn(mail["folder"], ("inbox", "sent", "drafts"))
 
     def test_public_demo_is_the_same_web_app(self):
-        for name in ("index.html", "app.js", "styles.css", "demo.json", "icon.svg", "manifest.webmanifest"):
+        for name in ("index.html", "app.js", "auto.html", "auto.js", "styles.css", "demo.json", "icon.svg", "manifest.webmanifest"):
             self.assertEqual(
                 (ROOT / "docs" / name).read_bytes(), (ROOT / "titip" / "web" / name).read_bytes(),
                 f"docs/{name} is stale: run python scripts/sync_docs.py",
             )
 
     def test_mail_text_never_goes_through_innerhtml(self):
-        for name in ("app.js", "desk.js", "pair.js"):
+        for name in ("app.js", "auto.js", "desk.js", "pair.js"):
             script = (ROOT / "titip" / "web" / name).read_text(encoding="utf-8")
             self.assertNotIn("innerHTML", script.split("*/", 1)[1], name)
             self.assertNotIn("eval(", script, name)

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Autopilot · Titip</title>
+<meta name="description" content="Titip Autopilot reads new Gmail on your PC, answers what is safe to answer and keeps the rest for you.">
+<meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#12171d" media="(prefers-color-scheme: dark)">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="auto">
+<header class="bar">
+  <h1 class="brand"><img src="icon.svg" alt="" width="26" height="26">Titip</h1>
+  <nav class="tabs" aria-label="Sections">
+    <a href="./" id="mailTab">Mail</a>
+    <a href="auto.html" aria-current="page">Autopilot<span class="count" id="heldCount" hidden></span></a>
+  </nav>
+</header>
+
+<p class="demo" id="demoNote" hidden>Demo with invented mail. To see your own from anywhere, scan the code Titip shows on your PC.</p>
+
+<main class="sheet wide">
+  <section class="status" aria-live="polite">
+    <p class="lamp" id="lamp"><span class="dot" id="dot" aria-hidden="true"></span><strong id="headline">Asking your PC</strong></p>
+    <p id="line"></p>
+    <p class="now" id="busy" hidden></p>
+    <p class="error" id="trouble" role="alert" hidden></p>
+  </section>
+
+  <div class="rowline" id="controls" hidden>
+    <button class="primary" id="switch" type="button">Switch on</button>
+    <button id="check" type="button">Look now</button>
+  </div>
+
+  <fieldset class="choice" id="modes" hidden>
+    <legend>When a mail can be answered safely</legend>
+    <label><input type="radio" name="mode" value="auto"><span><strong>Answer it</strong> Short answers that promise nothing go out on their own.</span></label>
+    <label><input type="radio" name="mode" value="review"><span><strong>Show me first</strong> Every answer waits here until you press Send.</span></label>
+  </fieldset>
+
+  <section id="heldSection" hidden>
+    <h2>Waiting for you</h2>
+    <p class="soft" id="heldNone">Nothing waits. Mail about money, papers, codes or dates will show up here with a draft.</p>
+    <ul class="held" id="held"></ul>
+  </section>
+
+  <section id="feedSection" hidden>
+    <h2>What it did</h2>
+    <p class="soft" id="feedNone">Nothing yet. The first look at a mailbox only counts what is already there.</p>
+    <ol class="feed" id="feed"></ol>
+  </section>
+
+  <section id="rules" hidden>
+    <h2>What it will never do</h2>
+    <ul class="plain">
+      <li>Answer anyone but the person who wrote the mail it just read.</li>
+      <li>Answer a mail about money, a contract, a password, a code or personal papers. Those wait for you.</li>
+      <li>Send more than <span id="limit">8</span> answers a day per mailbox, or two to the same conversation in half a day.</li>
+      <li>Forward or delete mail, follow a link or open an attachment.</li>
+    </ul>
+    <p class="soft" id="far" hidden></p>
+    <p class="soft"><button class="link" id="forget" type="button" hidden>Unlink this phone</button></p>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toastText"></span></div>
+<script src="auto.js"></script>
+</body>
+</html>

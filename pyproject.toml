@@ -12,6 +12,8 @@ authors = [{ name = "Juwen Lie" }]
 requires-python = ">=3.10"
 dependencies = [
     "pywin32>=306; sys_platform == 'win32'",
+    "comtypes>=1.4; sys_platform == 'win32'",
+    "psutil>=5.9; sys_platform == 'win32'",
     "segno>=1.6",
     "cryptography>=42",
 ]

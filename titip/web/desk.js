@@ -45,6 +45,7 @@
       list.appendChild(item);
     });
     $("unpair").disabled = !status.devices.length;
+    showAuto(status.autopilot, status.far);
     $("addresses").textContent = (status.addresses.length
       ? "Phone address: " + status.addresses.join(" or ") + ". "
       : "This PC has no network address a phone could use right now. ") + (status.httpsNote || "");
@@ -52,6 +53,56 @@
       ? "The first time, the phone warns that the connection is not private. That is expected: this PC made its own certificate. Tap Advanced, then Proceed (Safari: Show Details, then visit this website)."
       : "The link to the phone is not encrypted. Use it only on a network you trust.";
   }
+
+  function showAuto(auto, far) {
+    var line = $("auto");
+    line.textContent = "";
+    var flag = document.createElement("span");
+    flag.className = auto.available && auto.on ? "good" : "bad";
+    flag.textContent = !auto.available ? "Cannot run here. " : auto.on ? "On. " : "Paused. ";
+    line.appendChild(flag);
+    var minutes = auto.lastCheck ? Math.max(0, Math.round((auto.now - auto.lastCheck) / 60)) : -1;
+    line.appendChild(document.createTextNode(!auto.available
+      ? "It needs Google Chrome signed in to Gmail, and the Python packages pywin32 and comtypes."
+      : (auto.busy ? auto.busy + ". " : "") +
+        (auto.on ? "Watching " + auto.mailboxes.join(" and ") + ". " : "Nothing is read or sent. ") +
+        (minutes >= 0 ? "Last look " + (minutes ? minutes + " min ago. " : "just now. ") : "") +
+        (auto.waiting ? auto.waiting + " waiting for you." : "")));
+    $("far").disabled = !far.ready;
+    $("farNote").textContent = !far.ready
+      ? "Not set up: this needs a relay address in remote.json in Titip's folder. The README says how to run your own."
+      : far.error ? far.error
+      : far.lastContact ? "The relay heard from this PC at " + new Date(far.lastContact * 1000).toLocaleTimeString() + "." : "";
+  }
+
+  function farCode(renew) {
+    fetch("/desk/far", {
+      method: "POST", headers: { "X-Titip": "1", "Content-Type": "application/json" }, body: JSON.stringify({ renew: !!renew })
+    }).then(function (reply) { return reply.json(); }).then(function (pairing) {
+      if (!pairing.ready) return;
+      $("farBox").hidden = false;
+      $("farNew").hidden = false;
+      $("far").textContent = "Hide the code";
+      var box = $("farQr");
+      box.textContent = "";
+      if (pairing.qr) {
+        var svg = document.importNode(new DOMParser().parseFromString(pairing.qr, "image/svg+xml").documentElement, true);
+        svg.setAttribute("role", "img");
+        svg.setAttribute("aria-label", "QR code to open Autopilot from any network");
+        box.appendChild(svg);
+      } else {
+        box.textContent = "Install the Python package \u201csegno\u201d to see a QR code.";
+      }
+    });
+  }
+
+  $("far").onclick = function () {
+    if (!$("farBox").hidden) { $("farBox").hidden = true; $("farNew").hidden = true; $("far").textContent = "Show the code"; return; }
+    farCode(false);
+  };
+  $("farNew").onclick = function () {
+    if (window.confirm("Make a new code? Phones that scanned the old one stop seeing Autopilot.")) farCode(true);
+  };
 
   function refresh() { call("/desk/status").then(show).catch(function () {}); }
 
@@ -96,7 +147,7 @@
       $("stopped").textContent = "Stopped. Start it again from the Titip shortcut.";
       $("pairing").hidden = true;
       $("expires").textContent = "";
-      ["pair", "unpair", "quit"].forEach(function (id) { $(id).disabled = true; });
+      ["pair", "unpair", "quit", "far", "farNew"].forEach(function (id) { $(id).disabled = true; });
     });
   };
 
