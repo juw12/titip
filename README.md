@@ -117,6 +117,11 @@ the last look and a switch under *Updates*. If GitHub is only reachable through 
 `~/.titip/update.log`. The relay is not updated this way: run `npx wrangler deploy` again when
 `worker/` changes.
 
+Titip and everything it starts (git, the trial start, the new version) run at normal priority, even
+when a tool on the PC has put Titip itself down to a lower one. Windows passes a lowered priority on
+to whatever a program starts, and on a busy PC a new version started that way would not come up in
+time.
+
 ## What you need
 
 - Windows with classic Outlook (the desktop app, not "new Outlook") open and signed in

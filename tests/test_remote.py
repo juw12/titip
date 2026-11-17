@@ -1,11 +1,14 @@
 """The link for any network: what leaves the PC is sealed, and only fresh, known orders are carried out."""
+import http.server
 import json
 import os
 import tempfile
 import threading
 import time
 import unittest
+import urllib.request
 from pathlib import Path
+from unittest import mock
 from urllib.parse import urlsplit
 
 from titip import remote
@@ -437,6 +440,68 @@ class WaysOut(unittest.TestCase):
         self.assertEqual(ways[-1], {})
         self.assertEqual(len(ways), len({json.dumps(way, sort_keys=True) for way in ways}))
         self.assertTrue(all(set(way) <= {"http", "https"} for way in ways))
+
+
+class KeptOpener(unittest.TestCase):
+    """Titip asks the relay every few seconds. Reading Windows' certificates for each call kept a processor busy."""
+
+    def setUp(self):
+        kept = dict(remote._openers)
+        remote._openers.clear()
+        self.addCleanup(remote._openers.update, kept)
+        self.addCleanup(remote._openers.clear)
+        self.contexts = []
+        real = remote.ssl.create_default_context
+        patch = mock.patch.object(remote.ssl, "create_default_context", side_effect=lambda: self.contexts.append(1) or real())
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def serve(self):
+        """A local server that answers every GET with the path it was asked for."""
+        asked = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                asked.append(self.path)
+                body = self.path.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_address[1]}", asked
+
+    def test_the_certificates_are_read_once_however_often_the_relay_is_asked(self):
+        address, asked = self.serve()
+        for number in range(6):
+            status, body = remote._open({}, urllib.request.Request(f"{address}/c/x/asks?{number}"))
+            self.assertEqual((status, body), (200, f"/c/x/asks?{number}".encode()))
+        self.assertEqual((len(asked), len(self.contexts)), (6, 1))
+
+    def test_each_way_out_keeps_its_own_and_still_goes_through_its_proxy(self):
+        address, asked = self.serve()  # stands in for a proxy: it is handed the whole address
+        through_proxy = {"http": address}
+        self.assertEqual(remote._open(through_proxy, urllib.request.Request("http://relay.example/c/x/state"))[0], 200)
+        self.assertEqual(remote._open({}, urllib.request.Request(f"{address}/straight"))[0], 200)
+        self.assertEqual(remote._open(through_proxy, urllib.request.Request("http://relay.example/c/x/asks"))[0], 200)
+        self.assertEqual(asked, ["http://relay.example/c/x/state", "/straight", "http://relay.example/c/x/asks"])
+        self.assertEqual((len(remote._openers), len(self.contexts)), (2, 2))
+
+    def test_threads_that_ask_at_the_same_moment_share_one(self):
+        found = []
+        threads = [threading.Thread(target=lambda: found.append(remote._opener({}))) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual((len({id(opener) for opener in found}), len(self.contexts)), (1, 1))
 
 
 if __name__ == "__main__":

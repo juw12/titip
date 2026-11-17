@@ -85,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=__version__)
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+    stay_responsive()  # first: a start at lowered priority on a full PC otherwise crawls through all that follows
 
     home = args.home or Path.home() / (".titip-demo" if args.demo else ".titip")
     home.mkdir(parents=True, exist_ok=True)

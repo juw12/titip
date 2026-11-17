@@ -261,9 +261,32 @@ version of this fix reused one request for every way and failed, because urllib 
 the request; the live check caught it and a test now holds it. After the fix: 149 unit and server
 tests pass (8 new), the 71 browser steps pass again.
 
+### Found in the live update, and fixed (0.4.1)
+
+The live copy moved itself from 0.3.0 to 0.3.1 with no hand on it: ready 4.4 s after the look, the PC
+page away for about 61 s, one line in `update.log`. That start used about 64 s of the 90 s Titip waits
+before it goes back. Two causes, both measured on the build PC while all its processors were busy:
+
+- Windows hands a lowered priority on to every program the lowered one starts, and a tool on this PC
+  lowers background programs. A trial copy in a home of its own listened after 4.4 to 7.1 s at
+  normal priority, and not within 120 s at idle priority. Titip now starts git, the trial start and
+  the new version at normal priority, and puts its own priority right before anything slow.
+- Each call to the relay built a new set of trusted certificates (178 on this PC): 334 ms of
+  processor time and 544 ms on the clock per call, every five seconds, for nothing. With the set
+  kept for as long as Titip runs: 6 ms and 96 ms.
+
+The 90 s stays as it is; the slow start is what was wrong. Outlook itself did not respond for about
+eight minutes right after that restart. Titip said "Outlook is busy" and went on by itself when
+Outlook did; the cause was not found (other programs on this PC drive Outlook too).
+
+After the fix: 166 unit and server tests pass (6 new), the 73 browser steps pass.
+
 ### Not verified
 
 - A real phone on mobile data. Everything above ran from the build PC and a headless browser.
+- The priority fix in a real update. The copy that starts the new version is the old one, so the
+  fix shows from the update after 0.4.1 on. It is held by a test that lowers a real process.
+- Why Outlook stopped responding after the 0.3.0 to 0.3.1 restart.
 - A real send through the relay. It runs in the tests and the browser run against the demo mailbox
   only; no test mail was sent from the real account.
 - How long the Durable Object is billed while a phone polls. The free plan's limits (100,000 requests
