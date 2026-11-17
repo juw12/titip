@@ -49,13 +49,19 @@ NOTES = {
 }
 
 
+# Windows hands a lowered priority (idle, below normal) on to every program the lowered one starts,
+# unless normal is asked for. On a full PC a new version that started that way did not answer for over
+# two minutes, and would have been taken for a version that does not start.
+AT_NORMAL_PRIORITY = getattr(subprocess, "NORMAL_PRIORITY_CLASS", 0)
+
+
 def run_command(args: list[str], cwd: Path, timeout: float = 120) -> tuple[int, str]:
     """(exit code, output) of a program, without a console window and without ever asking for a password."""
     try:
         done = subprocess.run(
             args, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
             stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | AT_NORMAL_PRIORITY,
         )
     except (OSError, subprocess.TimeoutExpired):
         return 1, ""
@@ -63,8 +69,9 @@ def run_command(args: list[str], cwd: Path, timeout: float = 120) -> tuple[int, 
 
 
 def spawn_detached(command: list[str], cwd: Path):
-    """Start a program that outlives this one."""
+    """Start a program that outlives this one, at normal priority whatever this one was put down to."""
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    flags |= AT_NORMAL_PRIORITY
     return subprocess.Popen(
         command, cwd=cwd, creationflags=flags, close_fds=True,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

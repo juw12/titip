@@ -28,6 +28,7 @@ import base64
 import json
 import os
 import secrets
+import ssl
 import threading
 import time
 import urllib.error
@@ -108,9 +109,28 @@ def ways_out() -> list[dict]:
     return [*different, {}]
 
 
+_openers: dict[tuple, urllib.request.OpenerDirector] = {}
+_openers_lock = threading.Lock()
+
+
+def _opener(way: dict) -> urllib.request.OpenerDirector:
+    """The opener for one way out, made once and kept for as long as Titip runs.
+
+    Making one reads every certificate Windows trusts: a third of a second of processor time on an
+    office PC. Titip asks the relay every few seconds, so a fresh one per call kept a processor busy
+    for nothing. Certificates added to Windows later are seen after the next start.
+    """
+    key = tuple(sorted(way.items()))
+    with _openers_lock:
+        if key not in _openers:
+            _openers[key] = urllib.request.build_opener(
+                urllib.request.ProxyHandler(way), urllib.request.HTTPSHandler(context=ssl.create_default_context())
+            )
+        return _openers[key]
+
+
 def _open(way: dict, request: urllib.request.Request) -> tuple[int, bytes]:
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler(way))
-    with opener.open(request, timeout=TIMEOUT_S) as reply:
+    with _opener(way).open(request, timeout=TIMEOUT_S) as reply:
         return reply.status, reply.read(8_000_000)
 
 
