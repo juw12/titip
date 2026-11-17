@@ -293,7 +293,7 @@ def main() -> None:
             page.click("#refresh")
             expect(page.locator("#savedNote")).to_contain_text("This is the list from", timeout=5000)
             check(page.locator(".row").count() > 3, "a list from the PC's copy is shown with a note that says from when")
-            page.screenshot(path=SHOTS / "phone-saved.png")
+            page.screenshot(path=SHOTS / "phone-pc-copy.png")
             expect(page.locator("#savedNote")).to_be_hidden(timeout=15000)
             check(True, "the fresh list replaces it by itself and the note goes away")
             page.unroute("**/api/mail*")
