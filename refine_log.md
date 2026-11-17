@@ -116,5 +116,20 @@ two rounds in a row without a kept gain.
 
 - A real phone: pairing by QR, the certificate warning, and whether Windows Firewall lets the phone in.
 - A real send. No test ever calls Outlook's Send; the demo mailbox stands in.
-- The live Outlook mailbox end to end in a browser. Outlook on the build PC stopped answering during
-  the run, so the final check ran against the demo mailbox and the unit tests only.
+- Attachments, search and a saved draft against the live Outlook mailbox. The live check below only
+  pairs, lists the three folders and opens one message.
+
+## After the loop: fixes from a live-mailbox check (not a judged round, score unchanged)
+
+A headless browser was paired with the real Titip on the build PC, read only, then unpaired.
+
+- The PC lowered Titip to below-normal priority while its processor was full. Pages took about 5 s and
+  Outlook's state took minutes. Titip now puts itself back to normal priority (never higher).
+  After: desk status in about 1 s, inbox on the phone in 0.6 to 1.1 s.
+- Outlook on that PC did not answer a trivial call for about a quarter of a 7-minute sample (single
+  stalls up to 18 s), measured from a separate program. A read that hit such a stall ended in "busy"
+  and sent the reader back to the list. Now the server marks "busy" (503) and the phone asks again
+  for up to a minute. A send is never repeated. In the live run a message opened after a 28 s stall
+  on the third ask; without a stall it opened in 0.6 s.
+- While a message opens, the reader shows its subject and the way back at once, not an empty page.
+- Tests: 44 unit and server tests, plus two new end-to-end steps for the busy case.

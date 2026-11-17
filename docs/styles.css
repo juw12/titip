@@ -140,7 +140,8 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 
 /* ---------- reader */
 .reader { display: none; padding: var(--s3) var(--s4) calc(var(--tap) + var(--s6)); }
-.hint { color: var(--muted); padding: var(--s6) 0; text-align: center; }
+.hint, .wait { color: var(--muted); padding: var(--s6) 0; text-align: center; }
+#letter.opening .meta, #letter.opening .files, #letter.opening .view, #letter.opening .actions { display: none; }
 .back, .link {
   min-height: var(--tap); padding: 0 var(--s2) 0 0;
   display: inline-flex; align-items: center; gap: var(--s1);

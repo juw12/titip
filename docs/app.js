@@ -49,7 +49,10 @@
   }
 
   // ------------------------------------------------------------ the two back ends: your PC, or the demo
-  function request(path, body) {
+  var BUSY_WAIT = 60000;  // a read keeps asking this long while Outlook on the PC is busy
+  var BUSY_TEXT = "Outlook on your PC is busy. Still trying\u2026";
+  function request(path, body, since) {
+    var started = since || Date.now();
     var options = { credentials: "same-origin", headers: { "X-Titip": "1" } };
     if (body) {
       options.method = "POST";
@@ -63,7 +66,15 @@
         throw new Error("This phone is not paired any more.");
       }
       return reply.json().then(function (data) {
+        // only reading is asked again; a send is never repeated, so it can't go out twice
+        if (reply.status === 503 && data.busy && !body && Date.now() - started < BUSY_WAIT) {
+          toast(BUSY_TEXT);
+          return new Promise(function (resolve) { setTimeout(resolve, 3000); }).then(function () {
+            return request(path, null, started);
+          });
+        }
         if (!reply.ok) throw new Error(data.error || "Something went wrong on the PC.");
+        if (since && $("toastText").textContent === BUSY_TEXT) hideToast();
         return data;
       });
     }, function () {
@@ -337,13 +348,20 @@
     markOpened(id);
     document.body.classList.add("reading");
     $("readerHint").hidden = true;
-    $("letter").hidden = true;
     $("backLabel").textContent = FOLDERS[view.folder];
     renderRows();
+    // the list already knows the subject: show it and the way back at once, the rest when the PC answers
+    var row = view.rows.filter(function (mail) { return mail.id === id; })[0];
+    $("subject").textContent = row ? row.subject : "";
+    $("body").textContent = "";
+    $("body").appendChild(el("p", "wait", "Opening\u2026"));
+    $("letter").classList.add("opening");
+    $("letter").hidden = false;
     api.get(id).then(function (item) {
       if (view.id !== id) return;
       view.item = item;
       view.formatted = true;
+      $("letter").classList.remove("opening");
       $("subject").textContent = item.subject;
       $("from").textContent = item.from + (item.fromAddress && item.fromAddress !== item.from ? "  <" + item.fromAddress + ">" : "");
       $("to").textContent = item.to || "(none)";

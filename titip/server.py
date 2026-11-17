@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import __version__
-from .mailbox import WEB, MailError
+from .mailbox import WEB, MailError, OutlookBusy
 from .pairing import (
     COOKIE,
     COOKIE_MAX_AGE,
@@ -194,6 +194,8 @@ class PhoneHandler(_Handler):
                 return self._json(200, self.app.mailbox.get(query.get("id", "")))
             if route == "/api/attachment":
                 return self._attachment(query.get("id", ""), int(query.get("index", 0)))
+        except OutlookBusy as error:  # the phone asks again by itself: reading twice does no harm
+            return self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error), "busy": True})
         except MailError as error:
             return self._error(HTTPStatus.BAD_GATEWAY, str(error))
         except ValueError:

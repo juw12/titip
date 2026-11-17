@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from titip.mailbox import DemoMailbox
+from titip.mailbox import DemoMailbox, OutlookBusy
 from titip.pairing import COOKIE
 from titip.server import Titip
 
@@ -154,6 +154,21 @@ class Mail(ServerCase):
         self.assertIn("moved or deleted", body["error"])
         self.assertEqual(self.get("/api/mail?folder=nope")[0].status, 502)
         self.assertEqual(self.get("/api/mail?limit=abc")[0].status, 400)
+
+    def test_a_busy_outlook_is_marked_so_the_phone_asks_again(self):
+        real_list = self.app.mailbox.list
+
+        def busy(*args):
+            raise OutlookBusy()
+
+        self.app.mailbox.list = busy
+        try:
+            reply, body = self.get("/api/mail?folder=inbox")
+        finally:
+            self.app.mailbox.list = real_list
+        self.assertEqual((reply.status, body["busy"]), (503, True))
+        self.assertIn("busy", body["error"])
+        self.assertEqual(self.get("/api/mail?folder=inbox")[0].status, 200)
 
     def test_attachment_download_and_no_file_access_outside_the_app(self):
         _, page = self.get("/api/mail?folder=inbox&q=hinge")

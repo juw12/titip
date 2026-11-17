@@ -23,6 +23,33 @@ def say(text: str) -> None:
         print(text, flush=True)
 
 
+NORMAL_PRIORITY, LOWERED_PRIORITIES = 0x20, (0x40, 0x4000)  # Windows: normal; idle and below normal
+
+
+def stay_responsive() -> bool:
+    """Go back to normal priority if something lowered it. True when it had to.
+
+    Some PCs push background programs down. On a busy PC that leaves a phone waiting many
+    seconds for every page, and minutes for Outlook. Titip never asks for more than normal.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        kernel = ctypes.windll.kernel32
+        kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel.GetPriorityClass.argtypes = [ctypes.c_void_p]
+        kernel.GetPriorityClass.restype = ctypes.c_ulong
+        kernel.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        process = kernel.GetCurrentProcess()
+        if kernel.GetPriorityClass(process) in LOWERED_PRIORITIES:
+            return bool(kernel.SetPriorityClass(process, NORMAL_PRIORITY))
+    except (AttributeError, OSError):
+        pass
+    return False
+
+
 def already_running(desk_port: int) -> bool:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never through a proxy
     try:
@@ -70,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
 
         mailbox = OutlookMailbox()
 
+    stay_responsive()
     app = Titip(mailbox, home, phone_port=args.phone_port, desk_port=args.desk_port, https=not args.http)
     try:
         app.start()
@@ -83,8 +111,11 @@ def main(argv: list[str] | None = None) -> int:
     if not args.quiet:
         webbrowser.open(app.desk_url)
     try:
+        seconds = 0
         while not app.quit.wait(1):  # "Stop Titip" on the PC page sets it; the short wait keeps Ctrl+C working
-            pass
+            seconds += 1
+            if seconds % 20 == 0:
+                stay_responsive()
         time.sleep(0.3)  # let the answer to that click reach the browser
     except KeyboardInterrupt:
         pass

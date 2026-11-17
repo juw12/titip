@@ -142,6 +142,30 @@ def main() -> None:
             errors[:] = [e for e in errors if "ERR_FAILED" not in e]  # the blocked request above, on purpose
             page.click("#discard")
             page.click("#back")
+
+            # ---- Outlook busy on the PC: the phone waits and asks again by itself
+            busy_replies = []
+
+            def busy_once(route):
+                if busy_replies:
+                    return route.continue_()
+                busy_replies.append(1)
+                route.fulfill(
+                    status=503, content_type="application/json",
+                    body='{"error": "Outlook on your PC is busy right now. Try again in a moment.", "busy": true}',
+                )
+
+            page.route("**/api/item*", busy_once)
+            page.locator(".row").nth(3).click()
+            expect(page.locator("#toastText")).to_contain_text("Still trying", timeout=5000)
+            check(page.locator("#back").is_visible() and "Opening" in page.inner_text("#body"),
+                  "a message that is slow to open shows its subject and the way back")
+            page.screenshot(path=SHOTS / "phone-busy.png")
+            page.wait_for_selector("#actions button:has-text('Reply')", timeout=15000)
+            check(page.locator("#toast").is_hidden(), "a busy Outlook is asked again and the message opens")
+            page.unroute("**/api/item*")
+            errors[:] = [e for e in errors if "503" not in e]  # the busy answer above, on purpose
+            page.click("#back")
             page.click(".tabs a[data-folder=sent]")
             page.wait_for_selector(".row .subject:has-text('RE: Hinge sample B')")
             check(True, "the reply shows up in Sent")

@@ -74,6 +74,10 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Windows Firewall may block the phone. If the phone cannot connect, allow Python on port 47779 for
   your private or domain network. That needs an administrator.
 - The PC must be on, awake and running Outlook. Titip is a window onto that Outlook, not a mail server.
+  If a tool on the PC lowers the priority of background programs, Titip puts itself back to normal
+  (never higher), so the phone still gets an answer while the PC is busy.
+- Outlook answers one program at a time. While it is busy with something else, the phone says so and
+  keeps asking for up to a minute. Only reading is asked again. A send is never repeated.
 
 ## Limits
 
