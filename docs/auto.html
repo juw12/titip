@@ -8,6 +8,8 @@
 <meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#12171d" media="(prefers-color-scheme: dark)">
 <meta name="referrer" content="no-referrer">
+<meta name="apple-mobile-web-app-title" content="Titip">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -29,6 +31,11 @@
     <p class="now" id="busy" hidden></p>
     <p class="error" id="trouble" role="alert" hidden></p>
   </section>
+
+  <div class="rowline" id="noKey" hidden>
+    <button class="primary" id="relink" type="button" hidden>Link again</button>
+    <a class="go" href="./?demo">See the demo</a>
+  </div>
 
   <div class="rowline" id="controls" hidden>
     <button class="primary" id="switch" type="button">Switch on</button>
@@ -62,6 +69,7 @@
       <li>Forward or delete mail, follow a link or open an attachment.</li>
     </ul>
     <p class="soft" id="far" hidden></p>
+    <p class="soft" id="home" hidden><a class="link" href="home.html?from=auto">Put Titip on the Home Screen</a></p>
     <p class="soft"><button class="link" id="forget" type="button" hidden>Unlink this phone</button></p>
   </section>
 </main>

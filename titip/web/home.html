@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Titip</title>
+<meta name="description" content="Put Titip on the iPhone Home Screen so the icon opens your own mail from any network.">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#12171d" media="(prefers-color-scheme: dark)">
+<!-- No manifest on this page, on purpose: without one an iPhone keeps this page's whole address,
+     key included, as what the Home Screen icon opens. See home.js. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Titip">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="auto">
+<header class="bar">
+  <h1 class="brand"><img src="icon.svg" alt="" width="26" height="26">Titip</h1>
+</header>
+
+<main class="sheet wide">
+  <p class="soft" id="opening">Opening Titip</p>
+
+  <section id="ready" hidden>
+    <h1>Put Titip on your Home Screen</h1>
+    <p>The icon opens your mail and Autopilot from any network. You do not scan again.</p>
+    <ol class="steps">
+      <li>Tap <strong>Share</strong>
+        <svg class="glyph" viewBox="0 0 24 24" role="img" aria-label="a square with an arrow pointing up"><path d="M12 15V3"/><path d="M8 7l4-4 4 4"/><path d="M7 11H5v10h14V11h-2"/></svg>
+        in the bar of your browser.</li>
+      <li>Choose <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li>
+      <li>Open Titip from the new icon.</li>
+    </ol>
+    <p class="soft">The icon takes the key to your PC along. For that, the address of this page holds the key for the next five minutes: do not copy or share it. After that, or when you leave, the key is taken out of the address again.</p>
+    <div class="rowline"><button id="skip" type="button">Not now, open Titip here</button></div>
+  </section>
+
+  <section id="none" hidden>
+    <h1>This phone is not linked yet</h1>
+    <p>On your PC, open Titip, press <strong>Show a QR code</strong> and scan it with this phone's camera. The page that opens shows how to put Titip on the Home Screen.</p>
+    <div class="rowline"><a class="go" href="./">See the demo</a></div>
+  </section>
+
+  <noscript><p>This page needs JavaScript to hand the key from the QR code to the Home Screen icon.</p></noscript>
+</main>
+<script src="home.js"></script>
+</body>
+</html>

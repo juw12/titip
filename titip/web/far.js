@@ -4,7 +4,8 @@
    address) and stays in this browser; the relay never has it. Used by the mail app (app.js) when
    this phone has scanned that code and "Mail from anywhere" is switched on in Titip on the PC.
    The code may open the mail app directly: it is kept here and taken out of the address bar
-   before the app starts. */
+   before the app starts. On an iPhone the scan goes on to home.html, the page that can carry the
+   key onto the Home Screen (an icon there has its own storage and would start without one). */
 window.TitipFar = (function () {
   "use strict";
   var KEY = "titip.relay";
@@ -24,6 +25,11 @@ window.TitipFar = (function () {
 
   function good(found) { return found && /^https:\/\//.test(found.u) && found.c && found.k ? found : null; }
 
+  var onPages = /\.github\.io$/.test(location.hostname);   // the public page; home.html lives only there
+  var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  var standalone = navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+  var leaving = false;   // on the way to home.html: the app must not start
+
   // the code this page was opened with (#r=...), if any; a browser that cannot store keeps it until the page closes
   var scanned = (function () {
     var found = /^#r=([A-Za-z0-9_-]+)$/.exec(location.hash);
@@ -32,6 +38,10 @@ window.TitipFar = (function () {
     try { read = good(JSON.parse(new TextDecoder().decode(fromBase64(found[1])))); } catch (error) { read = null; }
     try { history.replaceState(null, "", location.pathname + location.search); } catch (error) { location.hash = ""; }  // keep the key out of the address bar
     if (read) { try { localStorage.setItem(KEY, JSON.stringify(read)); } catch (error) { /* private browsing */ } }
+    if (read && onPages && ios && !standalone) {
+      leaving = true;
+      location.replace("home.html#r=" + found[1]);
+    }
     return read;
   }());
 
@@ -95,5 +105,5 @@ window.TitipFar = (function () {
     return { ask: ask };
   }
 
-  return { ticket: ticket, connect: connect, fromBase64: fromBase64 };
+  return { ticket: ticket, connect: connect, fromBase64: fromBase64, leaving: leaving, ios: ios, standalone: standalone };
 }());

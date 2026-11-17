@@ -11,6 +11,11 @@
   var HOSTED = /\.github\.io$/.test(location.hostname);   // the public page: no Titip server behind it
   var FORCED_DEMO = /[?&]demo\b/.test(location.search);
   var ticket = FORCED_DEMO || !window.TitipFar ? null : window.TitipFar.ticket();   // this phone scanned the code for any network
+  if (window.TitipFar && window.TitipFar.leaving) return;   // an iPhone that just scanned: home.html takes over
+  if (HOSTED && !ticket && !FORCED_DEMO && window.TitipFar && window.TitipFar.ios && window.TitipFar.standalone) {
+    location.replace("auto.html");   // a Home Screen icon without a key: that page says what to do, instead of a demo that looks broken
+    return;
+  }
 
   var view = { folder: "inbox", id: "", rows: [], more: false, query: "", loading: false, item: null, formatted: true };
   var draft = null;       // what the composer is writing: {mode, id, title, note}

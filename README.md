@@ -105,6 +105,28 @@ Autopilot page; the code is the same.
 
 Autopilot does not touch Outlook mail. It only ever answers Gmail.
 
+### On the iPhone Home Screen
+
+An iPhone gives a Home Screen icon its own storage. The key the browser kept after the scan is not
+in it, so an icon made from the mail app used to open with nothing. The key now travels in the one
+thing the icon keeps: the address of the page it was made from.
+
+1. On the PC page press **Show a QR code** and scan it with the iPhone camera.
+2. The page that opens says what to tap: **Share**, **Add to Home Screen**, **Add**.
+3. Open Titip from the new icon. Mail, Sent, Drafts, writing, answering and Autopilot are all there,
+   on any network.
+
+- While that page waits for you, its address holds the key, for at most five minutes. Do not copy or
+  share the address in that time. After five minutes, or when you leave the page, the key is taken
+  out again. **Not now** skips the icon and opens Titip in the browser.
+- The icon carries the key for as long as it exists. Whoever holds the unlocked phone can open it.
+  **Unlink this icon** on its Autopilot page stops it; delete the icon afterwards. **Make a new
+  code** on the PC cuts off every icon and phone.
+- An icon made before version 0.5.1, or from any other Titip page, has no key. It says so when you
+  open it. Delete it and scan the code again.
+- Later, the Autopilot page in the iPhone browser has **Put Titip on the Home Screen** at the bottom.
+- Android needs none of this: an icon there shares the browser's storage.
+
 ## Updates
 
 A copy installed with `git clone` keeps itself up to date. A minute after it starts, then every 15
@@ -219,6 +241,8 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Search looks at subject and sender (recipient in Sent), not the message body.
 - Calendar invitations can be read, not accepted.
 - Opening a message on the phone clears its red dot on that phone only. Outlook still shows it as unread.
+- iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
+  does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 
 ### Autopilot
 

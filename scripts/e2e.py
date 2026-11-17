@@ -7,7 +7,10 @@ PC's network address), then reads, answers, undoes, sends, saves a draft and sea
 desktop sizes, light and dark. Then Autopilot: on the paired phone, on the public page (demo), and
 through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
 trip: the code for any network opens the public mail app, a stand-in relay with the worker's rules
-passes sealed text, this Titip answers. Fails on any console error, page error or sideways overflow.
+passes sealed text, this Titip answers. Then the iPhone Home Screen: a browser with an iPhone's name
+scans the code and gets the page that carries the key, and a second browser with empty storage, the
+icon, opens that page's address and reads, answers and unlinks. Fails on any console error, page
+error or sideways overflow.
 """
 
 from __future__ import annotations
@@ -569,7 +572,172 @@ def main() -> None:
                   "the relay only ever held sealed text: no subject, name, body, file or folder")
             check(not stand_in.answers and stand_in.handle("GET", f"/c/{settings['channel']}/answer/{stand_in.asked[0]}", "", "")[0] == 204,
                   "every answer was handed out once and is gone from the relay")
+            away.goto(f"{public}/home.html")  # not an iPhone: nothing to carry, on to the mail
+            away.wait_for_selector(".row", timeout=40000)
+            check(away.url == public + "/", "on a phone that is not an iPhone the Home Screen page goes straight on to the mail app")
             away.close()
+
+            # ---- the iPhone Home Screen: an icon there has its own storage, so the key rides in the address of home.html.
+            # Each browser context below has its own storage, the way Safari and an icon have on a real iPhone.
+            site = remote.PAGE.rsplit("/", 1)[0] + "/"
+            kinds = {"html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
+                     "json": "application/json", "svg": "image/svg+xml", "png": "image/png", "webmanifest": "application/manifest+json"}
+
+            def hosted_pages(route) -> None:
+                name = route.request.url.split("#")[0].split("?")[0][len(site):] or "index.html"
+                file = ROOT / "docs" / name
+                if not file.is_file():
+                    return route.fulfill(status=404, body="")
+                route.fulfill(status=200, content_type=kinds.get(name.rsplit(".", 1)[-1], "application/octet-stream"), body=file.read_bytes())
+
+            def iphone(icon: bool, name: str):
+                """An iPhone browser (icon=False) or a Home Screen icon (icon=True) looking at the public pages."""
+                phone = browser.new_context(
+                    user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                               "Version/17.5 Mobile/15E148 Safari/604.1",
+                    viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, color_scheme="light",
+                )
+                if icon:
+                    phone.add_init_script("Object.defineProperty(Navigator.prototype, 'standalone', { get: function () { return true; } });")
+                phone.route(re.compile("^" + re.escape(site)), hosted_pages)
+                phone.route("https://relay.invalid/**", through)
+                tab = phone.new_page()
+                tab.on("console", lambda message: errors.append(f"{name}: " + message.text) if message.type == "error" else None)
+                tab.on("pageerror", lambda error: errors.append(f"{name}: " + str(error)))
+                return phone, tab
+
+            def carried(address: str) -> dict | None:
+                told = address.partition("#r=")[2]
+                return json.loads(remote.unb64(told)) if told else None
+
+            the_key = {"u": "https://relay.invalid", "c": settings["channel"], "k": settings["key"]}
+            safari_context, safari = iphone(False, "iphone browser")
+            safari.goto(site + "#r=" + real_ticket)  # the iPhone camera opens the code in the browser
+            safari.wait_for_selector("#ready:not([hidden])")
+            check(safari.url == site + "home.html#r=" + real_ticket and safari.locator(".steps li").count() == 3,
+                  "an iPhone that scans the code lands on the Home Screen page: three steps, the key in the address")
+            check(safari.locator("link[rel=manifest]").count() == 0 and safari.locator("link[rel=apple-touch-icon]").count() == 1
+                  and safari.title() == "Titip",
+                  "that page has no manifest (an iPhone then keeps its whole address for the icon), an icon and the name Titip")
+            check(overflow(safari) <= 0, "the Home Screen page does not overflow sideways at 390")
+            safari.screenshot(path=SHOTS / "iphone-home-ready.png", full_page=True)
+            icon_address = safari.url  # what "Add to Home Screen" keeps
+
+            icon_context, icon = iphone(True, "iphone icon")
+            asked_before = len(stand_in.asked)
+            icon.goto(icon_address)  # first start from the icon: empty storage, only the address
+            icon.wait_for_selector(".row", timeout=40000)
+            check(icon.locator(".row").count() >= 6 and len(stand_in.asked) > asked_before,
+                  f"opened from the icon, Titip shows the inbox through the relay "
+                  f"({icon.locator('.row').count()} rows, {len(stand_in.asked) - asked_before} asks)")
+            check(icon.url == site, "and the key has left the icon's address once it is kept")
+            icon.locator(".row").first.click()
+            icon.wait_for_selector("#letter:not([hidden]) iframe", timeout=40000)
+            check(icon.locator("#files a").count() == 2, "a message opens inside the icon with its attachments listed")
+            icon.screenshot(path=SHOTS / "iphone-icon-mail.png")
+            icon.click("#actions button:has-text('Reply')")
+            icon.fill("#bodyInput", "Seen from the Home Screen icon. Thank you.")
+            icon.click("#send")
+            expect(icon.locator("#toastText")).to_have_text("Sent to Mateo Silva", timeout=60000)
+            icon.click("#back")
+            icon.click(".tabs a[data-folder=sent]")
+            icon.wait_for_selector(".row .preview:has-text('Seen from the Home Screen icon')", timeout=40000)
+            from_icon = [text for text in stand_in.wire
+                         if "Seen from the Home Screen icon" in str(remote.unseal(remote.unb64(settings["key"]), text))]
+            check(len(from_icon) >= 1, "a reply written inside the icon reaches the PC sealed, is sent there and shows in Sent")
+            icon.click(".tabs a[href='auto.html']")
+            icon.wait_for_selector("#feed .entry")
+            expect(icon.locator("#mailTab")).to_be_visible(timeout=20000)
+            check(icon.inner_text("#forget") == "Unlink this icon" and icon.locator("#home").is_hidden(),
+                  "the Autopilot page works inside the icon and offers to unlink the icon, not to add another one")
+            icon.goto("about:blank")
+            icon.goto(icon_address)  # every later start opens the same address
+            icon.wait_for_selector(".row", timeout=40000)
+            check(icon.url == site, "the icon opens the mail again at its next start")
+
+            safari.evaluate("window.dispatchEvent(new Event('pagehide'))")
+            check(safari.url == site + "home.html", "leaving the Home Screen page takes the key out of its address")
+            safari.goto(site + "home.html")  # back on it: this browser kept the key, so the page is ready again
+            safari.wait_for_selector("#ready:not([hidden])")
+            check(carried(safari.url) == the_key, "opened again in the same browser, the page puts the key it kept back in its address")
+            safari.click("#skip")
+            safari.wait_for_selector(".row", timeout=40000)
+            check(safari.url == site, "Not now opens the mail app in the browser, with no key in the address")
+            safari.click(".tabs a[href='auto.html']")
+            safari.wait_for_selector("#feed .entry")
+            expect(safari.locator("#home")).to_be_visible()
+            safari.click("#home a")
+            safari.wait_for_selector("#ready:not([hidden])")
+            check(safari.url.startswith(site + "home.html?from=auto#r=") and carried(safari.url) == the_key,
+                  "the Autopilot page in the iPhone browser leads back to the Home Screen page")
+            safari_context.close()
+
+            late_context, late = iphone(False, "iphone browser, five minutes")
+            late.clock.install()
+            late.goto(site + "auto.html#r=" + real_ticket)  # the code can also open the Autopilot page
+            late.wait_for_selector("#ready:not([hidden])")
+            check(late.url == site + "home.html?from=auto#r=" + real_ticket,
+                  "a code that opens the Autopilot page takes an iPhone to the Home Screen page too")
+            auto_icon_address = late.url
+            late.clock.fast_forward(301000)
+            late.wait_for_url(site + "auto.html", timeout=20000)
+            late.wait_for_selector("#feed .entry", timeout=40000)
+            check("#" not in late.url, "after five minutes the page gives the key up and opens Titip in the browser")
+            late.goto(site + "home.html?from=auto")
+            late.wait_for_selector("#ready:not([hidden])")
+            late.goto(site + "?demo")
+            late.wait_for_selector(".row")
+            late_context.close()
+
+            auto_icon_context, auto_icon = iphone(True, "iphone icon, autopilot")
+            auto_icon.goto(auto_icon_address)
+            auto_icon.wait_for_selector("#feed .entry", timeout=40000)
+            check(auto_icon.url == site + "auto.html" and "relay" in auto_icon.inner_text("#far"),
+                  "an icon made from there opens the Autopilot page, through the relay")
+            auto_icon_context.close()
+
+            bare_context, bare = iphone(True, "iphone icon without a key")
+            bare.goto(site)  # an icon made the old way: the mail app's address, nothing in storage
+            bare.wait_for_url(site + "auto.html")
+            expect(bare.locator("#headline")).to_have_text("This icon has no key to your PC")
+            check("Delete this icon" in bare.inner_text("#line") and bare.locator(".letter, .entry").count() == 0
+                  and bare.locator("#demoNote").is_hidden() and bare.locator(".tabs").is_hidden() and bare.locator("#relink").is_hidden(),
+                  "an icon that brought no key says so and what to do, instead of showing invented mail")
+            check(overflow(bare) <= 0, "that notice does not overflow sideways at 390")
+            bare.screenshot(path=SHOTS / "iphone-icon-no-key.png", full_page=True)
+            bare.goto(site + "home.html")
+            bare.wait_for_url(site + "auto.html")
+            expect(bare.locator("#headline")).to_have_text("This icon has no key to your PC")
+            bare_context.close()
+
+            unlinked_context, unlinked = iphone(False, "iphone browser, not linked")
+            unlinked.goto(site + "home.html")
+            unlinked.wait_for_selector("#none:not([hidden])")
+            check("not linked yet" in unlinked.inner_text("#none") and unlinked.locator("#ready").is_hidden(),
+                  "the Home Screen page in a browser that never scanned the code says to scan it first")
+            unlinked_context.close()
+
+            icon.click(".tabs a[href='auto.html']")
+            icon.wait_for_selector("#feed .entry")
+            said: list[str] = []
+            icon.once("dialog", lambda dialog: (said.append(dialog.message), dialog.accept()))
+            icon.click("#forget")
+            expect(icon.locator("#headline")).to_have_text("You unlinked this icon")
+            check(len(said) == 1 and "Delete it from the Home Screen" in said[0], "Unlink inside the icon says the icon has to be deleted too")
+            icon.goto("about:blank")
+            icon.goto(icon_address)  # the icon's address still carries the key
+            icon.wait_for_url(site + "auto.html")
+            expect(icon.locator("#headline")).to_have_text("You unlinked this icon")
+            check(icon.locator(".letter, .entry").count() == 0 and icon.locator("#relink").is_visible(),
+                  "an unlinked icon stays unlinked at its next start, although its address still carries the key")
+            icon.screenshot(path=SHOTS / "iphone-icon-unlinked.png", full_page=True)
+            icon.click("#relink")
+            icon.wait_for_selector("#feed .entry", timeout=40000)
+            icon.goto("about:blank")
+            icon.goto(icon_address)
+            icon.wait_for_selector(".row", timeout=40000)
+            check(True, "Link again brings the icon back, for this start and the next")
+            icon_context.close()
 
             # ---- the desk page on the PC
             desk_page = context.new_page()
