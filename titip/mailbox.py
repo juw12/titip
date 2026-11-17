@@ -35,15 +35,18 @@ REFRESH_SECONDS = 300  # the PC page's own look at Outlook runs in the backgroun
 ASK_SECONDS = 120  # a read stays in Outlook's queue this long, also after the phone stopped waiting
 QUICK_SECONDS = 3  # with a copy in hand, wait only this long for a newer answer
 LIST_FRESH_SECONDS = 10  # a first page this new is shown without asking Outlook again
-KEEP_MESSAGES = 120
+KEEP_MESSAGES = 240
 KEEP_CHARACTERS = 40_000_000
 KEEP_ROWS = 3000  # listed messages remembered, to find one again after it was moved
 MAX_ASKING = 12  # reads waiting for Outlook at one time
 PAGE = 40  # the phone's page size, until it asks for another
 WARM_SECONDS = 600  # keep the copies up to date this long after the phone last asked for anything
 WARM_EVERY = 30
+WARM_LONG_SECONDS = 8 * 3600  # then go on slowly this long, so new mail is there when the phone is picked up again
+WARM_LONG_EVERY = 300
 WARM_PAUSE = 0.2  # between two questions, so Outlook's own window gets its turn
-WARM_MESSAGES = {"inbox": 25, "sent": 10, "drafts": 5}  # newest messages read ahead in each folder
+WARM_MESSAGES = {"inbox": 40, "sent": 20, "drafts": 10}  # newest messages read ahead in each folder
+WANTED = 100  # rows of older pages and searches the phone was shown: read ahead as well
 FIND_AGAIN_ROWS = 100
 
 PROP = "http://schemas.microsoft.com/mapi/proptag/"
@@ -233,6 +236,8 @@ class OutlookMailbox:
         self._page = PAGE
         self._phone_at = 0.0
         self._warmer: threading.Thread | None = None
+        self._wanted: collections.OrderedDict[str, None] = collections.OrderedDict()  # ids shown further down
+        self._nudge = threading.Event()  # wakes the reading ahead before its next round is due
 
     # every public method hops to the COM thread and maps COM failures to MailError
     def _do(self, fn, *args, timeout: float = READ_SECONDS):
@@ -377,42 +382,89 @@ class OutlookMailbox:
 
     def _phone_asked(self) -> None:
         """A phone is in use: keep the copies up to date for the next few minutes."""
-        self._phone_at = time.monotonic()
+        now = time.monotonic()
+        back = now - self._phone_at >= WARM_SECONDS
+        self._phone_at = now
         if not self._read_ahead:
             return
         with self._lock:
             if self._warmer is None or not self._warmer.is_alive():
                 self._warmer = threading.Thread(target=self._warm, daemon=True, name="titip-warm")
                 self._warmer.start()
+        if back:
+            self._nudge.set()  # the slow rounds are minutes apart: look now
+
+    def _want(self, rows: list) -> None:
+        """The phone was shown these rows (an older page, a search): read them ahead as well."""
+        if not self._read_ahead:
+            return
+        with self._lock:
+            for row in rows:
+                self._wanted[row["id"]] = None
+                self._wanted.move_to_end(row["id"])
+            while len(self._wanted) > WANTED:
+                self._wanted.popitem(last=False)
+        self._nudge.set()
 
     def _warm(self) -> None:
-        """Read the first page of each folder and its newest messages ahead of the phone.
+        """Read ahead of the phone, so that a tap opens a message from memory instead of waiting for Outlook.
 
-        Runs only while a phone is in use (so Titip never starts Outlook by itself), one small
-        question at a time with a pause in between. A received or sent message is read once; a draft
-        again when it changed.
+        Starts only once a phone asks for something (so Titip never starts Outlook by itself). While
+        the phone is in use a round runs every WARM_EVERY seconds. After WARM_SECONDS without a phone
+        the rounds go on WARM_LONG_EVERY seconds apart for WARM_LONG_SECONDS, so mail that arrives in
+        the meantime is already there when the phone is picked up again. Those slow rounds end the
+        first time Outlook turns out to be closed: it is not opened again for a phone nobody holds.
         """
         draft_read_at: dict[str, str] = {}  # draft id -> its "last changed" time when it was read
-        while time.monotonic() - self._phone_at < WARM_SECONDS:
+        while True:
+            self._nudge.clear()
+            away = time.monotonic() - self._phone_at
+            if away >= WARM_LONG_SECONDS:
+                return
             try:
-                for folder in FOLDERS:
-                    page = self._shared(("list", folder, self._page), self._list, folder, self._page, 0, "", wait=ASK_SECONDS)
-                    for row in page["mail"][: WARM_MESSAGES[folder]]:
-                        kept = self._kept_message(row["id"])
-                        if kept is not None and (folder != "drafts" or draft_read_at.get(row["id"]) == row["time"]):
-                            continue
-                        time.sleep(WARM_PAUSE)
-                        try:
-                            self._shared(("item", row["id"]), self._get, row["id"], wait=ASK_SECONDS)
-                            draft_read_at[row["id"]] = row["time"]
-                        except OutlookBusy:
-                            raise
-                        except MailError:
-                            continue  # deleted in the meantime, or a kind of item that cannot be read
-                    time.sleep(WARM_PAUSE)
+                self._warm_round(draft_read_at)
+            except OutlookBusy:
+                pass  # try again on the next round
             except MailError:
-                pass  # Outlook is busy or closed: try again on the next round
-            time.sleep(WARM_EVERY)
+                if away >= WARM_SECONDS:
+                    return
+            self._nudge.wait(WARM_EVERY if away < WARM_SECONDS else WARM_LONG_EVERY)
+
+    def _warm_round(self, draft_read_at: dict[str, str]) -> None:
+        """The first page of each folder with its newest messages, then what the phone was shown further down.
+
+        One small question at a time with a pause in between. A received or sent message is read
+        once; a draft again when it changed.
+        """
+        for folder in FOLDERS:
+            page = self._shared(("list", folder, self._page), self._list, folder, self._page, 0, "", wait=ASK_SECONDS)
+            for row in page["mail"][: WARM_MESSAGES[folder]]:
+                kept = self._kept_message(row["id"])
+                if kept is not None and (folder != "drafts" or draft_read_at.get(row["id"]) == row["time"]):
+                    continue
+                if self._read_one(row["id"]):
+                    draft_read_at[row["id"]] = row["time"]
+            time.sleep(WARM_PAUSE)
+        while True:
+            with self._lock:
+                mail_id = next(reversed(self._wanted), None)  # what the phone was shown last comes first
+            if mail_id is None:
+                return
+            if self._kept_message(mail_id) is None:
+                self._read_one(mail_id)
+            with self._lock:
+                self._wanted.pop(mail_id, None)
+
+    def _read_one(self, mail_id: str) -> bool:
+        """Ask Outlook for one message so its copy is kept. False when it cannot be read; a busy Outlook raises."""
+        time.sleep(WARM_PAUSE)
+        try:
+            self._shared(("item", mail_id), self._get, mail_id, wait=ASK_SECONDS)
+        except OutlookBusy:
+            raise
+        except MailError:
+            return False  # deleted in the meantime, or a kind of item that cannot be read
+        return True
 
     # -------------------------------------------------- state
     def _fresh_state(self) -> dict | None:
@@ -498,7 +550,9 @@ class OutlookMailbox:
         limit = max(1, min(int(limit), 100))
         self._phone_asked()
         if int(offset) > 0 or (query or "").strip():
-            return self._do(self._list, folder, limit, offset, query)
+            page = self._do(self._list, folder, limit, offset, query)
+            self._want(page["mail"])
+            return page
         self._page = limit
         kept = self._lists.get((folder, limit))
         if kept and time.monotonic() - kept[0] < LIST_FRESH_SECONDS:

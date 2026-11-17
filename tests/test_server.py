@@ -223,7 +223,7 @@ class Desk(ServerCase):
         self.assertFalse(self.app.quit.is_set())
         reply, data = self.desk("POST", "/desk/quit", X)
         self.assertEqual((reply.status, json.loads(data)), (200, {"stopping": True}))
-        self.assertTrue(self.app.quit.is_set())
+        self.assertTrue(self.app.quit.wait(10))  # set just after the answer goes out; a full PC takes a moment
         self.app.quit.clear()
 
     def test_desk_status_does_not_wait_for_a_silent_mailbox(self):

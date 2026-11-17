@@ -413,7 +413,9 @@
     var row = view.rows.filter(function (mail) { return mail.id === id; })[0];
     $("subject").textContent = row ? row.subject : "";
     $("body").textContent = "";
-    $("body").appendChild(el("p", "wait", "Opening\u2026"));
+    // ... and how the message starts, which the list knows too: enough to read on while Outlook is busy
+    if (row && row.preview) $("body").appendChild(el("p", "peek", row.preview + "\u2026"));
+    $("body").appendChild(el("p", "wait", row && row.preview ? "Opening the rest\u2026" : "Opening\u2026"));
     $("letter").classList.add("opening");
     $("letter").hidden = false;
     api.get(id).then(function (item) {
