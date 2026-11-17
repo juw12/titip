@@ -281,12 +281,29 @@ Outlook did; the cause was not found (other programs on this PC drive Outlook to
 
 After the fix: 166 unit and server tests pass (6 new), the 73 browser steps pass.
 
+The live copy then moved itself from 0.4.0 to 0.4.1: ready after 5 s, a wait of about four minutes
+while Autopilot was thinking about a mail (it restarts only when nothing is in progress), then the
+new process was up 5 s after it started. Idle, it used 0.34 s of processor time in 42 s; 0.4.0 had
+used 2.86 s in 40 s.
+
+### Why Outlook stopped responding, and fixed (0.4.2)
+
+It was Titip, whenever something watched its status. Measured on the build PC, all processors busy:
+
+- 90 s without asking Titip anything: Outlook's window answered in 22 of 22 looks.
+- 95 s asking the PC page's status every 3 s: one question to Outlook ran 42 s, the next was still
+  running after 35 s, and Outlook's window was hung in 2 of 20 looks.
+- The question is the folder counts. The mailbox has 8 data files. Outside Titip, opening the list
+  of data files took 26 s, looking through the other seven 107 s, one count 0.5 to 1.8 s. Titip
+  counted the Inbox and Sent of every data file again every 10 s while a page was open.
+
+Now the counts are kept for five minutes (a send or a saved draft drops them), and the address and
+name are asked once per connection. The look through every data file after a start is still there,
+once. After the fix: 170 unit and server tests pass (4 new), the 73 browser steps pass.
+
 ### Not verified
 
 - A real phone on mobile data. Everything above ran from the build PC and a headless browser.
-- The priority fix in a real update. The copy that starts the new version is the old one, so the
-  fix shows from the update after 0.4.1 on. It is held by a test that lowers a real process.
-- Why Outlook stopped responding after the 0.3.0 to 0.3.1 restart.
 - A real send through the relay. It runs in the tests and the browser run against the demo mailbox
   only; no test mail was sent from the real account.
 - How long the Durable Object is billed while a phone polls. The free plan's limits (100,000 requests

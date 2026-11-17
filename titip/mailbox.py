@@ -25,7 +25,7 @@ FOLDERS = ("inbox", "sent", "drafts")
 MAX_LIST = 500  # how far back the phone can page in one folder
 MAX_BODY = 200_000
 MAX_HTML = 1_500_000
-STATE_SECONDS = 10
+STATE_SECONDS = 300  # counting every folder of every data file takes Outlook seconds, and its own window waits meanwhile
 READ_SECONDS = 20  # how long the phone waits for Outlook before it is told "busy"
 SEND_SECONDS = 120
 REFRESH_SECONDS = 300  # the PC page's own look at Outlook runs in the background and may wait this long
@@ -218,6 +218,7 @@ class OutlookMailbox:
         self._stores: dict[str, str] = {}  # short key -> StoreID
         self._folders: dict[str, list] = {}
         self._state_cache: tuple[float, dict] | None = None
+        self._who: tuple[str, str] | None = None  # (address, name): asked once per connection to Outlook
         self._state_problem: MailError | None = None
         self._refresh: threading.Thread | None = None
         self._refresh_lock = threading.Lock()
@@ -264,6 +265,7 @@ class OutlookMailbox:
         self._ns = self._app.GetNamespace("MAPI")
         self._stores.clear()
         self._folders.clear()
+        self._who = None
 
     def _store_key(self, store_id: str) -> str:
         key = hashlib.sha1(store_id.encode("ascii", "replace")).hexdigest()[:10]
@@ -420,7 +422,9 @@ class OutlookMailbox:
         return None
 
     def state(self, timeout: float = READ_SECONDS) -> dict:
-        """Account and folder counts. Kept for a few seconds: the phone and the PC page both poll it."""
+        """Account and folder counts. Kept for minutes: the phone and the PC page both poll it, and each
+        count is a question Outlook answers on the thread that also draws its window. A send or a saved
+        draft drops the copy, so the counts after it are new."""
         state = self._fresh_state()
         if state is None:
             state = self._do(self._state, timeout=timeout)
@@ -463,16 +467,21 @@ class OutlookMailbox:
         return {"ok": False, "busy": True, "busyFor": silent, "error": str(OutlookBusy())}
 
     def _state(self) -> dict:
-        account = ""
-        try:
-            account = self._ns.Accounts.Item(1).SmtpAddress
-        except Exception:
-            pass
+        who = self._who
+        if who is None:
+            account = ""
+            try:
+                account = self._ns.Accounts.Item(1).SmtpAddress
+            except Exception:
+                pass
+            who = (account, self._ns.CurrentUser.Name)
+            if account:  # an address that could not be read is asked for again next time
+                self._who = who
         return {
             "ok": True,
             "demo": False,
-            "account": account,
-            "name": self._ns.CurrentUser.Name,
+            "account": who[0],
+            "name": who[1],
             "counts": {name: sum(f.Items.Count for f in self._mail_folders(name)) for name in FOLDERS},
         }
 

@@ -184,6 +184,11 @@ Titip opens a door from your network to your mailbox. Read this first.
   ahead while a phone is in use: the newest 25 messages of the Inbox, 10 of Sent and 5 drafts. Those
   open at once whatever Outlook is doing. When Outlook is busy the list is shown from memory with a
   note that says from when, and is replaced as soon as Outlook answers.
+- While Outlook answers Titip its own window waits. Counting the folders is the slowest question when
+  mail is kept in several data files, so the counts on the PC page and the drafts number on the phone
+  are asked for at most every five minutes, and right after a send or a saved draft. The first
+  question after Titip starts looks through every data file once, which can take a minute or two on
+  a busy PC.
 - A message Titip has not read yet still needs Outlook. The phone says so and keeps asking for up to
   five minutes. The question waits in Outlook's queue once, however often the phone asks. Only reading
   is asked again. A send is never repeated.

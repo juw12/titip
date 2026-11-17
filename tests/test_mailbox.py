@@ -284,6 +284,76 @@ class BusyOutlook(unittest.TestCase):
         self.assertNotIn("busy", state)
         self.assertIn("Open Outlook", state["error"])
 
+    def test_the_counts_are_not_asked_for_again_within_minutes(self):
+        # On the build PC one count of every folder kept Outlook for 35 to 40 s, and its window stalled.
+        box = OutlookMailbox()
+        asked = []
+
+        def count(fn, *args, timeout=20):
+            asked.append(timeout)
+            return {"ok": True, "counts": {"inbox": len(asked)}}
+
+        box._do = count
+        self.assertEqual(box.state()["counts"]["inbox"], 1)
+        box._state_cache = (time.monotonic() - 120, box._state_cache[1])  # two minutes later
+        self.assertEqual(box.state()["counts"]["inbox"], 1)
+        self.assertEqual(box.quick_state()["counts"]["inbox"], 1)
+        self.assertNotIn("busy", box.quick_state())
+        self.assertEqual(len(asked), 1)
+        box._state_cache = (time.monotonic() - 3600, box._state_cache[1])  # an hour later
+        self.assertEqual(box.state()["counts"]["inbox"], 2)
+
+    def test_a_send_makes_the_next_counts_new(self):
+        box = OutlookMailbox()
+        box._do = lambda fn, *args, timeout=20: {"ok": True, "counts": {"drafts": 1}}
+        box.state()
+        box.send({"mode": "new", "to": "a@example.com", "body": "x"})
+        self.assertIsNone(box._state_cache)
+
+    def test_whose_mailbox_it_is_is_asked_once_per_connection(self):
+        asked = []
+
+        class FakeAccounts:
+            def Item(self, index):
+                asked.append("address")
+                return type("Account", (), {"SmtpAddress": "me@example.com"})()
+
+        class Namespace:
+            Accounts = FakeAccounts()
+
+            @property
+            def CurrentUser(self):
+                asked.append("name")
+                return type("User", (), {"Name": "Me"})()
+
+        box = OutlookMailbox()
+        box._ns = Namespace()
+        box._mail_folders = lambda name: []
+        first, second = box._state(), box._state()
+        self.assertEqual((first["account"], first["name"], first["counts"]["inbox"]), ("me@example.com", "Me", 0))
+        self.assertEqual(second, first)
+        self.assertEqual(asked, ["address", "name"])
+
+    def test_an_address_outlook_could_not_give_is_asked_for_again(self):
+        answers = [RuntimeError("not ready"), "me@example.com"]
+
+        class FakeAccounts:
+            def Item(self, index):
+                answer = answers.pop(0)
+                if isinstance(answer, Exception):
+                    raise answer
+                return type("Account", (), {"SmtpAddress": answer})()
+
+        class Namespace:
+            Accounts = FakeAccounts()
+            CurrentUser = type("User", (), {"Name": "Me"})()
+
+        box = OutlookMailbox()
+        box._ns = Namespace()
+        box._mail_folders = lambda name: []
+        self.assertEqual(box._state()["account"], "")
+        self.assertEqual(box._state()["account"], "me@example.com")
+
     def test_a_long_silent_outlook_is_not_asked_to_queue_more(self):
         from titip.mailbox import _ComThread
 
