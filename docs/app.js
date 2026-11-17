@@ -8,7 +8,9 @@
   var PAGE = 40;
   var UNDO_SECONDS = 5;
   var REFRESH_MS = 60000;
-  var DEMO = /[?&]demo\b/.test(location.search) || /\.github\.io$/.test(location.hostname);
+  var HOSTED = /\.github\.io$/.test(location.hostname);   // the public page: no Titip server behind it
+  var FORCED_DEMO = /[?&]demo\b/.test(location.search);
+  var ticket = FORCED_DEMO || !window.TitipFar ? null : window.TitipFar.ticket();   // this phone scanned the code for any network
 
   var view = { folder: "inbox", id: "", rows: [], more: false, query: "", loading: false, item: null, formatted: true };
   var draft = null;       // what the composer is writing: {mode, id, title, note}
@@ -48,7 +50,7 @@
     store.set("titip.opened", JSON.stringify(opened));
   }
 
-  // ------------------------------------------------------------ the two back ends: your PC, or the demo
+  // ------------------------------------------------------------ the back ends: your PC, your PC through the relay, or the demo
   var BUSY_WAIT = 60000;  // a read keeps asking this long while Outlook on the PC is busy
   var BUSY_TEXT = "Outlook on your PC is busy. Still trying\u2026";
   function request(path, body, since) {
@@ -168,7 +170,43 @@
     },
     fileUrl: function () { return ""; }
   };
-  var api = DEMO ? demo : pc;
+  // ---- your PC from any network: every request is a sealed question the PC answers through the relay
+  var FAR_READ_WAIT = 30000, FAR_SEND_WAIT = 90000;
+  var FAR_SILENT = "Your PC did not answer. Check that it is on, that Titip is running, and that \u201cMail from anywhere\u201d is switched on there.";
+  var relay = ticket ? window.TitipFar.connect(ticket) : null;
+  function farRequest(route, params, sending, since) {
+    var started = since || Date.now();
+    return relay.ask(route, params, sending ? FAR_SEND_WAIT : FAR_READ_WAIT).then(function (answer) {
+      if (answer.status === 503 && answer.data.busy && !sending && Date.now() - started < BUSY_WAIT) {
+        toast(BUSY_TEXT);
+        return new Promise(function (resolve) { setTimeout(resolve, 3000); }).then(function () {
+          return farRequest(route, params, false, started);
+        });
+      }
+      if (answer.status !== 200) throw new Error(answer.data.error || "Something went wrong on the PC.");
+      if (since && $("toastText").textContent === BUSY_TEXT) hideToast();
+      return answer.data;
+    }, function (error) {
+      // a send is never repeated by itself: the PC may have sent it and only the answer got lost
+      if (sending) {
+        var unsure = new Error("Your PC did not confirm it. Look in Sent before you send it again.");
+        unsure.unsure = true;
+        throw unsure;
+      }
+      throw new Error(error.message === "silent" ? FAR_SILENT : "Can't reach the relay. Check this phone's connection.");
+    });
+  }
+  var far = {
+    state: function () { return farRequest("state", {}); },
+    list: function (folder, offset, query) { return farRequest("mail", { folder: folder, limit: PAGE, offset: offset, q: query }); },
+    get: function (id) { return farRequest("item", { id: id }); },
+    send: function (payload) { return farRequest("send", payload, true); },
+    fileUrl: function () { return ""; },
+    file: function (id, index) { return farRequest("attachment", { id: id, index: index }); }
+  };
+
+  var DEMO = FORCED_DEMO || (HOSTED && !ticket);
+  var api = DEMO ? demo : ticket ? far : pc;
 
   // ------------------------------------------------------------ small helpers
   function el(tag, className, text) {
@@ -378,6 +416,7 @@
         var url = api.fileUrl(item.id, file.index);
         link.href = url || "#";
         if (url) link.setAttribute("download", file.name);
+        else if (api.file) link.onclick = function (event) { event.preventDefault(); fetchFile(item.id, file); };
         else link.onclick = function (event) { event.preventDefault(); toast("Attachments open in the real app, not in the demo."); };
         entry.appendChild(link);
         files.appendChild(entry);
@@ -400,6 +439,23 @@
       toast(error.message);
       location.hash = "#/" + view.folder;
     });
+  }
+
+  // Through the relay a file arrives sealed like everything else; the browser saves it from memory.
+  function fetchFile(id, file) {
+    toast("Getting " + file.name + "\u2026", "", null, true);
+    api.file(id, file.index).then(function (got) {
+      var blob = new Blob([window.TitipFar.fromBase64(got.data)], { type: "application/octet-stream" });
+      var address = URL.createObjectURL(blob);
+      var save = el("a");
+      save.href = address;
+      save.download = got.name || file.name;
+      document.body.appendChild(save);
+      save.click();
+      save.remove();
+      setTimeout(function () { URL.revokeObjectURL(address); }, 60000);
+      toast("Saved " + (got.name || file.name));
+    }).catch(function (error) { toast(error.message); });
   }
 
   function closeItem() {
@@ -528,7 +584,7 @@
     }).catch(function (error) {
       hideToast();
       openComposer("", null, values);
-      showComposeError((payload.action === "draft" ? "Not saved. " : "Not sent. ") + error.message + " Your text is still here.");
+      showComposeError((error.unsure ? "" : payload.action === "draft" ? "Not saved. " : "Not sent. ") + error.message + " Your text is still here.");
     });
   }
 

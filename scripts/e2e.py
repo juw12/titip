@@ -5,8 +5,9 @@
 Starts Titip with invented mail on spare ports, pairs a browser through the real QR link (HTTPS on this
 PC's network address), then reads, answers, undoes, sends, saves a draft and searches, at phone and
 desktop sizes, light and dark. Then Autopilot: on the paired phone, on the public page (demo), and
-through a stand-in relay that only ever gets ciphertext. Fails on any console error, page error or
-sideways overflow.
+through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
+trip: the public page asks, a stand-in relay with the worker's rules passes sealed text, this Titip
+answers. Fails on any console error, page error or sideways overflow.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import functools
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -69,6 +71,88 @@ def serve_public_pages() -> str:
     return f"http://127.0.0.1:{server.server_address[1]}"
 
 
+class StandInRelay:
+    """worker/titip-relay.js in a few lines. Titip reaches it over HTTP, the browser page through page.route.
+
+    It keeps every body that passed in `wire`, so the run can prove none of it was readable.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.owner: dict[str, str] = {}
+        self.state: dict[str, str] = {}
+        self.orders: dict[str, list[str]] = {}
+        self.asks: dict[str, list[dict]] = {}
+        self.answers: dict[str, str] = {}
+        self.wire: list[str] = []
+        self.asked: list[str] = []
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    def handle(self, method: str, path: str, body: str, token: str) -> tuple[int, str]:
+        parts = path.split("?")[0].split("/")
+        if len(parts) < 3 or parts[1] != "c":
+            return 404, ""
+        channel, what = parts[2], "/".join(parts[3:])
+        with self.lock:
+            if body:
+                self.wire.append(body)
+            owns = bool(token) and self.owner.get(channel) == token
+            if what == "state" and method == "PUT":
+                if self.owner.setdefault(channel, token) != token:
+                    return 403, ""
+                self.state[channel] = body
+                return 200, "ok"
+            if what == "state" and method == "GET":
+                return (200, self.state[channel]) if channel in self.state else (404, "")
+            if what == "orders" and method == "POST":
+                self.orders.setdefault(channel, []).append(body)
+                return 200, "ok"
+            if what == "orders/take" and method == "POST":
+                return (200, json.dumps({"orders": self.orders.pop(channel, [])})) if owns else (404, "")
+            if what.startswith("ask/") and method == "POST":
+                self.asks.setdefault(channel, []).append({"id": parts[4], "body": body})
+                self.asked.append(parts[4])
+                return 200, "ok"
+            if what == "asks/take" and method == "POST":
+                return (200, json.dumps({"asks": self.asks.pop(channel, [])})) if owns else (404, "")
+            if what.startswith("answer/") and method == "PUT":
+                if not owns:
+                    return 404, ""
+                self.answers[parts[4]] = body
+                return 200, "ok"
+            if what.startswith("answer/") and method == "GET":  # handed out once
+                answer = self.answers.pop(parts[4], None)
+                if answer is not None:
+                    self.wire.append(answer)
+                return (200, answer) if answer is not None else (204, "")
+        return 404, ""
+
+    def _handler(self):
+        relay = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:
+                pass
+
+            def _any(self) -> None:
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length).decode("ascii") if length else ""
+                status, text = relay.handle(self.command, self.path, body, self.headers.get("X-Titip-Write", ""))
+                data = text.encode("ascii")
+                self.send_response(status)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                if status != 204:
+                    self.wfile.write(data)
+
+            do_GET = do_PUT = do_POST = do_DELETE = _any
+
+        return Handler
+
+
 def overflow(page) -> int:
     return page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
 
@@ -79,6 +163,9 @@ def main() -> None:
     SHOTS.mkdir(parents=True, exist_ok=True)
     home = tempfile.mkdtemp(prefix="titip-e2e-")
     environment = {k: v for k, v in os.environ.items() if k.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")}
+    environment["NO_PROXY"] = "127.0.0.1,localhost"  # the stand-in relay is on this PC
+    stand_in = StandInRelay()
+    (Path(home) / "remote.json").write_text(json.dumps({"relay": stand_in.url, "mail": True}), encoding="utf-8")
     server = subprocess.Popen(
         [sys.executable, "-m", "titip", "--demo", "--quiet", "--home", home,
          "--phone-port", str(PHONE_PORT), "--desk-port", str(DESK_PORT)],
@@ -383,6 +470,69 @@ def main() -> None:
             far.screenshot(path=SHOTS / "phone-autopilot-far.png", full_page=True)
             far.close()
 
+            # ---- mail from any network: the public page asks, the stand-in relay passes it on, this Titip answers
+            settings = json.loads((Path(home) / "remote.json").read_text(encoding="utf-8"))
+            check(desk("/desk/status")["far"]["mail"] is True and settings.get("mail") is True and bool(settings.get("key")),
+                  "Titip starts with Mail from anywhere on when its settings say so")
+
+            def through(route) -> None:
+                request = route.request
+                status, text = stand_in.handle(request.method, "/" + request.url.split("/", 3)[3], request.post_data or "", "")
+                route.fulfill(status=status, headers={"Access-Control-Allow-Origin": "*"}, content_type="text/plain", body=text)
+
+            away = context.new_page()
+            away.set_viewport_size({"width": 390, "height": 844})
+            away.on("console", lambda message: errors.append("away: " + message.text) if message.type == "error" else None)
+            away.on("pageerror", lambda error: errors.append("away: " + str(error)))
+            away.route("https://relay.invalid/**", through)
+            real_ticket = remote.b64(json.dumps(
+                {"u": "https://relay.invalid", "c": settings["channel"], "k": settings["key"]}).encode())
+            away.goto(f"{public}/auto.html#r={real_ticket}")
+            away.wait_for_selector("#feed .entry")
+            expect(away.locator("#mailTab")).to_be_visible(timeout=20000)
+            check(True, "the Autopilot page shows the Mail tab once the PC says Mail from anywhere is on")
+            away.click("#mailTab")
+            away.wait_for_selector(".row", timeout=40000)
+            check(away.locator(".row").count() >= 6 and len(stand_in.asked) >= 2,
+                  f"the inbox arrives through the relay ({away.locator('.row').count()} rows, {len(stand_in.asked)} asks)")
+            away.click(".tabs a[data-folder=sent]")
+            away.wait_for_selector(".row .subject:has-text('RE: Hinge sample B')", timeout=40000)
+            check(True, "Sent through the relay shows what this PC sent earlier in the run")
+            away.click(".tabs a[data-folder=inbox]")
+            away.wait_for_selector(".row .subject:has-text('Hinge sample B')", timeout=40000)
+            away.locator(".row").first.click()
+            away.wait_for_selector("#letter:not([hidden]) iframe", timeout=40000)
+            check(away.frame_locator("#body iframe").locator("table").count() == 1 and away.locator("#files a").count() == 2,
+                  "a formatted message opens through the relay with its attachments listed")
+            check(overflow(away) <= 0, "mail through the relay does not overflow sideways at 390")
+            away.screenshot(path=SHOTS / "phone-mail-far.png")
+            with away.expect_download(timeout=40000) as saving:
+                away.locator("#files a").first.click()
+            saved = Path(saving.value.path()).read_text(encoding="utf-8")
+            check(saved.startswith("Demo attachment: ") and saving.value.suggested_filename in saved,
+                  f"an attachment comes through the relay and is saved ({saving.value.suggested_filename})")
+            away.click("#actions button:has-text('Reply')")
+            away.fill("#bodyInput", "Understood from the road. Keep unit seven aside for me.")
+            away.click("#send")
+            away.wait_for_selector("#toast:not([hidden])")
+            check("Sending in" in away.inner_text("#toastText"), "a send through the relay waits behind the same undo countdown")
+            expect(away.locator("#toastText")).to_have_text("Sent to Mateo Silva", timeout=60000)
+            away.click("#back")
+            away.click(".tabs a[data-folder=sent]")
+            away.wait_for_selector(".row .preview:has-text('Understood from the road')", timeout=40000)
+            check(True, "the reply written away from home is sent by the PC and shows in Sent")
+            sends = [text for text in stand_in.wire if "Understood" in str(remote.unseal(remote.unb64(settings["key"]), text))]
+            check(len(sends) >= 1 and len(stand_in.wire) > 10, f"the PC could open what the phone sealed ({len(stand_in.wire)} bodies passed)")
+            sealed_only = all(re.fullmatch(r"[A-Za-z0-9_-]+", text) for text in stand_in.wire)
+            readable = [word for text in stand_in.wire if re.fullmatch(r"[A-Za-z0-9_-]+", text)
+                        for word in (b"Hinge", b"Mateo", b"Understood", b"torque", b"Demo attachment", b"inbox", b"route")
+                        if word in remote.unb64(text)]
+            check(sealed_only and not readable,
+                  "the relay only ever held sealed text: no subject, name, body, file or folder")
+            check(not stand_in.answers and stand_in.handle("GET", f"/c/{settings['channel']}/answer/{stand_in.asked[0]}", "", "")[0] == 204,
+                  "every answer was handed out once and is gone from the relay")
+            away.close()
+
             # ---- the desk page on the PC
             desk_page = context.new_page()
             desk_page.set_viewport_size({"width": 900, "height": 1000})
@@ -390,6 +540,22 @@ def main() -> None:
             desk_page.on("pageerror", lambda error: errors.append("desk: " + str(error)))
             desk_page.goto(f"http://127.0.0.1:{DESK_PORT}/")
             desk_page.wait_for_selector("#mail .good")
+            expect(desk_page.locator("#mailFarLine")).to_contain_text("A phone last asked at")
+            check(desk_page.inner_text("#mailFar") == "Switch off", "the PC page says Outlook mail from anywhere is on and when a phone last asked")
+            desk_page.click("#mailFar")
+            expect(desk_page.locator("#mailFarLine")).to_contain_text("Outlook mail stays on your own network.")
+            check(desk("/desk/status")["far"]["mail"] is False
+                  and json.loads((Path(home) / "remote.json").read_text(encoding="utf-8"))["mail"] is False,
+                  "Switch off on the PC page stops mail through the relay and is remembered")
+            asked: list[str] = []
+            desk_page.once("dialog", lambda dialog: (asked.append(dialog.message), dialog.dismiss()))
+            desk_page.click("#mailFar")
+            desk_page.wait_for_timeout(300)
+            check(len(asked) == 1 and "any network" in asked[0] and desk("/desk/status")["far"]["mail"] is False,
+                  "switching it on asks first, and saying no leaves it off")
+            expect(desk_page.locator("#updateLine")).to_contain_text("not installed with git")
+            check(desk_page.locator("#updateSwitch").is_disabled() and desk_page.locator("#updateNow").is_disabled(),
+                  "the demo never updates itself, and the PC page says so")
             desk_page.click("#pair")
             desk_page.wait_for_selector("#qr svg")
             check("Browser" in desk_page.inner_text("#devices"), "desk page lists the paired device")

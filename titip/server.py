@@ -7,11 +7,15 @@
 
 Both also serve the Autopilot page (titip.autopilot): what it did with new Gmail and what waits for you.
 
+A phone on another network has a third way in, without any listener: titip.remote asks a relay for
+encrypted questions and answers them with Titip.mail_call, the same function the phone listener uses.
+
 No request path, mail id or mail text is ever written to a log.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 import tempfile
@@ -36,10 +40,12 @@ from .pairing import (
 )
 from .remote import Remote
 from .tls import ensure_certificate, server_context
+from .update import Updater
 
 PHONE_PORT = 47779
 DESK_PORT = 47780
 MAX_POST = 1_000_000
+MAX_FAR_FILE = 1_000_000  # an attachment this size still fits through the relay once it is sealed
 HEADER = "X-Titip"  # a custom header a cross-site form cannot send: blocks forged POSTs
 
 STATIC = {
@@ -47,6 +53,7 @@ STATIC = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/auto.html": ("auto.html", "text/html; charset=utf-8"),
     "/auto.js": ("auto.js", "text/javascript; charset=utf-8"),
+    "/far.js": ("far.js", "text/javascript; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     "/icon-192.png": ("icon-192.png", "image/png"),
@@ -194,37 +201,23 @@ class PhoneHandler(_Handler):
         if self._static(route):
             return None
         query = {key: values[0] for key, values in parse_qs(url.query).items()}
-        try:
-            if route == "/api/auto":
-                return self._json(200, self.app.auto_state())
-            if route == "/api/state":
-                return self._json(200, {**self.app.mailbox.state(), "version": __version__})
-            if route == "/api/mail":
-                return self._json(200, self.app.mailbox.list(
-                    query.get("folder", "inbox"),
-                    int(query.get("limit", 40)),
-                    int(query.get("offset", 0)),
-                    query.get("q", ""),
-                ))
-            if route == "/api/item":
-                return self._json(200, self.app.mailbox.get(query.get("id", "")))
-            if route == "/api/attachment":
+        if route == "/api/auto":
+            return self._json(200, self.app.auto_state())
+        if route == "/api/attachment":
+            try:
                 return self._attachment(query.get("id", ""), int(query.get("index", 0)))
-        except OutlookBusy as error:  # the phone asks again by itself: reading twice does no harm
-            return self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error), "busy": True})
-        except MailError as error:
-            return self._error(HTTPStatus.BAD_GATEWAY, str(error))
-        except ValueError:
-            return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
+            except OutlookBusy as error:
+                return self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error), "busy": True})
+            except MailError as error:
+                return self._error(HTTPStatus.BAD_GATEWAY, str(error))
+            except ValueError:
+                return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
+        if route in ("/api/state", "/api/mail", "/api/item"):
+            return self._json(*self.app.mail_call(route[5:], query))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
     def _attachment(self, mail_id: str, index: int) -> None:
-        folder = Path(tempfile.mkdtemp(prefix="titip-"))
-        try:
-            name, path = self.app.mailbox.attachment(mail_id, index, folder)
-            data = path.read_bytes()
-        finally:
-            shutil.rmtree(folder, ignore_errors=True)
+        name, data = self.app.attachment(mail_id, index)
         fallback = "".join(ch if ch.isascii() and (ch.isalnum() or ch in "._- ") else "_" for ch in name) or "attachment"
         self._send(200, data, "application/octet-stream", {
             "Content-Disposition": f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name)}",
@@ -245,10 +238,7 @@ class PhoneHandler(_Handler):
         if route == "/api/auto":
             return self._auto_order(body)
         if route == "/api/send":
-            try:
-                return self._json(200, self.app.mailbox.send(body))
-            except MailError as error:
-                return self._error(HTTPStatus.BAD_REQUEST, str(error))
+            return self._json(*self.app.mail_call("send", body))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
 
@@ -294,6 +284,15 @@ class DeskHandler(_Handler):
             if body.get("renew"):
                 self.app.remote.renew()
             return self._json(200, self.app.far_pairing())
+        if route == "/desk/mailfar":  # may a phone with that code also read and send Outlook mail?
+            self.app.remote.set_mail(body.get("on") is True)
+            return self._json(200, self.app.status())
+        if route == "/desk/update":  # switch self-updating on or off, or look for a new version now
+            if "on" in body:
+                self.app.updater.switch(body.get("on") is True)
+            if body.get("check"):
+                self.app.updater.check_soon()
+            return self._json(200, self.app.status())
         if route == "/desk/pair":
             return self._json(200, self.app.new_pairing())
         if route == "/desk/unpair":
@@ -318,12 +317,19 @@ class Titip:
         https: bool = True,
         phone_host: str = "0.0.0.0",
         autopilot: Autopilot | None = None,
+        updater: Updater | None = None,
     ):
         self.mailbox = mailbox
         self.home = Path(home)
         self.autopilot = autopilot or Autopilot(self.home)  # without a mailbox: the page says it cannot run
-        self.remote = Remote(self.home, self.autopilot)
+        self.remote = Remote(self.home, self.autopilot, mail=self.mail_call)
         self.autopilot.on_change = self.remote.touch
+        self.updater = updater or Updater(self.home, root=None)  # without a checkout: the page says so
+        self.updater.busy = self.busy
+        self.updater.restart = self.restart_for_update
+        self.restarting = False
+        self._calls = 0
+        self._calls_lock = threading.Lock()
         self.devices = DeviceStore(self.home / "devices.json")
         self.codes = PairingCodes()
         self.https = https
@@ -350,8 +356,10 @@ class Titip:
             threading.Thread(target=server.serve_forever, daemon=True).start()
         self.autopilot.start()
         self.remote.start()
+        self.updater.start()
 
     def stop(self) -> None:
+        self.updater.stop()
         self.autopilot.stop()
         self.remote.stop()
         for server in (self.phone, self.desk):
@@ -389,6 +397,65 @@ class Titip:
             "expiresIn": self.codes.seconds,
         }
 
+    # -------------------------------------------------- mail, for a paired phone and for the relay alike
+    def mail_call(self, route: str, params: dict) -> tuple[int, dict]:
+        """One mail request: (HTTP status, JSON answer). Never raises for anything Outlook does."""
+        with self._calls_lock:
+            self._calls += 1
+        try:
+            if route == "send":
+                try:
+                    return 200, self.mailbox.send(params)
+                except MailError as error:
+                    return 400, {"error": str(error)}
+            if route == "state":
+                return 200, {**self.mailbox.state(), "version": __version__}
+            if route == "mail":
+                return 200, self.mailbox.list(
+                    str(params.get("folder", "inbox")),
+                    int(params.get("limit", 40)),
+                    int(params.get("offset", 0)),
+                    str(params.get("q", "")),
+                )
+            if route == "item":
+                return 200, self.mailbox.get(str(params.get("id", "")))
+            if route == "attachment":  # only the relay asks this way; a paired phone downloads the file itself
+                name, data = self.attachment(str(params.get("id", "")), int(params.get("index", 0)), MAX_FAR_FILE)
+                return 200, {"name": name, "size": len(data), "data": base64.b64encode(data).decode("ascii")}
+        except OutlookBusy as error:  # the phone asks again by itself: reading twice does no harm
+            return 503, {"error": str(error), "busy": True}
+        except MailError as error:
+            return 502, {"error": str(error)}
+        except (ValueError, TypeError):
+            return 400, {"error": "Bad request."}
+        finally:
+            with self._calls_lock:
+                self._calls -= 1
+        return 404, {"error": "Not found."}
+
+    def attachment(self, mail_id: str, index: int, limit: int = 0) -> tuple[str, bytes]:
+        """(file name, bytes) of one attachment. With a limit, a larger file is refused instead of read."""
+        folder = Path(tempfile.mkdtemp(prefix="titip-"))
+        try:
+            name, path = self.mailbox.attachment(mail_id, index, folder)
+            if limit and path.stat().st_size > limit:
+                raise MailError(
+                    f"\u201c{name}\u201d is larger than 1 MB, too large for the relay. "
+                    "Open it on your own network or at your PC."
+                )
+            return name, path.read_bytes()
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    # -------------------------------------------------- updating itself
+    def busy(self) -> bool:
+        """True while a restart would cut something short: Autopilot at work, or a mail request under way."""
+        return bool(self.autopilot.snapshot().get("busy")) or self._calls > 0 or self.remote.working > 0
+
+    def restart_for_update(self) -> None:
+        self.restarting = True
+        self.quit.set()  # the main thread stops the listeners and starts the new version
+
     def auto_state(self, snapshot: dict | None = None) -> dict:
         return {**(snapshot or self.autopilot.snapshot()), "version": __version__}
 
@@ -419,4 +486,5 @@ class Titip:
             "autopilot": {key: auto[key] for key in ("available", "on", "busy", "mailboxes", "lastCheck", "now")}
             | {"waiting": len(auto["held"])},
             "far": self.remote.status(),
+            "update": self.updater.status(),
         }

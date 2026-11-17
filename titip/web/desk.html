@@ -32,19 +32,26 @@
   <p class="soft">Reads new mail in the Gmail that Chrome is signed in to, answers what is safe to answer and keeps the rest for you. It never touches Outlook.</p>
   <div class="rowline"><a class="go" href="/auto.html">Open Autopilot</a></div>
 
-  <h2>Autopilot from anywhere</h2>
-  <p>For mobile data or another Wi-Fi. Scan the code once with the phone's camera. It opens the Autopilot page only, never your Outlook mail.</p>
+  <h2>From anywhere</h2>
+  <p>For mobile data or another Wi-Fi. Scan the code once with the phone's camera. It opens the Autopilot page; your Outlook mail is added only while the switch below is on.</p>
   <div class="rowline"><button id="far" type="button">Show the code</button><button id="farNew" type="button" hidden>Make a new code</button></div>
   <div id="farBox" hidden>
     <div class="qr" id="farQr"></div>
-    <p class="soft">The code does not expire and it carries the key. Whoever has it can read the Autopilot page and press its buttons, so do not share a picture of it. “Make a new code” cuts off every phone that used the old one.</p>
+    <p class="soft">The code does not expire and it carries the key. Whoever has it can read the Autopilot page and press its buttons and, while the switch below is on, read and send your Outlook mail. Do not share a picture of it. “Make a new code” cuts off every phone that used the old one.</p>
   </div>
   <p class="soft" id="farNote"></p>
+  <p id="mailFarLine" role="status">Outlook mail from anywhere: checking…</p>
+  <p class="soft">On: a phone that scanned the code can read, answer and write your Outlook mail from any network. Each request and its answer pass through the relay, encrypted on the phone and on this PC with a key the relay never gets. If this is a work mailbox, check that your employer allows reading it this way.</p>
+  <div class="rowline"><button id="mailFar" type="button" disabled>Switch on</button></div>
+
+  <h2>Updates</h2>
+  <p id="updateLine" role="status">Checking…</p>
+  <div class="rowline"><button id="updateSwitch" type="button" disabled>Switch off</button><button id="updateNow" type="button" disabled>Look now</button></div>
 
   <h2>Good to know</h2>
   <p class="soft" id="addresses"></p>
-  <p class="soft">Only paired phones get an answer. Your Outlook mail is never stored outside this PC and never goes through another server. Mail you send from the phone leaves from Outlook here, exactly as if you had typed it at your desk.</p>
-  <p class="soft">Autopilot from anywhere is the one exception to “no other server”: its page (Gmail only) passes through a relay, encrypted on this PC with a key the relay never gets.</p>
+  <p class="soft">Only paired phones get an answer. Your Outlook mail is never stored outside this PC. On your own network it goes straight from this PC to the phone, through no other server. Mail you send from the phone leaves from Outlook here, exactly as if you had typed it at your desk.</p>
+  <p class="soft">“From anywhere” is the one exception to “no other server”: the Autopilot page (Gmail) and, only if you switch it on, your Outlook mail pass through a relay, encrypted with a key the relay never gets.</p>
 
   <h2>Stop</h2>
   <p class="soft">Stopping closes the door for every phone until you start Titip again. Paired phones stay paired.</p>

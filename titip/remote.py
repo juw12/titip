@@ -1,19 +1,24 @@
-"""The Autopilot page from any network, without opening this PC to the internet.
+"""Titip from any network, without opening this PC to the internet.
 
-Titip itself is only reachable on your own network. For the Autopilot page there is a second way: a
-small relay (worker/titip-relay.js, a Cloudflare Worker you deploy yourself) that holds two things
-per PC, both encrypted before they leave it:
+Titip itself is only reachable on your own network. There is a second way: a small relay
+(worker/titip-relay.js, a Cloudflare Worker you deploy yourself) that passes things between this PC
+and your phone, all encrypted before they leave either:
 
     PC  --state-->  relay  --state-->  phone        what Autopilot did and what waits for you
     PC  <--orders--  relay  <--orders--  phone       pause, send this draft, don't answer
+    PC  <--asks--  relay  <--asks--  phone           show my inbox, open this mail, send this
+    PC  --answers-->  relay  --answers-->  phone     (only while "Mail from anywhere" is switched on)
 
 The key (AES-256-GCM) is made on this PC and reaches the phone only inside the QR code, after the
 "#" of the address, which a browser never sends to any server. The relay sees ciphertext and its
 size, and can at worst lose or delay it. Orders older than ORDER_MAX_AGE_S or seen before are dropped.
 
-Only Autopilot data (Gmail) goes this way. Outlook mail never does.
+Autopilot data (Gmail) always goes this way once a relay is set. Outlook mail goes this way only
+while "mail" is true in the settings (the switch on the PC page; off unless you turn it on). An ask is
+answered once: asks seen before, older than ASK_MAX_AGE_S, or (for a send) made before this program
+started are refused, so a mail can never go out twice.
 
-Settings live in <home>/remote.json: {"relay": "https://...workers.dev", "channel", "key", "write"}.
+Settings live in <home>/remote.json: {"relay": "https://...workers.dev", "channel", "key", "write", "mail"}.
 Without a relay address this module does nothing.
 """
 
@@ -38,6 +43,14 @@ MAX_EVENTS = 40
 MAX_TEXT = 700
 TIMEOUT_S = 25
 ALLOWED_ORDERS = ("switch", "mode", "check", "send", "drop")
+ASK_ROUTES = ("state", "mail", "item", "attachment", "send")
+ASK_MAX_AGE_S = 120
+ASK_IDLE_S = 5  # how often the PC looks for a question while nobody is reading mail
+ASK_BUSY_S = 0.7  # ... and while somebody is
+ASK_BUSY_FOR_S = 120
+ASK_RETRY_S = 20  # after the relay could not be reached
+MAX_ANSWER = 1_900_000  # sealed characters; the relay refuses more than 2,000,000
+MAX_WORKERS = 4
 
 
 def b64(data: bytes) -> str:
@@ -81,17 +94,27 @@ def http(method: str, url: str, body: bytes | None = None, headers: dict | None 
     request = urllib.request.Request(url, data=body, method=method, headers={"User-Agent": "titip", **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as reply:
-            return reply.status, reply.read(600_000)
+            return reply.status, reply.read(8_000_000)
     except urllib.error.HTTPError as error:
         return error.code, b""
 
 
 class Remote:
-    def __init__(self, home: Path, autopilot, send=http, clock=time.time):
+    def __init__(self, home: Path, autopilot, send=http, clock=time.time, mail=None):
         self.path = Path(home) / "remote.json"
         self.autopilot = autopilot
         self.send = send
         self.clock = clock
+        self.mail = mail  # (route, params) -> (status, data): the same mail calls a paired phone makes
+        self.mail_on = False
+        self.mail_error = ""
+        self.last_ask = 0.0
+        self.started = clock()
+        self.working = 0  # asks being answered right now
+        self._asked: list[str] = []
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._mail_thread: threading.Thread | None = None
         self.error = ""
         self.last_publish = 0.0
         self.last_contact = 0.0
@@ -108,6 +131,7 @@ class Remote:
         try:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
             settings.update({name: str(saved[name]) for name in settings if saved.get(name)})
+            self.mail_on = saved.get("mail") is True
         except (OSError, ValueError, AttributeError):
             pass
         if settings["relay"] and not (settings["channel"] and settings["key"] and settings["write"]):
@@ -121,7 +145,7 @@ class Remote:
 
     def _save(self, settings: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(settings, indent=1), encoding="utf-8")
+        self.path.write_text(json.dumps({**settings, "mail": self.mail_on}, indent=1), encoding="utf-8")
 
     @property
     def ready(self) -> bool:
@@ -159,7 +183,19 @@ class Remote:
             "error": self.error,
             "lastContact": int(self.last_contact),
             "running": self._thread is not None,
+            "mail": self.mail_on,
+            "mailError": self.mail_error,
+            "lastAsk": int(self.last_ask),
         }
+
+    def set_mail(self, on: bool) -> None:
+        """The switch on the PC page: may a phone with the code read and send Outlook mail through the relay?"""
+        self.mail_on = bool(on)
+        self.mail_error = ""
+        self._save(self.settings)
+        self._published = ""  # the Autopilot page shows or hides its Mail tab
+        self.touch()
+        self._wake.set()
 
     # ------------------------------------------------------------ the two directions
     def touch(self) -> None:
@@ -167,7 +203,7 @@ class Remote:
 
     def publish(self, force: bool = False) -> bool:
         """Send the current state if it changed. True when the relay took it."""
-        snapshot = slim(self.autopilot.snapshot())
+        snapshot = {**slim(self.autopilot.snapshot()), "mail": self.mail_on and self.mail is not None}
         comparable = json.dumps({**snapshot, "now": 0}, sort_keys=True)
         if not force and comparable == self._published:
             return False
@@ -231,14 +267,122 @@ class Remote:
             self._dirty.clear()
             self.publish(force=due >= HEARTBEAT_S)
 
-    # ------------------------------------------------------------ the thread
+    # ------------------------------------------------------------ mail from anywhere
+    def take_asks(self) -> list[tuple[str, dict | None]]:
+        """Questions the phone left: (id, opened question or None); they are removed from the relay."""
+        status, body = self.send("POST", self._url("asks/take"), b"", {"X-Titip-Write": self.settings["write"]})
+        if status == 404:  # the relay does not know this PC yet, or is an older one without mail
+            return []
+        if status != 200:
+            raise OSError(f"the relay answered {status}")
+        try:
+            waiting = json.loads(body.decode("utf-8")).get("asks", [])
+        except (ValueError, AttributeError):
+            return []
+        asks = []
+        for entry in waiting if isinstance(waiting, list) else []:
+            if isinstance(entry, dict) and entry.get("id"):
+                asks.append((str(entry["id"]), unseal(self.key, str(entry.get("body", "")))))
+        return asks
+
+    def _refusal(self, identity: str, ask: dict) -> str | None:
+        """Why this ask is not carried out ("" = say nothing at all), or None when it is fine."""
+        if str(ask.get("id", "")) != identity or ask.get("route") not in ASK_ROUTES:
+            return ""
+        with self._lock:
+            if identity in self._asked:
+                return ""  # seen before: the first one got the answer
+            self._asked.append(identity)
+            del self._asked[:-500]
+        try:
+            at = float(ask.get("at", 0))
+        except (TypeError, ValueError):
+            return ""
+        if abs(self.clock() - at) > ASK_MAX_AGE_S:
+            return "The clocks of your phone and your PC are more than two minutes apart. Set both to automatic time."
+        if ask["route"] == "send" and at < self.started:
+            return "Titip on your PC had just restarted, so nothing was sent. Send it again."
+        return None
+
+    def answer(self, identity: str, ask: dict | None) -> bool:
+        """Carry out one ask and leave the sealed answer. False when it was dropped without an answer."""
+        if ask is None or self.mail is None:
+            return False  # not sealed with our key: nobody we know asked
+        refused = self._refusal(identity, ask)
+        if refused == "":
+            return False
+        if refused:
+            status, data = 400, {"error": refused}
+        else:
+            params = ask.get("params")
+            try:
+                status, data = self.mail(ask["route"], params if isinstance(params, dict) else {})
+            except Exception:  # never leave the phone waiting for nothing
+                status, data = 500, {"error": "Titip on your PC could not do that."}
+        sealed = seal(self.key, {"id": identity, "status": status, "data": data})
+        if len(sealed) > MAX_ANSWER and status == 200 and data.get("html"):
+            data = {**data, "html": "", "cut": True}  # a very long formatted mail goes as plain text
+            sealed = seal(self.key, {"id": identity, "status": status, "data": data})
+        if len(sealed) > MAX_ANSWER:
+            sealed = seal(self.key, {"id": identity, "status": 413, "data": {
+                "error": "That is too large to pass through the relay. Open it on your own network or at your PC."}})
+        status, _ = self.send(
+            "PUT", self._url(f"answer/{identity}"), sealed.encode("ascii"),
+            {"X-Titip-Write": self.settings["write"], "Content-Type": "text/plain"},
+        )
+        if status != 200:
+            raise OSError(f"the relay answered {status}")
+        return True
+
+    def _answer_in_thread(self, identity: str, ask: dict | None) -> None:
+        try:
+            self.answer(identity, ask)
+        except Exception as error:
+            self.mail_error = f"An answer could not be handed to the relay ({type(error).__name__})."
+        finally:
+            with self._lock:
+                self.working -= 1
+
+    def mail_step(self) -> float:
+        """One look for asks. Returns how long to wait before the next one."""
+        asks = self.take_asks()
+        self.mail_error = ""
+        if asks:
+            self.last_ask = self.clock()
+        for identity, ask in asks:
+            with self._lock:
+                self.working += 1
+                crowded = self.working > MAX_WORKERS
+            if crowded:  # in this thread: the next look waits until it is done
+                self._answer_in_thread(identity, ask)
+            else:
+                threading.Thread(target=self._answer_in_thread, args=(identity, ask), daemon=True).start()
+        return ASK_BUSY_S if self.clock() - self.last_ask < ASK_BUSY_FOR_S else ASK_IDLE_S
+
+    def _run_mail(self) -> None:
+        while not self._stop.is_set():
+            self._wake.clear()
+            if not (self.mail_on and self.ready and self.mail is not None):
+                self._wake.wait(30)
+                continue
+            try:
+                wait = self.mail_step()
+            except Exception as error:
+                self.mail_error = f"The relay could not be reached ({type(error).__name__})."
+                wait = ASK_RETRY_S
+            self._stop.wait(wait)
+
+    # ------------------------------------------------------------ the threads
     def start(self) -> None:
         if self._thread is None and self.ready:
             self._thread = threading.Thread(target=self._run, daemon=True, name="titip-remote")
             self._thread.start()
+            self._mail_thread = threading.Thread(target=self._run_mail, daemon=True, name="titip-remote-mail")
+            self._mail_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
 
     def _run(self) -> None:
         while not self._stop.is_set():

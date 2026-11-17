@@ -54,6 +54,13 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
   shown in full, as a quote.
 - Autopilot through the relay says so, says when the PC last wrote, and shows a switch you pressed at
   once while the PC picks it up.
+- Mail through the relay looks and reads like mail on your own network. The differences are said in
+  words only when they matter: "Your PC did not answer. Check that it is on, ..." after 30 seconds of
+  silence, and after an unconfirmed send "Your PC did not confirm it. Look in Sent before you send it
+  again." The Mail tab on the Autopilot page is hidden while the PC's switch is off.
+- The PC page says each switch as a fact first, then the detail: "Outlook mail from anywhere: on. A
+  phone last asked at 14:02." and "Titip 0.3.0 (d1c68d0). Up to date. Last looked at 14:05."
+  Switching mail from anywhere on asks once; switching it off does not.
 
 ## Banned
 
