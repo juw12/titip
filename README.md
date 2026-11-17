@@ -22,6 +22,7 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - Search by subject or person. Light and dark. Works as a home-screen app.
 
 It stores no password and no mail. It drives the Outlook that is already signed in on your PC.
+It keeps itself up to date (see [Updates](#updates)).
 
 ## Autopilot for Gmail
 
@@ -56,10 +57,10 @@ off, so the model you run there reads it. If that model is a hosted one, the mai
 
 ### Autopilot from any network
 
-The Autopilot page (not your Outlook mail) can be opened from mobile data. For that the PC sends its
-state to a small relay and takes your button presses from it. Both are encrypted on the PC and on the
-phone with a key that only travels inside the QR code, after the `#` of the address, which a browser
-never sends to a server. The relay holds ciphertext it cannot read.
+The Autopilot page can be opened from mobile data. For that the PC sends its state to a small relay
+and takes your button presses from it. Both are encrypted on the PC and on the phone with a key that
+only travels inside the QR code, after the `#` of the address, which a browser never sends to a
+server. The relay holds ciphertext it cannot read.
 
 You run the relay yourself, free, as a Cloudflare Worker:
 
@@ -69,9 +70,46 @@ npx wrangler kv namespace create RELAY      # put the id it prints into wrangler
 npx wrangler deploy                         # prints https://titip-relay.<you>.workers.dev
 ```
 
+The relay keeps the Autopilot state in that KV namespace and passes mail through a Durable Object
+(SQLite storage, which Cloudflare's free plan includes). `wrangler deploy` sets up both.
+
 Put that address into `~/.titip/remote.json` as `{"relay": "https://titip-relay.<you>.workers.dev"}`,
-start Titip again, and on the PC page press **Show the code** under *Autopilot from anywhere*. Scan it
+start Titip again, and on the PC page press **Show the code** under *From anywhere*. Scan it
 once. **Make a new code** cuts off every phone that scanned the old one.
+
+## Mail from anywhere
+
+With the relay in place, your Outlook mail can pass through it too: inbox, sent, drafts, reading,
+attachments, writing, replying. It is **off** until you press **Switch on** next to *Outlook mail from
+anywhere* on the PC page. Then the Autopilot page on the phone gets a **Mail** tab, and the mail app
+behind it works on any network.
+
+- The phone seals each question (show my inbox, open this mail, send this) with the key from the QR
+  code. The PC picks it up, lets Outlook do it, and seals the answer. The relay passes both on and
+  cannot read either. A question waits there at most 5 minutes, an answer is handed out once.
+- A send is carried out once. A question the PC has seen before, one older than two minutes, or a
+  send made before Titip last started is refused, so a mail cannot go out twice.
+- It is slower than your own network. The PC looks for questions every 5 seconds while nobody reads
+  mail and about once a second while somebody does, so the first tap can take a few seconds.
+- An attachment over 1 MB is not sent through the relay. A very long formatted mail arrives as plain text.
+- Anyone holding the link the phone saved can read and send your mail while the switch is on. **Switch
+  off** closes that at once; **Make a new code** cuts off every phone.
+
+Autopilot does not touch Outlook mail. It only ever answers Gmail.
+
+## Updates
+
+A copy installed with `git clone` keeps itself up to date. A minute after it starts, then every 15
+minutes, it looks at the published version. When there is a newer one it checks that the new version
+starts on this PC, moves to it (a plain fast-forward), waits until nothing is in progress and starts
+again. If the new version does not come up within 90 seconds, Titip goes back to the one before and
+does not try that version again.
+
+A copy on another branch, or with changes of its own, is left alone. The PC page shows the version,
+the last look and a switch under *Updates*. If GitHub is only reachable through a proxy, put it in
+`~/.titip/update.json`: `{"on": true, "proxy": "http://localhost:3128"}`. Each restart is noted in
+`~/.titip/update.log`. The relay is not updated this way: run `npx wrangler deploy` again when
+`worker/` changes.
 
 ## What you need
 
@@ -114,8 +152,9 @@ own certificate, so the link is encrypted but no authority vouches for it. Tap *
 - A phone without that cookie gets one page: "scan the QR code". No mail, no subject, no count.
 - **Unpair all phones** on the PC page, or `python -m titip unpair`, cuts every phone off at once.
 - The PC page that shows the QR code answers only on `127.0.0.1`.
-- Your Outlook mail never goes through another server. There is no account and no analytics.
-  The one exception is yours to switch on: *Autopilot from any network* (Gmail only, encrypted, see above).
+- Your Outlook mail does not go through another server unless you switch on *Mail from anywhere*.
+  Then it passes your own relay, encrypted, and the relay cannot read it. *Autopilot from any network*
+  does the same for Gmail. There is no account and no analytics.
 
 ## Before you use it with work mail
 
@@ -123,7 +162,8 @@ Titip opens a door from your network to your mailbox. Read this first.
 
 - Anyone holding a paired, unlocked phone can read and send your mail. Keep a screen lock on the phone.
 - Check your employer's rules. Many companies do not allow mail on personal devices or extra services
-  on a work PC. That call is yours and theirs, not this tool's.
+  on a work PC, and *Mail from anywhere* carries mail off the company network, sealed, through a relay
+  you run. That call is yours and theirs, not this tool's.
 - Windows Firewall may block the phone. If the phone cannot connect, allow Python on port 47779 for
   your private or domain network. That needs an administrator.
 - The PC must be on, awake and running Outlook. Titip is a window onto that Outlook, not a mail server.
@@ -149,13 +189,13 @@ Titip opens a door from your network to your mailbox. Read this first.
 - It reads the Primary tab only, at most 3 new mails per look, and nothing older than 2 days.
 - A narrow Chrome window appears at the screen edge for a few seconds per look. Now and then it takes
   the keyboard for a moment and gives it back.
-- Through the relay, a button you press reaches the PC within about a minute.
+- Through the relay, an Autopilot button you press reaches the PC within about a minute.
 - The model can misjudge a mail. The rules above hold whatever it says, and Show me first removes the risk.
 
 ## Develop
 
 ```powershell
-python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed
+python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
 ```

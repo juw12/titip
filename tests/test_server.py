@@ -269,5 +269,129 @@ class AutopilotRoutes(ServerCase):
         self.assertEqual(reply.status, 403)
 
 
+class OneMailFunction(ServerCase):
+    """Titip.mail_call answers a paired phone and the relay alike; the routes above already go through it."""
+
+    def test_the_same_answers_as_the_phone_listener(self):
+        status, state = self.app.mail_call("state", {})
+        self.assertEqual((status, state["ok"], state["version"]), (200, True, self.app.status()["version"]))
+        status, page = self.app.mail_call("mail", {"folder": "inbox", "limit": 3, "offset": 0, "q": ""})
+        self.assertEqual((status, len(page["mail"])), (200, 3))
+        status, item = self.app.mail_call("item", {"id": page["mail"][0]["id"]})
+        self.assertEqual((status, item["subject"]), (200, page["mail"][0]["subject"]))
+        status, sent = self.app.mail_call("send", {"mode": "reply", "id": item["id"], "body": "Noted."})
+        self.assertEqual((status, sent), (200, {"ok": True, "sent": True}))
+
+    def test_problems_are_statuses_never_exceptions(self):
+        self.assertEqual(self.app.mail_call("send", {"mode": "new", "to": "", "body": "x"}), (400, {"error": "Add at least one recipient."}))
+        self.assertEqual(self.app.mail_call("item", {"id": "demo.FFFF"})[0], 502)
+        self.assertEqual(self.app.mail_call("mail", {"limit": "abc"})[0], 400)
+        self.assertEqual(self.app.mail_call("mail", {"limit": None})[0], 400)
+        for route in ("desk/quit", "auto", "pair", ""):
+            self.assertEqual(self.app.mail_call(route, {}), (404, {"error": "Not found."}), route)
+        real = self.app.mailbox.get
+
+        def busy(*args):
+            raise OutlookBusy()
+
+        self.app.mailbox.get = busy
+        try:
+            status, answer = self.app.mail_call("item", {"id": "x"})
+        finally:
+            self.app.mailbox.get = real
+        self.assertEqual((status, answer["busy"]), (503, True))
+        self.assertFalse(self.app.busy())  # every call was counted out again
+
+    def test_an_attachment_for_the_relay_is_base64_and_a_large_one_is_refused(self):
+        import base64
+
+        from titip import server
+
+        _, page = self.app.mail_call("mail", {"folder": "inbox", "q": "hinge"})
+        mail_id = page["mail"][0]["id"]
+        status, got = self.app.mail_call("attachment", {"id": mail_id, "index": 1})
+        self.assertEqual((status, got["name"]), (200, "hinge-B-torque.xlsx"))
+        self.assertEqual(len(base64.b64decode(got["data"])), got["size"])
+        self.assertEqual(self.app.attachment(mail_id, 1)[1], base64.b64decode(got["data"]))
+        real, server.MAX_FAR_FILE = server.MAX_FAR_FILE, 10
+        try:
+            status, answer = self.app.mail_call("attachment", {"id": mail_id, "index": 1})
+        finally:
+            server.MAX_FAR_FILE = real
+        self.assertEqual(status, 502)
+        self.assertIn("too large for the relay", answer["error"])
+        self.assertEqual(self.app.mail_call("attachment", {"id": mail_id, "index": 99})[0], 502)
+
+    def test_a_restart_waits_for_a_mail_request_under_way(self):
+        import threading
+
+        entered, release = threading.Event(), threading.Event()
+        real = self.app.mailbox.get
+
+        def slow(mail_id):
+            entered.set()
+            release.wait(10)
+            return real(mail_id)
+
+        self.app.mailbox.get = slow
+        try:
+            _, page = self.app.mail_call("mail", {"folder": "inbox", "limit": 1})
+            worker = threading.Thread(target=self.app.mail_call, args=("item", {"id": page["mail"][0]["id"]}))
+            worker.start()
+            self.assertTrue(entered.wait(10))
+            self.assertTrue(self.app.busy())
+            release.set()
+            worker.join(10)
+        finally:
+            self.app.mailbox.get = real
+        self.assertFalse(self.app.busy())
+
+
+class DeskSwitches(ServerCase):
+    def post(self, path, body, headers=X):
+        connection = http.client.HTTPConnection("127.0.0.1", self.desk_port, timeout=10)
+        connection.request("POST", path, json.dumps(body), dict(headers))
+        reply = connection.getresponse()
+        data = reply.read()
+        connection.close()
+        return reply.status, json.loads(data)
+
+    def test_mail_from_anywhere_is_off_and_only_the_pc_page_can_switch_it(self):
+        status = json.loads(self.desk("GET", "/desk/status")[1])
+        self.assertFalse(status["far"]["mail"])
+        self.assertEqual(self.post("/desk/mailfar", {"on": True}, {"Content-Type": "application/json"})[0], 403)
+        token = self.pair()[0]
+        reply, _ = self.phone("POST", "/desk/mailfar", {"on": True}, X, token)  # a paired phone cannot
+        self.assertEqual(reply.status, 404)
+        self.assertFalse(self.app.remote.mail_on)
+        code, status = self.post("/desk/mailfar", {"on": True})
+        self.assertEqual((code, status["far"]["mail"]), (200, True))
+        self.assertTrue(json.loads((Path(self.home.name) / "remote.json").read_text(encoding="utf-8"))["mail"])
+        code, status = self.post("/desk/mailfar", {"on": "yes"})  # anything but true switches it off
+        self.assertEqual((code, status["far"]["mail"]), (200, False))
+
+    def test_the_update_switch_and_its_status(self):
+        status = json.loads(self.desk("GET", "/desk/status")[1])
+        self.assertEqual((status["update"]["available"], status["update"]["state"]), (False, "unavailable"))  # no checkout here
+        code, status = self.post("/desk/update", {"on": False})
+        self.assertEqual((code, status["update"]["on"]), (200, False))
+        self.assertFalse(json.loads((Path(self.home.name) / "update.json").read_text(encoding="utf-8"))["on"])
+        code, status = self.post("/desk/update", {"on": True, "check": True})
+        self.assertEqual((code, status["update"]["on"]), (200, True))
+
+    def test_an_update_stops_the_program_the_same_way_the_stop_button_does(self):
+        self.assertFalse(self.app.restarting)
+        self.app.restart_for_update()
+        self.assertTrue(self.app.restarting and self.app.quit.is_set())
+        self.app.restarting = False
+        self.app.quit.clear()
+
+    def test_the_phone_gets_the_relay_script_only_when_paired(self):
+        self.assertEqual(self.phone("GET", "/far.js")[0].status, 401)
+        reply, data = self.phone("GET", "/far.js", cookie=self.pair()[0])
+        self.assertEqual(reply.status, 200)
+        self.assertIn(b"TitipFar", data)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -306,6 +306,7 @@
         ". What you press here reaches it within about a minute. The relay only ever holds ciphertext.";
     }
     $("forget").hidden = api.name !== "relay";
+    if (api.name === "relay") $("mailTab").hidden = !s.mail;  // Outlook mail passes the relay only while its switch on the PC is on
   }
 
   function trouble(error) {
@@ -351,7 +352,7 @@
   };
 
   {
-    if (hosted) $("mailTab").hidden = api.name === "relay";  // from far away there is only this page
+    if (api.name === "relay") $("mailTab").hidden = true;  // until the PC says "Mail from anywhere" is on
     refresh();
     setInterval(function () { if (!document.hidden) refresh(); }, api.every);
     document.addEventListener("visibilitychange", function () { if (!document.hidden) refresh(); });

@@ -1,4 +1,5 @@
-"""Start Titip:  python -m titip            (serve your Outlook mail to paired phones, run Autopilot for Gmail)
+"""Start Titip:  python -m titip            (serve your Outlook mail to paired phones, run Autopilot for Gmail,
+                                            keep itself up to date: see titip/update.py)
                  python -m titip --demo     (invented mail, safe to show around)
                  python -m titip unpair     (cut every paired phone off)
 """
@@ -17,6 +18,9 @@ from pathlib import Path
 from . import __version__
 from .autopilot import Autopilot, DemoGmail, demo_ask
 from .server import DESK_PORT, PHONE_PORT, Titip
+from .update import Updater, relaunch
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def say(text: str) -> None:
@@ -60,6 +64,15 @@ def already_running(desk_port: int) -> bool:
         return False
 
 
+def restart_command(argv: list[str]) -> list[str]:
+    """The command that starts this program again, without opening the pairing page."""
+    args = [arg for arg in argv if arg != "--quiet"] + ["--quiet"]
+    launcher = Path(sys.argv[0])
+    if launcher.name == "__main__.py" or not launcher.is_file():  # started as: python -m titip
+        return [sys.executable, "-m", "titip", *args]
+    return [sys.executable, str(launcher.resolve()), *args]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="titip", description="Your Outlook inbox on your phone, served by your own PC.")
     parser.add_argument("command", nargs="?", default="run", choices=["run", "unpair"])
@@ -70,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--phone-port", type=int, default=PHONE_PORT)
     parser.add_argument("--desk-port", type=int, default=DESK_PORT)
     parser.add_argument("--version", action="version", version=__version__)
+    argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
 
     home = args.home or Path.home() / (".titip-demo" if args.demo else ".titip")
@@ -94,16 +108,19 @@ def main(argv: list[str] | None = None) -> int:
 
         mailbox = DemoMailbox()
         autopilot = Autopilot(home, DemoGmail(), demo_ask, interval=60)
+        updater = Updater(home, root=None)  # the demo never changes its own files
     else:
         from . import gmail
         from .mailbox import OutlookMailbox
 
         mailbox = OutlookMailbox()
         autopilot = Autopilot(home, gmail.ChromeGmail() if gmail.available() else None)
+        updater = Updater(home, root=ROOT)
 
     stay_responsive()
     app = Titip(
         mailbox, home, phone_port=args.phone_port, desk_port=args.desk_port, https=not args.http, autopilot=autopilot,
+        updater=updater,
     )
     try:
         app.start()
@@ -126,6 +143,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         pass
     app.stop()
+    if app.restarting:  # a new version is in place: start it, and go back if it does not come up
+        outcome = relaunch(restart_command(argv), ROOT, lambda: already_running(args.desk_port), updater.undo)
+        with (home / "update.log").open("a", encoding="utf-8") as log:
+            log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {__version__} -> {updater.pending[:7] or 'previous'}: {outcome}\n")
     return 0
 
 

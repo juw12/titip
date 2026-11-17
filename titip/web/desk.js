@@ -46,6 +46,8 @@
     });
     $("unpair").disabled = !status.devices.length;
     showAuto(status.autopilot, status.far);
+    showFarMail(status.far);
+    showUpdate(status.update, status.version);
     $("addresses").textContent = (status.addresses.length
       ? "Phone address: " + status.addresses.join(" or ") + ". "
       : "This PC has no network address a phone could use right now. ") + (status.httpsNote || "");
@@ -75,6 +77,58 @@
       : far.lastContact ? "The relay heard from this PC at " + new Date(far.lastContact * 1000).toLocaleTimeString() + "." : "";
   }
 
+  var mailFarOn = false, updateOn = true;
+
+  function showFarMail(far) {
+    mailFarOn = !!far.mail;
+    var line = $("mailFarLine");
+    line.textContent = "";
+    var flag = document.createElement("span");
+    flag.className = far.mail && far.mailError ? "bad" : "good";
+    flag.textContent = "Outlook mail from anywhere: " + (far.mail ? "on. " : "off. ");
+    line.appendChild(flag);
+    line.appendChild(document.createTextNode(!far.ready
+      ? "It needs the relay, which is not set up."
+      : !far.mail ? "Outlook mail stays on your own network."
+      : far.mailError ? far.mailError
+      : far.lastAsk ? "A phone last asked at " + new Date(far.lastAsk * 1000).toLocaleTimeString() + "."
+      : "No phone has asked yet."));
+    $("mailFar").disabled = !far.ready;
+    $("mailFar").textContent = far.mail ? "Switch off" : "Switch on";
+  }
+
+  function showUpdate(update, version) {
+    updateOn = !!update.on;
+    var line = $("updateLine");
+    line.textContent = "";
+    var flag = document.createElement("span");
+    var trouble = ["error", "failed", "skipped", "held"].indexOf(update.state) >= 0;
+    flag.className = trouble ? "bad" : "good";
+    flag.textContent = "Titip " + version + (update.commit ? " (" + update.commit + "). " : ". ");
+    line.appendChild(flag);
+    line.appendChild(document.createTextNode(update.note +
+      (update.checked && update.on ? " Last looked at " + new Date(update.checked * 1000).toLocaleTimeString() + "." : "")));
+    $("updateSwitch").disabled = !update.available;
+    $("updateSwitch").textContent = update.on ? "Switch off" : "Switch on";
+    $("updateNow").disabled = !update.available || !update.on;
+  }
+
+  function order(path, body) {
+    return fetch(path, {
+      method: "POST", headers: { "X-Titip": "1", "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }).then(function (reply) { return reply.json(); }).then(show);
+  }
+
+  $("mailFar").onclick = function () {
+    if (!mailFarOn && !window.confirm("Let a phone that scanned the code read and send your Outlook mail from any network?")) return;
+    order("/desk/mailfar", { on: !mailFarOn });
+  };
+  $("updateSwitch").onclick = function () { order("/desk/update", { on: !updateOn }); };
+  $("updateNow").onclick = function () {
+    $("updateNow").disabled = true;
+    order("/desk/update", { check: true });
+  };
+
   function farCode(renew) {
     fetch("/desk/far", {
       method: "POST", headers: { "X-Titip": "1", "Content-Type": "application/json" }, body: JSON.stringify({ renew: !!renew })
@@ -88,7 +142,7 @@
       if (pairing.qr) {
         var svg = document.importNode(new DOMParser().parseFromString(pairing.qr, "image/svg+xml").documentElement, true);
         svg.setAttribute("role", "img");
-        svg.setAttribute("aria-label", "QR code to open Autopilot from any network");
+        svg.setAttribute("aria-label", "QR code to open Titip from any network");
         box.appendChild(svg);
       } else {
         box.textContent = "Install the Python package \u201csegno\u201d to see a QR code.";
@@ -101,7 +155,7 @@
     farCode(false);
   };
   $("farNew").onclick = function () {
-    if (window.confirm("Make a new code? Phones that scanned the old one stop seeing Autopilot.")) farCode(true);
+    if (window.confirm("Make a new code? Phones that scanned the old one are cut off.")) farCode(true);
   };
 
   function refresh() { call("/desk/status").then(show).catch(function () {}); }
@@ -147,7 +201,7 @@
       $("stopped").textContent = "Stopped. Start it again from the Titip shortcut.";
       $("pairing").hidden = true;
       $("expires").textContent = "";
-      ["pair", "unpair", "quit", "far", "farNew"].forEach(function (id) { $(id).disabled = true; });
+      ["pair", "unpair", "quit", "far", "farNew", "mailFar", "updateSwitch", "updateNow"].forEach(function (id) { $(id).disabled = true; });
     });
   };
 

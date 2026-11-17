@@ -203,3 +203,43 @@ never answered.
 - Gmail in a language other than English.
 
 stop: run 2 ended after the hard gates and the live checks; no judged round was run.
+
+## Run 3 (2026-11-17): Outlook mail from any network, and Titip updates itself
+
+Asked for: see Inbox and Sent of the Outlook account from the phone on any network, write, send and
+reply there; no Autopilot for that account; and Titip should update itself. Version 0.3.0.
+
+### Assumed
+
+- "Auto update" means the running copy moves to the published main branch and restarts by itself.
+  It only ever fast-forwards a clean copy on main; anything else is left alone and said on the PC page.
+- Outlook mail through the relay is off for everybody until switched on at the PC. The owner asked
+  for it by name, so on his PC it is switched on for him.
+- Mail needs an answer within a second or two, and Cloudflare KV can take up to a minute to show a
+  write. So questions and answers go through a Durable Object in the same worker; the Autopilot
+  state stays in KV as before.
+- A send through the relay is never repeated by the phone. If no confirmation comes, it says so and
+  points to Sent.
+- An attachment over 1 MB and a formatted body over the relay's size limit are not passed.
+- Going back after a failed update uses `git reset --keep` to the commit Titip ran before, and only
+  when the checkout is exactly what Titip left behind.
+
+### Hard gates (code-checked)
+
+| Gate | Before | After |
+| --- | --- | --- |
+| Unit and server tests | 99 pass | 141 pass |
+| of those: the updater, on real temporary git checkouts | n/a | 16 pass |
+| of those: the relay worker itself, run in Node with stand-in storage | n/a | 7 pass |
+| End-to-end steps in a real browser | 55 pass | 71 pass, no console or page error |
+| Mail round trip phone page, relay, PC and back (list, open, attachment, reply, Sent) | n/a | passes |
+| Every body that passed the relay in that run is sealed text | n/a | 30 of 30, none holds a subject, name, body, file or folder |
+| Each answer is handed out once | n/a | checked |
+| Private strings in tracked files | none | none |
+
+### Not verified in this section
+
+- Anything on the real relay or the real mailbox: see "Live checks" below, added after the release.
+- A real phone on mobile data.
+
+stop: run 3 ended after the hard gates; no judged round was run.
