@@ -5,6 +5,8 @@
 * Desk listener (127.0.0.1 only, port 47780): the page on the PC that shows the QR code, the paired
   phones and "Unpair all phones". It never serves mail.
 
+Both also serve the Autopilot page (titip.autopilot): what it did with new Gmail and what waits for you.
+
 No request path, mail id or mail text is ever written to a log.
 """
 
@@ -20,6 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import __version__
+from .autopilot import Autopilot
 from .mailbox import WEB, MailError, OutlookBusy
 from .pairing import (
     COOKIE,
@@ -31,6 +34,7 @@ from .pairing import (
     qr_svg,
     tailscale_name,
 )
+from .remote import Remote
 from .tls import ensure_certificate, server_context
 
 PHONE_PORT = 47779
@@ -41,6 +45,8 @@ HEADER = "X-Titip"  # a custom header a cross-site form cannot send: blocks forg
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/auto.html": ("auto.html", "text/html; charset=utf-8"),
+    "/auto.js": ("auto.js", "text/javascript; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     "/icon-192.png": ("icon-192.png", "image/png"),
@@ -139,6 +145,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.BAD_REQUEST, str(error) or "Could not read the request.")
             return None
 
+    def _auto_order(self, body: dict) -> None:
+        """Pause, mode, look now, send a waiting answer, or leave it unanswered."""
+        details = {name: body[name] for name in ("on", "mode", "id", "text") if name in body}
+        try:
+            self._json(200, self.app.auto_state(self.app.autopilot.command(str(body.get("command", "")), **details)))
+        except ValueError as error:
+            self._error(HTTPStatus.BAD_REQUEST, str(error))
+
     def do_HEAD(self):
         self.do_GET()
 
@@ -181,6 +195,8 @@ class PhoneHandler(_Handler):
             return None
         query = {key: values[0] for key, values in parse_qs(url.query).items()}
         try:
+            if route == "/api/auto":
+                return self._json(200, self.app.auto_state())
             if route == "/api/state":
                 return self._json(200, {**self.app.mailbox.state(), "version": __version__})
             if route == "/api/mail":
@@ -226,6 +242,8 @@ class PhoneHandler(_Handler):
             return self._json(200, {"paired": True}, {"Set-Cookie": self._cookie(token)})
         if not self._paired():
             return self._error(HTTPStatus.UNAUTHORIZED, NOT_PAIRED)
+        if route == "/api/auto":
+            return self._auto_order(body)
         if route == "/api/send":
             try:
                 return self._json(200, self.app.mailbox.send(body))
@@ -252,6 +270,13 @@ class DeskHandler(_Handler):
         if route in ("/desk.js", "/styles.css", "/icon.svg"):
             content_type = {**PUBLIC, "/desk.js": "text/javascript; charset=utf-8"}[route]
             return self._send(200, (WEB / route.lstrip("/")).read_bytes(), content_type)
+        if route == "/auto.html":  # the Autopilot page, on the PC itself; its other tab leads back here
+            page = (WEB / "auto.html").read_text(encoding="utf-8").replace(">Mail</a>", ">This PC</a>")
+            return self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+        if route == "/auto.js":
+            return self._static(route)
+        if route == "/api/auto":
+            return self._json(200, self.app.auto_state())
         if route == "/desk/status":
             return self._json(200, self.app.status())
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
@@ -260,8 +285,15 @@ class DeskHandler(_Handler):
         if not self._local():
             return self._error(HTTPStatus.FORBIDDEN, "Open this page on the PC that runs Titip.")
         route = urlparse(self.path).path
-        if self._checked_post() is None:
+        body = self._checked_post()
+        if body is None:
             return None
+        if route == "/api/auto":
+            return self._auto_order(body)
+        if route == "/desk/far":  # the code a phone scans to see Autopilot from any network
+            if body.get("renew"):
+                self.app.remote.renew()
+            return self._json(200, self.app.far_pairing())
         if route == "/desk/pair":
             return self._json(200, self.app.new_pairing())
         if route == "/desk/unpair":
@@ -285,9 +317,13 @@ class Titip:
         desk_port: int = DESK_PORT,
         https: bool = True,
         phone_host: str = "0.0.0.0",
+        autopilot: Autopilot | None = None,
     ):
         self.mailbox = mailbox
         self.home = Path(home)
+        self.autopilot = autopilot or Autopilot(self.home)  # without a mailbox: the page says it cannot run
+        self.remote = Remote(self.home, self.autopilot)
+        self.autopilot.on_change = self.remote.touch
         self.devices = DeviceStore(self.home / "devices.json")
         self.codes = PairingCodes()
         self.https = https
@@ -312,8 +348,12 @@ class Titip:
                 self.phone.tls = server_context(*pair)
         for server in (self.desk, self.phone):
             threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.autopilot.start()
+        self.remote.start()
 
     def stop(self) -> None:
+        self.autopilot.stop()
+        self.remote.stop()
         for server in (self.phone, self.desk):
             if server is not None:
                 server.shutdown()
@@ -349,6 +389,14 @@ class Titip:
             "expiresIn": self.codes.seconds,
         }
 
+    def auto_state(self, snapshot: dict | None = None) -> dict:
+        return {**(snapshot or self.autopilot.snapshot()), "version": __version__}
+
+    def far_pairing(self) -> dict:
+        """The address (with the key after #) that shows Autopilot from any network, as a QR code."""
+        url = self.remote.link()
+        return {"ready": bool(url), "url": url, "qr": qr_svg(url) if url else "", **self.remote.status()}
+
     def unpair_all(self) -> None:
         self.codes.clear()
         self.devices.clear()
@@ -360,6 +408,7 @@ class Titip:
             mail = {"ok": False, "error": str(error)}
         except Exception:
             mail = {"ok": False, "error": "Outlook could not be reached on this PC."}
+        auto = self.autopilot.snapshot()
         return {
             "version": __version__,
             "https": self.https,
@@ -367,4 +416,7 @@ class Titip:
             "addresses": self.addresses(),
             "devices": self.devices.devices(),
             "mail": mail,
+            "autopilot": {key: auto[key] for key in ("available", "on", "busy", "mailboxes", "lastCheck", "now")}
+            | {"waiting": len(auto["held"])},
+            "far": self.remote.status(),
         }

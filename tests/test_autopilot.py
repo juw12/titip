@@ -1,0 +1,258 @@
+"""The autopilot loop with an invented mailbox, an invented model and a clock we move by hand."""
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from titip import autopilot, brain
+from titip.autopilot import Autopilot, SourceError
+
+
+class Row:
+    def __init__(self, key, text=""):
+        self.key, self.text = key, text or f"unread, {key}"
+
+
+class Box:
+    """A mailbox that holds what the test puts in it and remembers what was sent."""
+
+    address = "nadia@mail.example"
+
+    def __init__(self):
+        self.mail = {}
+        self.sent = []
+        self.opened = []
+        self.closed = 0
+        self.fail = ""
+        self.rows = []
+        self.last = ""
+        self.unread_again = []
+
+    def put(self, key, sender, address, subject, text):
+        self.mail[key] = brain.Mail(self.address, sender, address, subject, text)
+
+    def open(self, account, query):
+        self.opened.append(query)
+        if query == autopilot.UNREAD_QUERY:
+            self.rows = [Row(key) for key in self.mail]
+        else:
+            self.rows = [Row(key) for key, mail in self.mail.items() if mail.address in query]
+        return self.address
+
+    def unread(self, any_state=False):
+        return list(self.rows)
+
+    def read(self, row, mailbox):
+        self.last = row.key
+        return self.mail[row.key]
+
+    def keep_unread(self):
+        self.unread_again.append(self.last)
+        return True
+
+    def reply(self, mail, text):
+        if self.fail:
+            raise SourceError(self.fail)
+        self.sent.append((mail.address, text))
+
+    def close(self):
+        self.closed += 1
+
+
+def answer(action="reply", reply="Thanks, noted.\n\nNadia", **more):
+    return lambda prompt: json.dumps({"action": action, "reason": "because", "summary": "what it wants", "reply": reply, **more})
+
+
+class Loop(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.now = 1_800_000_000.0
+        self.box = Box()
+        self.pilot = self.make(answer())
+        self.pilot.command("switch", on=True)
+        self.pilot.check()  # the first look only counts what is there
+
+    def make(self, ask):
+        return Autopilot(Path(self.folder.name), self.box, ask, clock=lambda: self.now)
+
+    def kinds(self):
+        return [event["kind"] for event in self.pilot.state["events"]]
+
+    def test_the_first_look_opens_nothing(self):
+        box = Box()
+        box.put("old", "Tomas", "tomas@lind.example", "Hello", "Hi there")
+        with tempfile.TemporaryDirectory() as home:
+            pilot = Autopilot(Path(home), box, answer(), clock=lambda: self.now)
+            pilot.command("switch", on=True)
+            pilot.check()
+            self.assertEqual(box.sent, [])
+            self.assertIn("already there", pilot.state["events"][-1]["text"])
+            pilot.check()
+            self.assertEqual(box.sent, [])  # still not opened on later looks
+            box.put("new", "Tomas", "tomas@lind.example", "Again", "One more question")
+            pilot.check()
+            self.assertEqual(len(box.sent), 1)
+
+    def test_a_safe_mail_is_answered_once_and_written_down(self):
+        self.box.put("m1", "Tomas Lind", "tomas@lind.example", "Your template", "Is it free?")
+        self.pilot.check()
+        self.assertEqual(self.box.sent, [("tomas@lind.example", "Thanks, noted.\n\nNadia")])
+        self.assertEqual(self.kinds()[-1], "sent")
+        self.assertEqual(self.box.unread_again, [])  # an answered mail stays read
+        self.pilot.check()
+        self.assertEqual(len(self.box.sent), 1)
+        self.assertEqual(self.pilot.snapshot()["sentToday"], 1)
+        self.assertGreaterEqual(self.box.closed, 2)  # the window is always closed again
+
+    def test_paused_means_nothing_is_read(self):
+        self.pilot.command("switch", on=False)
+        self.box.put("m1", "Tomas", "tomas@lind.example", "Hi", "Hello")
+        opened = len(self.box.opened)
+        self.pilot.check()
+        self.assertEqual(len(self.box.opened), opened)
+
+    def test_review_mode_keeps_every_answer(self):
+        self.pilot.command("mode", mode="review")
+        self.box.put("m1", "Tomas", "tomas@lind.example", "Hi", "Hello")
+        self.pilot.check()
+        self.assertEqual(self.box.sent, [])
+        held = self.pilot.snapshot()["held"]
+        self.assertEqual(held[0]["draft"], "Thanks, noted.\n\nNadia")
+        self.assertIn("every answer first", held[0]["reason"])
+
+    def test_risky_mail_waits_and_your_wording_is_what_gets_sent(self):
+        self.box.put("m1", "Harbor Print", "billing@harbor.example", "Invoice", "Please transfer the payment to our bank account.")
+        self.pilot.check()
+        self.assertEqual(self.box.sent, [])
+        item = self.pilot.snapshot()["held"][0]
+        self.assertIn("money", item["reason"])
+        self.assertEqual(self.box.unread_again, ["m1"])  # what waits for you still looks new in Gmail
+        self.pilot.command("send", id=item["id"], text="I will look at it next week.\n\nNadia")
+        self.assertTrue(self.pilot.state["held"][0]["sending"])
+        self.pilot.send_held(item["id"], "I will look at it next week.\n\nNadia")
+        self.assertEqual(self.box.sent, [("billing@harbor.example", "I will look at it next week.\n\nNadia")])
+        self.assertEqual(self.pilot.snapshot()["held"], [])
+
+    def test_a_waiting_answer_is_not_sent_to_a_different_sender(self):
+        self.box.put("m1", "Harbor Print", "billing@harbor.example", "Invoice", "Please pay the fee by bank account transfer.")
+        self.pilot.check()
+        item = self.pilot.snapshot()["held"][0]
+        self.box.mail["m1"].address = "someone@else.example"
+        self.box.open = lambda account, query: (setattr(self.box, "rows", [Row("m1")]) or self.box.address)
+        self.pilot.send_held(item["id"], "Hello")
+        self.assertEqual(self.box.sent, [])
+        self.assertIn("someone else", self.pilot.snapshot()["held"][0]["error"])
+
+    def test_dropping_a_waiting_mail_sends_nothing(self):
+        self.box.put("m1", "Harbor Print", "billing@harbor.example", "Invoice", "Please send your passport.")
+        self.pilot.check()
+        self.pilot.command("drop", id=self.pilot.snapshot()["held"][0]["id"])
+        self.assertEqual((self.box.sent, self.pilot.snapshot()["held"]), ([], []))
+        self.assertEqual(self.kinds()[-1], "dropped")
+
+    def test_the_daily_limit_holds_the_rest(self):
+        for number in range(autopilot.MAX_AUTO_PER_DAY + 2):
+            self.box.put(f"m{number}", f"Person {number}", f"p{number}@mail.example", f"Question {number}", "Hello?")
+        for _ in range(6):
+            self.pilot.check()
+        self.assertEqual(len(self.box.sent), autopilot.MAX_AUTO_PER_DAY)
+        self.assertEqual(len(self.pilot.snapshot()["held"]), 2)
+        self.now += 24 * 3600  # a new day, a new allowance
+        self.box.put("next", "Late", "late@mail.example", "Tomorrow", "Hello?")
+        self.pilot.check()
+        self.assertEqual(len(self.box.sent), autopilot.MAX_AUTO_PER_DAY + 1)
+
+    def test_one_conversation_gets_one_automatic_answer_per_half_day(self):
+        self.box.put("m1", "Tomas", "tomas@lind.example", "Template", "Is it free?")
+        self.pilot.check()
+        self.box.put("m2", "Tomas", "tomas@lind.example", "Re: Template", "And for companies?")
+        self.pilot.check()
+        self.assertEqual(len(self.box.sent), 1)
+        self.assertIn("already got", self.pilot.snapshot()["held"][0]["reason"])
+
+    def test_at_most_three_mails_are_opened_per_look(self):
+        for number in range(5):
+            self.box.put(f"m{number}", f"P{number}", f"p{number}@mail.example", f"S{number}", "Hello?")
+        self.pilot.check()
+        self.assertEqual(len(self.box.sent), autopilot.MAX_PER_CHECK)
+
+    def test_your_own_message_and_newsletters_are_left(self):
+        self.box.put("m1", "Nadia", "nadia@mail.example", "Note to self", "Buy stamps")
+        self.box.put("m2", "Shop", "no-reply@shop.example", "Receipt", "Thanks for your order")
+        self.pilot.check()
+        self.assertEqual(self.box.sent, [])
+        self.assertEqual(self.kinds()[-2:], ["left", "left"])
+        self.assertEqual(self.box.unread_again, ["m1", "m2"])
+
+    def test_your_own_mail_and_no_reply_senders_are_not_even_listed(self):
+        for wanted in ("is:unread", "category:primary", "-from:me", "-from:noreply", "-from:no-reply"):
+            self.assertIn(wanted, autopilot.UNREAD_QUERY.split())
+
+    def test_a_mail_that_cannot_be_marked_unread_is_still_written_down(self):
+        def broken():
+            raise OSError("the page changed")
+
+        self.box.keep_unread = broken
+        self.box.put("m1", "Shop", "no-reply@shop.example", "Receipt", "Thanks for your order")
+        self.pilot.check()
+        self.assertEqual(self.kinds()[-1], "left")
+
+    def test_a_failed_send_keeps_the_draft(self):
+        self.box.fail = "Gmail showed no Reply button."
+        self.box.put("m1", "Tomas", "tomas@lind.example", "Template", "Is it free?")
+        self.pilot.check()
+        held = self.pilot.snapshot()["held"][0]
+        self.assertIn("Sending failed", held["reason"])
+        self.assertEqual(held["draft"], "Thanks, noted.\n\nNadia")
+
+    def test_a_mailbox_that_cannot_be_read_is_reported_and_closed(self):
+        def broken(account, query):
+            raise SourceError("Chrome is not signed in to this Gmail account.")
+
+        self.box.open = broken
+        closed = self.box.closed
+        self.pilot.check()
+        self.assertEqual(self.pilot.state["events"][-1]["text"], "Chrome is not signed in to this Gmail account.")
+        self.assertEqual(self.box.closed, closed + 1)
+
+    def test_state_survives_a_restart(self):
+        self.box.put("m1", "Harbor Print", "billing@harbor.example", "Invoice", "Please transfer the payment to our bank account.")
+        self.pilot.check()
+        again = self.make(answer())
+        self.assertTrue(again.state["on"])
+        self.assertEqual(len(again.snapshot()["held"]), 1)
+        again.check()
+        self.assertEqual(len(again.snapshot()["held"]), 1)  # not read a second time
+
+    def test_bad_requests_are_refused(self):
+        with self.assertRaises(ValueError):
+            self.pilot.command("forward", to="x@y.example")
+        with self.assertRaises(ValueError):
+            self.pilot.command("send", id="nope", text="Hi")
+
+    def test_thread_key_and_search(self):
+        self.assertEqual(autopilot.thread_key("A@B.example", "RE: Fwd:  Hello  there"), "a@b.example|hello there")
+        query = autopilot.find_query("a@b.example", 'Re: The "big" (plan)')
+        self.assertIn("from:(a@b.example)", query)
+        self.assertNotIn('"big"', query)
+
+
+class Demo(unittest.TestCase):
+    def test_the_demo_shows_every_path(self):
+        with tempfile.TemporaryDirectory() as home:
+            box = autopilot.DemoGmail()
+            pilot = Autopilot(Path(home), box, autopilot.demo_ask)
+            pilot.command("switch", on=True)
+            for _ in range(5):
+                pilot.check()
+            kinds = [event["kind"] for event in pilot.state["events"]]
+            self.assertEqual([box.sent[0][0]], ["tomas@lind.example"])
+            self.assertIn("held", kinds)
+            self.assertIn("left", kinds)
+            for mail in autopilot.DEMO_MAIL:
+                self.assertTrue(mail[1].endswith(".example"))
+
+
+if __name__ == "__main__":
+    unittest.main()

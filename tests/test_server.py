@@ -232,5 +232,42 @@ class Desk(ServerCase):
             self.app.mailbox = real
 
 
+class AutopilotRoutes(ServerCase):
+    def test_the_autopilot_page_needs_a_paired_phone(self):
+        for path in ("/auto.html", "/auto.js", "/api/auto"):
+            reply, _ = self.phone("GET", path)
+            self.assertEqual(reply.status, 401, path)
+        reply, _ = self.phone("POST", "/api/auto", {"command": "switch", "on": True}, X)
+        self.assertEqual(reply.status, 401)
+
+    def test_a_paired_phone_reads_the_state_and_switches(self):
+        token, _, _ = self.pair()
+        reply, data = self.phone("GET", "/auto.html", cookie=token)
+        self.assertEqual(reply.status, 200)
+        self.assertIn(b"Autopilot", data)
+        reply, data = self.phone("GET", "/api/auto", cookie=token)
+        state = json.loads(data)
+        self.assertEqual((reply.status, state["available"], state["on"]), (200, False, False))  # no mailbox in this test
+        reply, data = self.phone("POST", "/api/auto", {"command": "mode", "mode": "review"}, X, cookie=token)
+        self.assertEqual((reply.status, json.loads(data)["mode"]), (200, "review"))
+        reply, data = self.phone("POST", "/api/auto", {"command": "send", "id": "nope"}, X, cookie=token)
+        self.assertEqual(reply.status, 400)
+        reply, _ = self.phone("POST", "/api/auto", {"command": "mode", "mode": "auto"}, {"Content-Type": "application/json"}, cookie=token)
+        self.assertEqual(reply.status, 403)  # no X-Titip header: a forged form cannot switch anything
+
+    def test_the_pc_page_shows_autopilot_and_refuses_strangers(self):
+        reply, data = self.desk("GET", "/auto.html")
+        self.assertEqual(reply.status, 200)
+        self.assertIn(b">This PC</a>", data)
+        reply, data = self.desk("GET", "/desk/status")
+        status = json.loads(data)
+        self.assertEqual(status["autopilot"]["waiting"], 0)
+        self.assertFalse(status["far"]["ready"])
+        reply, data = self.desk("POST", "/desk/far", X)
+        self.assertEqual((reply.status, json.loads(data)["url"]), (200, ""))  # no relay address: no code
+        reply, _ = self.desk("GET", "/api/auto", host="evil.example")
+        self.assertEqual(reply.status, 403)
+
+
 if __name__ == "__main__":
     unittest.main()

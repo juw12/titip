@@ -11,7 +11,10 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PUBLIC = ("index.html", "app.js", "styles.css", "demo.json", "icon.svg", "icon-192.png", "manifest.webmanifest")
+PUBLIC = (
+    "index.html", "app.js", "auto.html", "auto.js", "styles.css", "demo.json", "icon.svg", "icon-192.png",
+    "manifest.webmanifest",
+)
 
 
 def main() -> None:

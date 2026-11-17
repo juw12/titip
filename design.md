@@ -47,6 +47,13 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
 - Notices sit above the Write button, never on it.
 - Send waits 5 seconds behind Undo. A failed send reopens the message with the text and the reason.
 - PC out of reach: "Can't show your mail", the reason, and Try again.
+- Autopilot: one lamp and one word, On or Paused, then one sentence of facts (which mailbox, last look,
+  answers today). The primary button is Switch on while paused; while on, the only primary button is
+  Send on a waiting mail. Each line of *What it did* starts with what happened: Answered (green),
+  Kept for you (red), Left alone, Not answered, Problem, You changed. An answer that went out is
+  shown in full, as a quote.
+- Autopilot through the relay says so, says when the PC last wrote, and shows a switch you pressed at
+  once while the PC picks it up.
 
 ## Banned
 

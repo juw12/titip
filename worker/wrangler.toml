@@ -1,0 +1,10 @@
+name = "titip-relay"
+main = "titip-relay.js"
+compatibility_date = "2025-01-01"
+
+# One KV namespace holds the encrypted state and orders.
+#   npx wrangler kv namespace create RELAY      prints the id to put here
+#   npx wrangler deploy
+[[kv_namespaces]]
+binding = "RELAY"
+id = "PUT_YOUR_KV_NAMESPACE_ID_HERE"
