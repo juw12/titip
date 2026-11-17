@@ -90,13 +90,56 @@ def slim(snapshot: dict) -> dict:
     return {**snapshot, "events": events}
 
 
-def http(method: str, url: str, body: bytes | None = None, headers: dict | None = None) -> tuple[int, bytes]:
-    request = urllib.request.Request(url, data=body, method=method, headers={"User-Agent": "titip", **(headers or {})})
-    try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_S) as reply:
-            return reply.status, reply.read(8_000_000)
-    except urllib.error.HTTPError as error:
-        return error.code, b""
+def ways_out() -> list[dict]:
+    """The ways to the internet from this PC, as proxy settings, in the order to try them:
+    what the environment says, what Windows itself is set to, and straight out.
+
+    A PC that moves between an office and home, or whose local proxy program is not running,
+    still reaches the relay through one of them.
+    """
+    ways = [urllib.request.getproxies()]
+    if hasattr(urllib.request, "getproxies_registry"):
+        ways.append(urllib.request.getproxies_registry())
+    different = []
+    for way in ways:
+        way = {scheme: address for scheme, address in way.items() if scheme in ("http", "https")}
+        if way and way not in different:
+            different.append(way)
+    return [*different, {}]
+
+
+def _open(way: dict, request: urllib.request.Request) -> tuple[int, bytes]:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(way))
+    with opener.open(request, timeout=TIMEOUT_S) as reply:
+        return reply.status, reply.read(8_000_000)
+
+
+_good_way = [0]  # the way that worked last is tried first, so a dead one costs time only once
+
+
+def http(
+    method: str, url: str, body: bytes | None = None, headers: dict | None = None, ways=ways_out, open_with=_open,
+) -> tuple[int, bytes]:
+    """(status, body). Raises OSError only when no way out of this network reaches the address."""
+    choices = ways()
+    start = _good_way[0] if _good_way[0] < len(choices) else 0
+    failure: OSError = OSError("no way out")
+    for index in [start, *(i for i in range(len(choices)) if i != start)]:
+        # a request remembers the proxy it was sent through, so each way gets its own
+        request = urllib.request.Request(url, data=body, method=method, headers={"User-Agent": "titip", **(headers or {})})
+        try:
+            answer = open_with(choices[index], request)
+        except urllib.error.HTTPError as error:
+            if error.code == 407:  # the proxy wants a password, so it will not carry this: try the next way
+                failure = OSError("the proxy wants a password")
+                continue
+            answer = (error.code, b"")
+        except OSError as error:  # refused, unknown host, timed out
+            failure = error
+            continue
+        _good_way[0] = index
+        return answer
+    raise failure
 
 
 class Remote:

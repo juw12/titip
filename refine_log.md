@@ -237,9 +237,36 @@ reply there; no Autopilot for that account; and Titip should update itself. Vers
 | Each answer is handed out once | n/a | checked |
 | Private strings in tracked files | none | none |
 
-### Not verified in this section
+### Live checks on the build PC (after the release, version 0.3.0)
 
-- Anything on the real relay or the real mailbox: see "Live checks" below, added after the release.
-- A real phone on mobile data.
+- Relay, redeployed with the Durable Object on the free plan. On a scratch channel that was deleted
+  afterwards: a question is taken once (second take: none), an answer is read once (second read: 204),
+  taking or answering without the owner's token is refused (404), a question over 200,000 characters
+  is refused (413), a state write with a wrong token is refused (403). One call took 0.35 to 1.1 s
+  from this network.
+- Real mailbox through the real relay, reading only: state, 10 rows of Inbox, 10 rows of Sent, one
+  message opened twice. The first question after a quiet time took 5.8 s, the next four 1.8 to 2.7 s.
+  Nothing was sent, no draft was saved, nothing was marked.
+- A question dated ten minutes back got the "clocks" refusal. A question sealed with another key got
+  no answer at all.
+- The updater on the live copy: "Up to date" after its first look, one minute after the start.
 
-stop: run 3 ended after the hard gates; no judged round was run.
+### Found in the live check, and fixed (0.3.1)
+
+The PC could not reach the relay whenever the local proxy named in its environment was not running,
+although Windows' own proxy setting worked. Titip now tries the environment's way, then Windows'
+setting, then straight out, and remembers the one that worked. Checked for real with a proxy address
+where nothing listens: first call 6.4 s (the dead one is tried once), the next 0.7 s. The first
+version of this fix reused one request for every way and failed, because urllib writes the proxy into
+the request; the live check caught it and a test now holds it. After the fix: 149 unit and server
+tests pass (8 new), the 71 browser steps pass again.
+
+### Not verified
+
+- A real phone on mobile data. Everything above ran from the build PC and a headless browser.
+- A real send through the relay. It runs in the tests and the browser run against the demo mailbox
+  only; no test mail was sent from the real account.
+- How long the Durable Object is billed while a phone polls. The free plan's limits (100,000 requests
+  and 13,000 GB-seconds a day) were read from Cloudflare's pages, not measured.
+
+stop: run 3 ended after the hard gates and the live checks; no judged round was run.

@@ -77,6 +77,10 @@ Put that address into `~/.titip/remote.json` as `{"relay": "https://titip-relay.
 start Titip again, and on the PC page press **Show the code** under *From anywhere*. Scan it
 once. **Make a new code** cuts off every phone that scanned the old one.
 
+The PC reaches the relay the way its environment says (`HTTPS_PROXY`), then through the proxy Windows
+is set to, then straight out, and remembers which one worked. So it keeps working when the PC moves
+between an office and home, or when a local proxy program is not running.
+
 ## Mail from anywhere
 
 With the relay in place, your Outlook mail can pass through it too: inbox, sent, drafts, reading,
