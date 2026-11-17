@@ -318,6 +318,11 @@ body.auto .toast { bottom: calc(56px + var(--s4) + env(safe-area-inset-bottom));
   body.auto .sheet { padding-bottom: var(--s6); }
   body.auto .toast { bottom: var(--s5); }
 }
+.steps { margin: var(--s4) 0; padding: 0 0 0 var(--s5); }
+.sheet .steps li { padding: var(--s3) 0 var(--s3) var(--s1); }
+.sheet .steps li:last-child { border-bottom: 0; }
+.steps li::marker { color: var(--muted); font-weight: 700; font-variant-numeric: tabular-nums; }
+.glyph { width: 20px; height: 20px; margin: 0 2px; vertical-align: -4px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .sheet .go {
   min-height: var(--tap); padding: 0 var(--s4); display: inline-flex; align-items: center;
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);

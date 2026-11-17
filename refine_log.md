@@ -366,3 +366,71 @@ Asked for: "fix the open, for pairing show qr without on same wifi". Version 0.5
   read ahead still waits for Outlook, and after Titip restarts the kept copies start empty.
 
 stop: run 4 ended after the hard gates and the live checks; no judged round was run.
+
+## Run 5 (2026-11-17): every feature from the iPhone Home Screen
+
+Asked for: "make it also all feature i said available when iphone add to home screen as web app,
+i tried but failed not sync". Version 0.5.1.
+
+### Why the icon showed nothing
+
+An iPhone gives a Home Screen icon its own storage. The key from the QR code was kept only in the
+browser's storage and taken out of the address, so the icon started with no key and fell back to
+the demo. Nothing was out of sync: the icon never had the key.
+
+### Assumed
+
+- The key has to reach the icon without passing any server. A cookie is copied from Safari into a
+  new icon, but a cookie also travels to the server that hosts the page, so that way was not taken.
+- The one thing an icon keeps is the address of the page it was made from. With a manifest an
+  iPhone opens the manifest's start address instead; without one it keeps the whole address, the
+  part after the # included. So the icon is made from a page of its own, `home.html`, that has no
+  manifest, and only that page ever holds the key in its address, for five minutes at most.
+- An iPhone that scans the code is taken to that page by itself. Other phones are not: an icon on
+  Android shares the browser's storage.
+- Pairing on the same Wi-Fi (a cookie from your own PC) is left as it is.
+
+### Changed
+
+- New `home.html` and `home.js`. In the iPhone browser: three steps (Share, Add to Home Screen,
+  open the icon), the key in the address for five minutes, taken out when you leave, and "Not now".
+  Opened from the icon: keeps the key in the icon's storage, takes it out of the address and goes on
+  to the mail app or the Autopilot page.
+- The mail app and the Autopilot page send an iPhone that just scanned on to that page.
+- An icon with no key no longer shows invented mail. It says "This icon has no key to your PC" and
+  what to do.
+- Unlink inside an icon is remembered, because the icon's address would link it again at the next
+  start. The page says to delete the icon, and offers "Link again".
+- The Autopilot page in the iPhone browser has "Put Titip on the Home Screen" at the bottom.
+- The PC page says where an iPhone finds the steps.
+
+### Hard gates (code-checked)
+
+- 174 unit and server tests pass (1 new: the page has no manifest, is the one the scan leads to,
+  holds the key five minutes and uses no cookie).
+- 104 browser steps pass (was 81), with no console error, page error or sideways overflow. New: a
+  browser with an iPhone's name scans and lands on the page; a second browser with empty storage
+  opens that page's address as the icon would and reads the inbox through the relay, opens a
+  message, answers it (the sealed text was opened on the PC side), uses Autopilot, and starts a
+  second time; leaving, Not now and the five minutes each take the key out; an icon with no key
+  says so; unlink holds across a start and Link again undoes it; another phone is not sent there.
+
+### Found while checking, and fixed
+
+- The first version of this change (key kept in the Autopilot page's own address) was built on
+  0.4.2 while 0.5.0 landed, which made the mail app the page a scan opens. It was dropped and
+  rebuilt on 0.5.0 with one page for the icon.
+- A browser step took "Demo with invented mail" as proof that the icon ran without the PC. The test
+  PC itself serves invented mail and says so. The step now counts questions at the relay instead.
+
+### Not verified
+
+- A real iPhone. That "Add to Home Screen" keeps the part after the # for a page without a
+  manifest is taken from Apple's documented behaviour and other developers' reports. The run used
+  Chromium with an iPhone's browser name and a separate storage per browser.
+- Saving an attachment inside the icon.
+- Web apps in the Mac Dock.
+- Whether Safari keeps the five-minute address in its history after it has been replaced. The same
+  holds for the address the camera opens, before and after this change.
+
+stop: run 5 ended after the hard gates; no judged round was run.

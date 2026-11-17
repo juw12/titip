@@ -94,7 +94,7 @@
     flag.textContent = far.mail ? "It opens your Outlook mail on the phone. " : "It opens only the Autopilot page. ";
     opens.appendChild(flag);
     opens.appendChild(document.createTextNode(far.mail
-      ? "Add the page to the phone's home screen to keep it at hand."
+      ? "To keep it at hand, put it on the phone's home screen. On an iPhone the page that opens after the scan shows how."
       : "Outlook mail from anywhere is off. Switch it on below and a phone that scanned this code gets your mail too."));
     // the switch changed what the code leads to: draw the code again
     if (codeOpensMail !== null && codeOpensMail !== !!far.mail) farCode(false);

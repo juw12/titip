@@ -38,17 +38,32 @@ class Hygiene(unittest.TestCase):
             self.assertIn(mail["folder"], ("inbox", "sent", "drafts"))
 
     def test_public_demo_is_the_same_web_app(self):
-        for name in ("index.html", "app.js", "far.js", "auto.html", "auto.js", "styles.css", "demo.json", "icon.svg", "manifest.webmanifest"):
+        for name in ("index.html", "app.js", "far.js", "auto.html", "auto.js", "home.html", "home.js", "styles.css", "demo.json", "icon.svg", "icon-192.png", "manifest.webmanifest"):
             self.assertEqual(
                 (ROOT / "docs" / name).read_bytes(), (ROOT / "titip" / "web" / name).read_bytes(),
                 f"docs/{name} is stale: run python scripts/sync_docs.py",
             )
 
     def test_mail_text_never_goes_through_innerhtml(self):
-        for name in ("app.js", "far.js", "auto.js", "desk.js", "pair.js"):
+        for name in ("app.js", "far.js", "auto.js", "home.js", "desk.js", "pair.js"):
             script = (ROOT / "titip" / "web" / name).read_text(encoding="utf-8")
             self.assertNotIn("innerHTML", script.split("*/", 1)[1], name)
             self.assertNotIn("eval(", script, name)
+
+    def test_the_iphone_home_screen_page_keeps_its_whole_address(self):
+        """An iPhone icon gets its own storage; the key reaches it only in the address of the page the
+        icon was made from, and an iPhone keeps that whole address only when the page has no manifest."""
+        web = ROOT / "titip" / "web"
+        page = (web / "home.html").read_text(encoding="utf-8")
+        self.assertNotIn('rel="manifest"', page)
+        self.assertIn('name="apple-mobile-web-app-capable"', page)
+        self.assertIn('rel="apple-touch-icon"', page)
+        self.assertIn('content="no-referrer"', page)
+        for name in ("far.js", "auto.js"):  # an iPhone that scans the code is sent on to that page
+            self.assertIn('location.replace("home.html', (web / name).read_text(encoding="utf-8"), name)
+        script = (web / "home.js").read_text(encoding="utf-8")
+        self.assertIn("READY_MS = 300000", script)  # the address holds the key for five minutes, no longer
+        self.assertNotIn("document.cookie", script)  # a cookie would travel to the server that hosts the page
 
 
 if __name__ == "__main__":

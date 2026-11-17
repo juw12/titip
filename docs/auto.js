@@ -5,11 +5,15 @@
    - relay: from any network. State and orders pass through a relay as AES-GCM ciphertext; the key
             comes from the QR code (after the # of the address) and stays in this browser.
    - demo:  invented mail, for the public page.
-   Mail text is only ever put on the page with textContent. */
+   Mail text is only ever put on the page with textContent.
+
+   An iPhone Home Screen icon has its own storage. A scan on an iPhone therefore goes on to
+   home.html, which carries the key into the icon; an icon that has no key says so here. */
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
   var KEY = "titip.relay";
+  var FORGOT = "titip.forgot";   // the key of a Home Screen icon you unlinked; its address still carries it
   var LOCAL_EVERY = 5000, RELAY_EVERY = 12000;
 
   var store = (function () {
@@ -170,17 +174,26 @@
       var ticket = JSON.parse(new TextDecoder().decode(fromBase64(found[1])));
       if (!/^https:\/\//.test(ticket.u) || !ticket.c || !ticket.k) return null;
       store.setItem(KEY, JSON.stringify(ticket));
+      store.removeItem(FORGOT);
       history.replaceState(null, "", location.pathname + location.search);  // keep the key out of the address bar
+      if (hosted && ios && !standalone) {   // an iPhone browser: the page that can put the key on the Home Screen
+        leaving = true;
+        location.replace("home.html?from=auto#r=" + found[1]);
+      }
       return ticket;
     } catch (error) { return null; }
   }
-  function storedTicket() {
-    try { return JSON.parse(store.getItem(KEY) || "null"); } catch (error) { return null; }
+  function storedTicket(name) {
+    try { return JSON.parse(store.getItem(name || KEY) || "null"); } catch (error) { return null; }
   }
 
   var hosted = /\.github\.io$/.test(location.hostname) || location.protocol === "file:";
   var forcedDemo = /[?&]demo\b/.test(location.search);
+  var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  var standalone = navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+  var leaving = false;
   var ticket = ticketFromAddress() || storedTicket();  // the mail app next door keeps the same code (far.js)
+  var noKey = hosted && ios && standalone && !ticket && !forcedDemo;   // a Home Screen icon that brought no key along
   var api = forcedDemo ? demo : ticket ? relayFrom(ticket) : hosted ? demo : pc;
 
   // ------------------------------------------------------------ drawing
@@ -306,6 +319,7 @@
         ". What you press here reaches it within about a minute. The relay only ever holds ciphertext.";
     }
     $("forget").hidden = api.name !== "relay";
+    $("home").hidden = !(api.name === "relay" && hosted && ios && !standalone);
     if (api.name === "relay") $("mailTab").hidden = !s.mail;  // Outlook mail passes the relay only while its switch on the PC is on
   }
 
@@ -345,13 +359,37 @@
   Array.prototype.forEach.call(document.querySelectorAll('input[name="mode"]'), function (input) {
     input.onchange = function () { order({ command: "mode", mode: input.value }, input.value === "auto" ? "Safe answers go out on their own." : "Every answer waits for you."); };
   });
+  var icon = ios && standalone;
+  if (icon) $("forget").textContent = "Unlink this icon";
   $("forget").onclick = function () {
-    if (!window.confirm("Unlink this phone? You will need to scan the code on your PC again.")) return;
+    if (!window.confirm(icon
+      ? "Unlink this icon? It stops showing your mail. Delete it from the Home Screen afterwards: it still carries the key."
+      : "Unlink this phone? You will need to scan the code on your PC again.")) return;
+    if (icon) store.setItem(FORGOT, JSON.stringify(ticket));   // or the icon's own address would link it again at the next start
     store.removeItem(KEY);
     location.reload();
   };
 
-  {
+  // a Home Screen icon without a key: say so, instead of a demo that looks like broken mail
+  function showNoKey() {
+    var forgot = storedTicket(FORGOT);
+    document.querySelector(".tabs").hidden = true;   // nothing to switch between
+    $("dot").className = "dot off";
+    $("headline").textContent = forgot ? "You unlinked this icon" : "This icon has no key to your PC";
+    $("line").textContent = forgot
+      ? "It shows nothing of your mail any more. To remove it for good, delete the icon from the Home Screen. It still carries the key, so you can also link it again."
+      : "A Home Screen icon keeps its own storage, apart from the browser it was made in. Delete this icon. Then scan the code Titip shows on your PC with the camera: the page that opens shows how to make an icon that works.";
+    $("noKey").hidden = false;
+    $("relink").hidden = !forgot;
+    $("relink").onclick = function () {
+      store.setItem(KEY, JSON.stringify(forgot));
+      store.removeItem(FORGOT);
+      location.reload();
+    };
+  }
+
+  if (noKey) showNoKey();
+  else if (!leaving) {
     if (api.name === "relay") $("mailTab").hidden = true;  // until the PC says "Mail from anywhere" is on
     refresh();
     setInterval(function () { if (!document.hidden) refresh(); }, api.every);
