@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC = (
     "index.html", "app.js", "far.js", "auto.html", "auto.js", "home.html", "home.js", "styles.css", "demo.json", "icon.svg", "icon-192.png",
-    "manifest.webmanifest",
+    "manifest.webmanifest", "instrument-serif.woff2", "geist.woff2", "geist-mono.woff2",
 )
 
 

@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.7.1";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.8.0";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = { inbox: "Inbox", sent: "Sent", drafts: "Drafts" };
   var PAGE = 40;
@@ -564,7 +564,7 @@
       frame.setAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
       frame.srcdoc = '<base target="_blank"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; ' +
         'style-src \'unsafe-inline\'; img-src data:">' +
-        '<style>body{margin:12px;font:15px/1.5 system-ui,sans-serif;color:#16202b;background:#fff;overflow-wrap:anywhere}' +
+        '<style>body{margin:12px;font:15px/1.5 system-ui,sans-serif;color:#1b1a17;background:#fff;overflow-wrap:anywhere}' +
         'img{max-width:100%;height:auto}table{border-collapse:collapse;overflow-wrap:normal;word-break:normal}' +
         'td,th{padding:4px 10px 4px 0;text-align:left;vertical-align:top}</style>' + item.html;
       frame.onload = function () {
@@ -1093,7 +1093,7 @@
   function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
     var meta = document.querySelectorAll('meta[name="theme-color"]');
-    Array.prototype.forEach.call(meta, function (tag) { tag.setAttribute("content", theme === "dark" ? "#292929" : "#0f6cbd"); });
+    Array.prototype.forEach.call(meta, function (tag) { tag.setAttribute("content", theme === "dark" ? "#201f1c" : "#2f5b8c"); });
   }
   var dark = window.matchMedia("(prefers-color-scheme: dark)");
   applyTheme(store.get("titip.theme") || (dark.matches ? "dark" : "light"));

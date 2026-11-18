@@ -1,12 +1,14 @@
 """The two listeners over real sockets (HTTPS to the phone), with the demo mailbox behind them."""
 import http.client
 import json
+import re
 import ssl
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 
+from titip import server
 from titip.mailbox import DemoMailbox, OutlookBusy
 from titip.pairing import COOKIE
 from titip.server import Titip
@@ -84,6 +86,18 @@ class Pairing(ServerCase):
         for path in ("/pair", "/pair.js", "/styles.css", "/icon.svg"):
             reply, _ = self.phone("GET", path)
             self.assertEqual(reply.status, 200, path)
+
+    def test_the_typefaces_the_style_sheet_names_are_served_on_both_doors(self):
+        """styles.css asks for three woff2 files; a page that cannot get them falls back to another look."""
+        sheet = (server.WEB / "styles.css").read_text(encoding="utf-8")
+        asked = re.findall(r'url\("([a-z-]+\.woff2)"\)', sheet)
+        self.assertEqual(sorted(asked), sorted(name.lstrip("/") for name in server.FONTS))
+        for name in asked:
+            for door in (self.phone, self.desk):
+                reply, data = door("GET", "/" + name)
+                self.assertEqual(reply.status, 200, name)
+                self.assertEqual(reply.getheader("Content-Type"), "font/woff2")
+                self.assertEqual(data[:4], b"wOF2", name)
 
     def test_code_works_once_and_cookie_is_locked_down(self):
         token, code, cookie = self.pair()

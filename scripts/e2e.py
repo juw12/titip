@@ -949,7 +949,7 @@ def main() -> None:
             desk_page.evaluate("window.scrollTo(0, 0)")  # the masks land where the page is scrolled to, so start at the top
             # the screenshot hides this PC's network address, so it is safe to share
             desk_page.screenshot(
-                path=SHOTS / "desk.png", full_page=True, mask_color="#e0e0e0",
+                path=SHOTS / "desk.png", full_page=True, mask_color="#e1dbcf",
                 mask=[desk_page.locator("#url"), desk_page.locator("#addresses")],
             )
 

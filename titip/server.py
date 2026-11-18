@@ -59,10 +59,16 @@ STATIC = {
     "/icon-192.png": ("icon-192.png", "image/png"),
     "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
 }
-PUBLIC = {  # what an unpaired phone may load: the pairing page's script, style and icon
+FONTS = {  # the three typefaces styles.css asks for (see THIRD_PARTY_NOTICES.md); nothing private in them
+    "/instrument-serif.woff2": "font/woff2",
+    "/geist.woff2": "font/woff2",
+    "/geist-mono.woff2": "font/woff2",
+}
+PUBLIC = {  # what an unpaired phone may load: the pairing page's script, style, icon and typefaces
     "/pair.js": "text/javascript; charset=utf-8",
     "/styles.css": "text/css; charset=utf-8",
     "/icon.svg": "image/svg+xml",
+    **FONTS,
 }
 CSP = (
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
@@ -257,7 +263,7 @@ class DeskHandler(_Handler):
         route = urlparse(self.path).path
         if route == "/":
             return self._send(200, (WEB / "desk.html").read_bytes(), "text/html; charset=utf-8")
-        if route in ("/desk.js", "/styles.css", "/icon.svg"):
+        if route in ("/desk.js", "/styles.css", "/icon.svg") or route in FONTS:
             content_type = {**PUBLIC, "/desk.js": "text/javascript; charset=utf-8"}[route]
             return self._send(200, (WEB / route.lstrip("/")).read_bytes(), content_type)
         if route == "/auto.html":  # the Autopilot page, on the PC itself; its other tab leads back here
