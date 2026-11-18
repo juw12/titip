@@ -150,6 +150,29 @@ thing the icon keeps: the address of the page it was made from.
 - Later, the Autopilot page in the iPhone browser has **Put Titip on the Home Screen** at the bottom.
 - Android needs none of this: an icon there shares the browser's storage.
 
+### When the phone cannot reach your PC
+
+The phone finds out what stands in the way and says it over the list it kept. It reads the PC's
+last sealed state from the relay, which costs one request and asks the PC nothing.
+
+| The phone says | What it found | What to do |
+|---|---|---|
+| This phone is offline. | The phone itself reports no connection. | Nothing: the list refreshes by itself when the connection is back. |
+| This phone has no internet connection right now. | Neither the relay nor the site the page came from answered. | The same. |
+| This network does not let the phone reach the relay (*host*). | The site answered, the relay did not. Some office Wi-Fi networks and some mobile carriers block `workers.dev` addresses. | Switch between Wi-Fi and mobile data. To stop it for good, give the relay an address of your own (a Cloudflare custom domain), put it in `remote.json` and scan the new code. |
+| The relay does not know the code this phone has. | The relay has nothing under this code: a new code was made on the PC, or the PC was off for over a week. | Show the code on the PC and scan it again. On an iPhone, make the Home Screen icon again and delete the old one: an icon keeps the code it was made with. |
+| This phone has an older code than your PC. | The key on the phone does not open what the PC wrote. | The same. |
+| Your PC was last heard from *time*. | The PC has not written to the relay for 45 minutes. | Check that the PC is on and Titip is running. |
+| “Mail from anywhere” is switched off in Titip on your PC. | The PC is there, the switch is off. | Switch it on at the PC page. |
+| The relay answered with an error (*number*). | The relay itself failed. | Try again in a minute. |
+| Your PC did not answer. | Relay and PC are there, and no answer came in 45 seconds. | Outlook on the PC is busy or closed. |
+
+A request that gets no reply is made again for a few seconds before any of this is shown, and one
+that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
+a dead connection first. Under the list the page names its version (`Titip 0.7.1`). A Home Screen
+icon that has been open for more than 12 hours reloads itself the next time you come back to it,
+so it does not keep running an old page.
+
 ## Updates
 
 A copy installed with `git clone` keeps itself up to date. A minute after it starts, then every 15
@@ -278,7 +301,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Calendar invitations can be read, not accepted.
 - Opening a message on the phone clears its unread mark on that phone only. Outlook still shows it as unread.
 - It looks like Outlook's phone app but is not it: no swipe to delete or archive, no folders beyond
-  Inbox, Sent and Drafts, no calendar. Recipients are typed text (`Name <address>;`), not chips.
+  Inbox, Sent and Drafts, no calendar.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 

@@ -11,7 +11,13 @@ window.TitipFar = (function () {
   var KEY = "titip.relay";
   var FIRST_LOOK_MS = 300, LOOK_EVERY_MS = 500, SLOW_AFTER_MS = 8000, SLOW_EVERY_MS = 1200;
   var FROZEN_MS = 15000;   // a gap this long between two looks: the phone had put this page to sleep
-  var LOST_LOOKS = 4;      // looks in a row that did not reach the relay before giving up
+  var LOST_LOOKS = 12;     // looks in a row that did not reach the relay before giving up
+  var LOST_AGAIN_MS = 1000;
+  var HANG_MS = 10000;     // a request with no reply for this long is dropped and made again
+  var LEAVE_FOR_MS = 8000; // a question that could not be left at the relay is offered again for this long
+  var LEAVE_AGAIN_MS = 700;
+  var CHECK_MS = 6000;     // each step of check() gets this long
+  var PC_QUIET_S = 45 * 60;   // the PC writes to the relay every 30 minutes at least
 
   function fromBase64(text) {
     var plain = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
@@ -54,6 +60,28 @@ window.TitipFar = (function () {
 
   function pause(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
+  /* fetch that gives up. A phone that wakes up can hand a page a connection that is already dead:
+     the request then hangs for a minute before it fails. Dropped after ms, it is made again on a
+     fresh connection. Only the wait for the first byte is timed; a long answer may take its time. */
+  function reach(url, options, ms) {
+    var settings = options || {};
+    var stop = typeof AbortController === "function" ? new AbortController() : null;
+    var timer = stop ? setTimeout(function () { stop.abort(); }, ms) : 0;
+    if (stop) settings.signal = stop.signal;
+    return fetch(url, settings).then(function (reply) { clearTimeout(timer); return reply; },
+      function (error) { clearTimeout(timer); throw error; });
+  }
+
+  /* What went wrong, for ask(): "silent", "asleep" or "relay". A "relay" one says why:
+     unreachable (no reply at all), refused (the relay answered with status), unreadable (an answer
+     this phone's key does not open). */
+  function trouble(kind, why, status) {
+    var error = new Error(kind);
+    error.why = why || "";
+    error.status = status || 0;
+    return error;
+  }
+
   function connect(found) {
     var keyPromise = crypto.subtle.importKey("raw", fromBase64(found.k), "AES-GCM", false, ["encrypt", "decrypt"]);
     var base = found.u + "/c/" + found.c;
@@ -87,43 +115,91 @@ window.TitipFar = (function () {
       var frozen = gap > FROZEN_MS;
       watch.spent += Math.min(gap, SLOW_EVERY_MS * 2);
       watch.at = now;
-      return fetch(base + "/answer/" + id, { cache: "no-store" }).then(function (reply) {
+      return reach(base + "/answer/" + id, { cache: "no-store" }, HANG_MS).then(function (reply) {
         watch.lost = 0;
-        if (reply.status === 200) return reply.text().then(open);
-        if (reply.status !== 204) throw new Error("relay");
+        if (reply.status === 200) {
+          return reply.text().then(function (text) {
+            return open(text).catch(function () { throw trouble("relay", "unreadable"); });
+          }, function () { throw trouble("relay", "unreachable"); });   // the answer broke off on its way
+        }
+        if (reply.status !== 204) throw trouble("relay", "refused", reply.status);
         return null;
       }, function () {
         watch.lost += 1;
-        if (watch.lost >= LOST_LOOKS) throw new Error("relay");
+        if (watch.lost >= LOST_LOOKS) throw trouble("relay", "unreachable");
         return null;
       }).then(function (answer) {
         if (answer) return answer;
-        if (frozen) throw new Error("asleep");
-        if (watch.spent > waitMs) throw new Error("silent");
-        return pause(watch.spent > SLOW_AFTER_MS ? SLOW_EVERY_MS : LOOK_EVERY_MS).then(function () { return waitFor(id, watch, waitMs); });
+        if (frozen) throw trouble("asleep");
+        if (watch.spent > waitMs) throw trouble("silent");
+        var wait = watch.lost ? LOST_AGAIN_MS : watch.spent > SLOW_AFTER_MS ? SLOW_EVERY_MS : LOOK_EVERY_MS;
+        return pause(wait).then(function () { return waitFor(id, watch, waitMs); });
+      });
+    }
+
+    /* Leaves the sealed question at the relay. A try that got no reply is made again for a few
+       seconds: the PC carries out each id once, so leaving the same question twice is harmless. */
+    function leave(id, sealed, since) {
+      return reach(base + "/ask/" + id, { method: "POST", headers: { "Content-Type": "text/plain" }, body: sealed }, HANG_MS).then(function (reply) {
+        if (reply.status === 429) throw trouble("silent");
+        if (!reply.ok) throw trouble("relay", "refused", reply.status);
+      }, function () {
+        if (navigator.onLine === false || Date.now() - since > LEAVE_FOR_MS) throw trouble("relay", "unreachable");
+        return pause(LEAVE_AGAIN_MS).then(function () { return leave(id, sealed, since); });
       });
     }
 
     /* Resolves with {status, data} exactly as the PC answered. Rejects with Error("silent") when no
        answer came in time, Error("asleep") when this page slept through the wait, Error("relay")
-       when the relay could not be reached or refused. */
+       when the relay could not be reached, refused, or handed over something this phone cannot open
+       (error.why says which). */
     function ask(route, params, waitMs) {
       var id = toBase64(crypto.getRandomValues(new Uint8Array(12)));
       var started = Date.now();
       return seal({ id: id, at: Math.floor(started / 1000), route: route, params: params || {} }).then(function (sealed) {
-        return fetch(base + "/ask/" + id, { method: "POST", headers: { "Content-Type": "text/plain" }, body: sealed });
-      }).then(function (reply) {
-        if (!reply.ok) throw new Error(reply.status === 429 ? "silent" : "relay");
+        return leave(id, sealed, started);
+      }).then(function () {
         return pause(FIRST_LOOK_MS);
-      }, function () { throw new Error("relay"); }).then(function () {
+      }).then(function () {
         return waitFor(id, { at: Date.now(), spent: 0, lost: 0 }, waitMs);
       }).then(function (answer) {
-        if (!answer || answer.id !== id) throw new Error("relay");  // not the answer to this question
+        if (!answer || answer.id !== id) throw trouble("relay", "unreadable");  // not the answer to this question
         return { status: answer.status, data: answer.data || {} };
       });
     }
 
-    return { ask: ask };
+    /* Finds out what stands between this phone and the PC, without asking the PC anything: the
+       relay keeps the PC's last sealed state, so one read tells whether the relay can be reached
+       from this network, whether it knows this phone's code, whether the key opens what the PC
+       wrote, and when the PC last wrote. Resolves with {is, ...}, never rejects:
+         offline      this phone says it has no connection
+         nonet        neither the relay nor the site this page came from answer
+         blocked      that site answers, the relay does not: this network does not let the relay through
+         refused      the relay answered with an error (status)
+         unknown      the relay has nothing under this phone's code
+         key          the relay has something, and this phone's key does not open it
+         quiet        the PC has not written for a long time (at: seconds since 1970)
+         mailoff      the PC is there, and "Mail from anywhere" is switched off on it
+         fine         the relay and the PC are there (at) */
+    function check() {
+      if (navigator.onLine === false) return Promise.resolve({ is: "offline" });
+      return reach(base + "/state", { cache: "no-store" }, CHECK_MS).then(function (reply) {
+        if (reply.status === 404) return { is: "unknown" };
+        if (reply.status !== 200) return { is: "refused", status: reply.status };
+        return reply.text().then(open).then(function (state) {
+          var at = Number(state.published || state.now) || 0;
+          if (at && Date.now() / 1000 - at > PC_QUIET_S) return { is: "quiet", at: at };
+          return { is: state.mail === false ? "mailoff" : "fine", at: at };
+        }, function () { return { is: "key" }; });
+      }, function () {
+        // is it the relay that this network does not let through, or is there no internet at all?
+        return reach("icon.svg?" + Date.now(), { cache: "no-store" }, CHECK_MS).then(function (reply) {
+          return { is: reply.ok ? "blocked" : "nonet" };
+        }, function () { return { is: "nonet" }; });
+      });
+    }
+
+    return { ask: ask, check: check, host: found.u.replace(/^https:\/\//, "").split("/")[0] };
   }
 
   return { ticket: ticket, connect: connect, fromBase64: fromBase64, leaving: leaving, ios: ios, standalone: standalone };

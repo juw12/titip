@@ -4,6 +4,8 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
+  var VERSION = "0.7.1";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var LOADED = Date.now();
   var FOLDERS = { inbox: "Inbox", sent: "Sent", drafts: "Drafts" };
   var PAGE = 40;
   var UNDO_SECONDS = 3;
@@ -190,10 +192,42 @@
   };
   // ---- your PC from any network: every request is a sealed question the PC answers through the relay
   var FAR_READ_WAIT = 45000, FAR_SEND_WAIT = 90000;
-  var FAR_TRIES = 3;        // a read that was lost on the way (phone asleep, network changed) is asked again
+  var FAR_TRIES = 3;        // a read that was lost on the way (phone asleep, the relay hiccuped) is asked again
   var FAR_AGAIN = 800;
   var FAR_SILENT = "Your PC did not answer. Check that it is on, that Titip is running, and that \u201cMail from anywhere\u201d is switched on there.";
   var relay = ticket ? window.TitipFar.connect(ticket) : null;
+
+  // Why a request through the relay failed, in words that say what to do. relay.check() looks at
+  // what stands between this phone and the PC; one look serves every request that failed with it.
+  var FAR_CHECK_KEEP = 3000;
+  var farChecked = null, farCheckedAt = 0;
+  function farCheck() {
+    if (!farChecked || Date.now() - farCheckedAt > FAR_CHECK_KEEP) {
+      farCheckedAt = Date.now();
+      farChecked = relay.check();
+    }
+    return farChecked;
+  }
+  function farWhy(found, error) {
+    var again = window.TitipFar.ios && window.TitipFar.standalone
+      ? " On your PC, show the code again and scan it, then put Titip on the Home Screen again and remove this icon."
+      : " On your PC, show the code again and scan it.";
+    switch (found.is) {
+      case "offline": return "This phone is offline.";
+      case "nonet": return "This phone has no internet connection right now.";
+      case "blocked": return "This network does not let the phone reach the relay (" + relay.host + "). Switch between Wi-Fi and mobile data.";
+      case "refused": return "The relay answered with an error (" + found.status + "). Try again in a minute.";
+      case "unknown": return "The relay does not know the code this phone has." + again;
+      case "key": return "This phone has an older code than your PC." + again;
+      case "quiet": return "Your PC was last heard from " + whenText(found.at * 1000) + ". Check that it is on and that Titip is running.";
+      case "mailoff": return "\u201cMail from anywhere\u201d is switched off in Titip on your PC.";
+    }
+    // the relay and the PC are both there now
+    if (error.message === "silent") return FAR_SILENT;
+    if (error.why === "refused") return "The relay answered with an error (" + error.status + "). Try again in a minute.";
+    if (error.why === "unreadable") return "The answer from your PC could not be opened on this phone." + again;
+    return "The connection dropped on the way. Try again.";
+  }
   function farRequest(route, params, sending, since, tries) {
     var started = since || Date.now();
     return relay.ask(route, params, sending ? FAR_SEND_WAIT : FAR_READ_WAIT).then(function (answer) {
@@ -213,13 +247,14 @@
         unsure.unsure = true;
         throw unsure;
       }
-      // reading twice harms nothing: the phone slept through the wait, or a look did not reach the relay
-      if (error.message !== "silent" && (tries || 1) < FAR_TRIES) {
+      // reading twice harms nothing: the phone slept through the wait, or the relay hiccuped.
+      // (A relay that gave no reply at all was already tried for seconds in far.js.)
+      if ((error.message === "asleep" || error.why === "refused") && (tries || 1) < FAR_TRIES) {
         return new Promise(function (resolve) { setTimeout(resolve, FAR_AGAIN); }).then(function () {
           return farRequest(route, params, false, started, (tries || 1) + 1);
         });
       }
-      throw new Error(error.message === "silent" ? FAR_SILENT : "Can't reach the relay. Check this phone's connection.");
+      return farCheck().then(function (found) { throw new Error(farWhy(found, error)); });
     });
   }
   var far = {
@@ -1112,8 +1147,10 @@
   // Back on screen (the icon was tapped again, the phone found a network): a list that failed is asked
   // for again at once, and one older than half a minute is refreshed without a tap.
   var AGED = 30000;
+  var PAGE_OLD = 12 * 3600 * 1000;   // a Home Screen icon is not reloaded by the phone: after this long it reloads itself
   function wake() {
     if (document.hidden) return;
+    if (Date.now() - LOADED > PAGE_OLD && $("composer").hidden && !pending && !view.id) { location.reload(); return; }
     if (view.stale) { retryStale(); return; }
     if (!view.query && view.rows.length <= PAGE && $("composer").hidden && Date.now() - view.at > AGED) load(false, true);
   }
@@ -1132,6 +1169,7 @@
   }, REFRESH_MS);
 
   window.addEventListener("hashchange", route);
+  $("build").textContent = "Titip " + VERSION;
   showMe(DEMO ? "" : store.get("titip.me"));
   route();
   refreshCounts();
