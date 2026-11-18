@@ -3,6 +3,40 @@
   "name": "Rin Aoki",
   "address": "rin.aoki@lumenworks.example"
  },
+ "people": [
+  {
+   "name": "Priya Nair",
+   "address": "priya.nair@lumenworks.example"
+  },
+  {
+   "name": "Mateo Silva",
+   "address": "mateo.silva@lumenworks.example"
+  },
+  {
+   "name": "Jonas Weber",
+   "address": "jonas.weber@lumenworks.example"
+  },
+  {
+   "name": "Okafor Supplies",
+   "address": "orders@okafor-supplies.example"
+  },
+  {
+   "name": "Facilities",
+   "address": "facilities@lumenworks.example"
+  },
+  {
+   "name": "Lumenworks IT",
+   "address": "it@lumenworks.example"
+  },
+  {
+   "name": "Priscilla Tan",
+   "address": "priscilla.tan@lumenworks.example"
+  },
+  {
+   "name": "Marek Novak",
+   "address": "marek.novak@okafor-supplies.example"
+  }
+ ],
  "mail": [
   {
    "folder": "inbox",

@@ -6,7 +6,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var FOLDERS = { inbox: "Inbox", sent: "Sent", drafts: "Drafts" };
   var PAGE = 40;
-  var UNDO_SECONDS = 5;
+  var UNDO_SECONDS = 3;
   var REFRESH_MS = 60000;
   var HOSTED = /\.github\.io$/.test(location.hostname);   // the public page: no Titip server behind it
   var FORCED_DEMO = /[?&]demo\b/.test(location.search);
@@ -17,7 +17,8 @@
     return;
   }
 
-  var view = { folder: "inbox", id: "", rows: [], more: false, query: "", loading: false, item: null, formatted: true };
+  // at: when the rows on screen were read from the PC. stale: the last try to read them failed.
+  var view = { folder: "inbox", id: "", rows: [], more: false, query: "", loading: false, item: null, formatted: true, at: 0, stale: false };
   var draft = null;       // what the composer is writing: {mode, id, title, note}
   var pending = null;     // a send waiting out its undo window
   var store = safeStorage();
@@ -71,6 +72,8 @@
     }
     return fetch(path, options).then(function (reply) {
       if (reply.status === 401) {
+        // unpaired on the PC: what this phone kept of the mail goes too
+        ["titip.list.inbox", "titip.list.sent", "titip.list.drafts", "titip.people", "titip.me"].forEach(store.drop);
         location.replace("/pair");
         throw new Error("This phone is not paired any more.");
       }
@@ -98,6 +101,7 @@
     },
     get: function (id) { return request("/api/item?id=" + encodeURIComponent(id)); },
     send: function (payload) { return request("/api/send", payload); },
+    people: function () { return request("/api/people"); },
     fileUrl: function (id, index) { return "/api/attachment?id=" + encodeURIComponent(id) + "&index=" + index; }
   };
 
@@ -175,19 +179,22 @@
         return payload.action === "draft" ? { ok: true, saved: true } : { ok: true, sent: true };
       });
     },
+    people: function () { return demoLoad().then(function (data) { return { people: data.people || [] }; }); },
     fileUrl: function () { return ""; }
   };
   // ---- your PC from any network: every request is a sealed question the PC answers through the relay
-  var FAR_READ_WAIT = 30000, FAR_SEND_WAIT = 90000;
+  var FAR_READ_WAIT = 45000, FAR_SEND_WAIT = 90000;
+  var FAR_TRIES = 3;        // a read that was lost on the way (phone asleep, network changed) is asked again
+  var FAR_AGAIN = 800;
   var FAR_SILENT = "Your PC did not answer. Check that it is on, that Titip is running, and that \u201cMail from anywhere\u201d is switched on there.";
   var relay = ticket ? window.TitipFar.connect(ticket) : null;
-  function farRequest(route, params, sending, since) {
+  function farRequest(route, params, sending, since, tries) {
     var started = since || Date.now();
     return relay.ask(route, params, sending ? FAR_SEND_WAIT : FAR_READ_WAIT).then(function (answer) {
       if (answer.status === 503 && answer.data.busy && !sending && Date.now() - started < BUSY_WAIT) {
         toast(BUSY_TEXT);
         return new Promise(function (resolve) { setTimeout(resolve, 3000); }).then(function () {
-          return farRequest(route, params, false, started);
+          return farRequest(route, params, false, started, tries);
         });
       }
       if (answer.status !== 200) throw new Error(answer.data.error || "Something went wrong on the PC.");
@@ -200,6 +207,12 @@
         unsure.unsure = true;
         throw unsure;
       }
+      // reading twice harms nothing: the phone slept through the wait, or a look did not reach the relay
+      if (error.message !== "silent" && (tries || 1) < FAR_TRIES) {
+        return new Promise(function (resolve) { setTimeout(resolve, FAR_AGAIN); }).then(function () {
+          return farRequest(route, params, false, started, (tries || 1) + 1);
+        });
+      }
       throw new Error(error.message === "silent" ? FAR_SILENT : "Can't reach the relay. Check this phone's connection.");
     });
   }
@@ -208,6 +221,7 @@
     list: function (folder, offset, query) { return farRequest("mail", { folder: folder, limit: PAGE, offset: offset, q: query }); },
     get: function (id) { return farRequest("item", { id: id }); },
     send: function (payload) { return farRequest("send", payload, true); },
+    people: function () { return farRequest("people", {}); },
     fileUrl: function () { return ""; },
     file: function (id, index) { return farRequest("attachment", { id: id, index: index }); }
   };
@@ -246,6 +260,55 @@
   function fileSize(bytes) {
     if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
     return Math.max(1, Math.round(bytes / 1024)) + " KB";
+  }
+
+  // the round badge with someone's initials, as Outlook draws it: the same person always gets the same colour
+  function initials(name) {
+    var words = String(name || "").replace(/[<(\[].*$/, "").replace(/["']/g, "").trim().split(/[\s,;._@-]+/).filter(Boolean);
+    if (!words.length) return "?";
+    var first = words[0].charAt(0);
+    var last = words.length > 1 ? words[words.length - 1].charAt(0) : "";
+    return (first + last).toUpperCase();
+  }
+  function paint(badge, name, extra) {
+    var text = String(name || "");
+    var sum = 0;
+    for (var i = 0; i < text.length; i += 1) sum = (sum * 31 + text.charCodeAt(i)) % 9973;
+    badge.className = "face c" + (sum % 8) + (extra ? " " + extra : "");
+    badge.textContent = initials(text);
+    badge.setAttribute("aria-hidden", "true");
+    return badge;
+  }
+  function face(name, extra) { return paint(el("span"), name, extra); }
+
+  // whose mailbox this is, top left as in Outlook; remembered so it is there before the PC answers
+  function showMe(name) {
+    if (!name) return;
+    paint($("me"), name, "me");
+    $("me").hidden = false;
+    if (!DEMO) store.set("titip.me", name);
+  }
+
+  // the headings Outlook puts between mail of different age
+  function dayGroup(iso) {
+    if (!iso) return "Older";
+    var date = new Date(iso);
+    var now = new Date();
+    var days = Math.floor((new Date(now.getFullYear(), now.getMonth(), now.getDate()) -
+      new Date(date.getFullYear(), date.getMonth(), date.getDate())) / 86400000);
+    if (days <= 0) return "Today";
+    if (days === 1) return "Yesterday";
+    if (days < 7) return "Last 7 days";
+    if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()) return "This month";
+    return "Older";
+  }
+
+  // "today 14:02" style, for the note under a list that could not be refreshed
+  function whenText(at) {
+    var date = new Date(at);
+    var clock = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return date.toDateString() === new Date().toDateString() ? clock
+      : date.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) + ", " + clock;
   }
 
   var toastTimer = 0;
@@ -291,15 +354,24 @@
   function renderRows() {
     var list = $("rows");
     list.textContent = "";
+    var group = "";
     view.rows.forEach(function (mail) {
+      var heading = view.query ? "" : dayGroup(mail.time);   // search results come by mail file, not by day
+      if (heading && heading !== group) {
+        group = heading;
+        list.appendChild(el("li", "day", heading));
+      }
       var item = el("li");
       var unread = view.folder === "inbox" && mail.unread && opened.indexOf(mail.id) < 0;
       var row = el("button", "row" + (unread ? " unread" : ""));
       row.type = "button";
       if (mail.id === view.id) row.setAttribute("aria-current", "true");
-      row.appendChild(el("span", "mark"));
-      var who = view.folder === "inbox" ? mail.from : (mail.to ? "To " + mail.to : "(no recipient yet)");
-      row.appendChild(el("span", "who", who));
+      var who = view.folder === "inbox" ? mail.from : (mail.to || "(no recipient yet)");
+      row.appendChild(face(who));
+      var name = el("span", "who");
+      if (view.folder === "drafts") name.appendChild(el("span", "tagDraft", "[Draft] "));
+      name.appendChild(document.createTextNode(who));
+      row.appendChild(name);
       row.appendChild(el("span", "time", shortTime(mail.time)));
       var subject = el("span", "subject");
       if (unread) subject.appendChild(el("span", "sr", "Unread. "));
@@ -331,26 +403,81 @@
     }
   }
 
+  // The phone keeps the first page of each folder (sender, subject, first lines), so the list is on
+  // screen the moment the app opens and stays there when the PC cannot be reached. Unlinking clears it.
+  function keptList(folder) {
+    var kept = null;
+    try { kept = JSON.parse(store.get("titip.list." + folder) || "null"); } catch (error) { kept = null; }
+    return kept && Array.isArray(kept.mail) && kept.mail.length ? kept : null;
+  }
+  function keepList(folder, page) {
+    if (DEMO) return;
+    try { store.set("titip.list." + folder, JSON.stringify({ at: Date.now(), mail: page.mail, more: !!page.more })); }
+    catch (error) { /* storage full: the list is simply asked for again next time */ }
+  }
+
+  var STALE_AGAIN = 15000;   // a list that could not be refreshed is asked for again this soon, without a tap
+  var staleTimer = 0;
+  function retryStale() {
+    clearTimeout(staleTimer);
+    if (!view.stale || view.query) return;
+    if (document.hidden || !$("composer").hidden) { staleTimer = setTimeout(retryStale, STALE_AGAIN); return; }
+    load(false, true);
+  }
+
+  var loads = 0;   // only the newest list asked for is shown: a tap on another folder never waits for the one before
   function load(append, silent) {
-    if (view.loading) return Promise.resolve();
+    if (view.loading && (append || silent)) return Promise.resolve();
+    loads += 1;
+    var mine = loads;
     view.loading = true;
     var folder = view.folder;
     var query = view.query;
     var offset = append ? view.rows.length : 0;
-    if (!append && !silent) { showState(""); skeleton(); $("more").hidden = true; showSaved({}); }
+    if (!append && !silent) {
+      showState("");
+      showSaved({});
+      if (!query && !view.rows.length) {
+        var kept = keptList(folder);
+        if (kept) { view.rows = kept.mail; view.more = false; view.at = kept.at; renderRows(); }
+      }
+      // rows already on screen stay there while the fresh list is on its way; the arrows turn meanwhile
+      if (query || !view.rows.length) { skeleton(); $("more").hidden = true; }
+    }
     if (!silent) $("refresh").classList.add("busy");
     if (query && !append) showState("Searching\u2026", "Looking through every mail file. This can take a few seconds.");
     return api.list(folder, offset, query).then(function (page) {
-      if (folder !== view.folder || query !== view.query) return;
+      if (mine !== loads) return;
       view.rows = append ? view.rows.concat(page.mail) : page.mail;
       view.more = page.more;
+      if (!append) {
+        view.stale = false;
+        clearTimeout(staleTimer);
+        if (!query) { view.at = Date.now(); keepList(folder, page); }
+      }
       renderRows();
       if (!append) showSaved(page);
+      if (!append && !query) learnPeople();
     }).catch(function (error) {
-      if (silent) return;
-      if (!append) { $("rows").textContent = ""; showState("Can't show your mail", error.message, true); }
-      else toast(error.message);
+      if (mine !== loads) return;
+      if (append) { toast(error.message); return; }
+      if (silent && !view.stale) return;   // a quiet refresh that failed: the next one tries again
+      if (!silent) {
+        if (!query && view.rows.length) {
+          // the list from before stays readable; say that it is old, and why
+          var note = $("savedNote");
+          note.textContent = error.message + " This is the list from " + whenText(view.at) + ".";
+          note.hidden = false;
+        } else {
+          $("rows").textContent = "";
+          showState("Can't show your mail", error.message, true);
+        }
+      }
+      view.stale = !query;
+      clearTimeout(staleTimer);
+      if (view.stale) staleTimer = setTimeout(retryStale, STALE_AGAIN);
     }).then(function () {
+      if (mine !== loads) return;
       view.loading = false;
       $("refresh").classList.remove("busy");
     });
@@ -372,6 +499,7 @@
 
   function refreshCounts() {
     api.state().then(function (state) {
+      showMe(state.name || state.account);
       $("demoNote").hidden = !state.demo;
       var count = $("draftCount");
       count.hidden = !state.counts.drafts;
@@ -430,7 +558,10 @@
       if (item.saved) toast("Outlook on your PC is busy. This draft may not show your latest changes.");
       $("letter").classList.remove("opening");
       $("subject").textContent = item.subject;
-      $("from").textContent = item.from + (item.fromAddress && item.fromAddress !== item.from ? "  <" + item.fromAddress + ">" : "");
+      paint($("face"), item.from, "big");
+      $("from").textContent = item.from;
+      $("fromAddress").textContent = item.fromAddress && item.fromAddress !== item.from ? item.fromAddress : "";
+      if (!item.draft && view.folder === "inbox") addPerson(item.from, item.fromAddress);
       $("to").textContent = item.to || "(none)";
       $("ccRow").hidden = !item.cc;
       $("cc").textContent = item.cc;
@@ -456,6 +587,7 @@
       modes.forEach(function (pair, index) {
         var button = el("button", index === 0 ? "primary" : "", pair[1]);
         button.type = "button";
+        button.setAttribute("data-mode", pair[0]);
         button.onclick = function () { openComposer(pair[0], item); };
         actions.appendChild(button);
       });
@@ -496,6 +628,146 @@
     renderRows();
   }
 
+  // ------------------------------------------------------------ people: names with their address, for To and Cc
+  // They come from the PC (who wrote to you and who you wrote to, most often first) and from mail opened
+  // here. Kept in this browser so they are there at once; unlinking the phone clears them.
+  var PEOPLE_KEPT = 600, PEOPLE_ROWS = 6, PEOPLE_FRESH = 600000, PEOPLE_SOON = 60000;
+  var people = peopleHere();
+  var peopleAt = 0;
+  var pick = { input: null, found: [], at: 0 };
+
+  function peopleHere() {
+    var kept = [];
+    try { kept = JSON.parse(store.get("titip.people") || "[]"); } catch (error) { kept = []; }
+    return Array.isArray(kept) ? kept.filter(function (person) { return person && person.address; }) : [];
+  }
+  function keepPeople() {
+    if (DEMO) return;
+    try { store.set("titip.people", JSON.stringify(people.slice(0, PEOPLE_KEPT))); } catch (error) { /* storage full */ }
+  }
+  function addPerson(name, address) {
+    address = String(address || "").trim();
+    if (!/^[^\s@<>;,]+@[^\s@<>;,]+$/.test(address)) return;
+    var lower = address.toLowerCase();
+    if (people.some(function (person) { return person.address.toLowerCase() === lower; })) return;
+    people.push({ name: String(name || "").trim() || address, address: address });
+    keepPeople();
+  }
+  function learnPeople() {
+    if (Date.now() - peopleAt < PEOPLE_FRESH) return;
+    peopleAt = Date.now();
+    api.people().then(function (got) {
+      var seen = {};
+      var next = [];
+      (got.people || []).concat(people).forEach(function (person) {   // the PC's order first: it knows who you write to most
+        if (!person || !person.address) return;
+        var lower = String(person.address).toLowerCase();
+        if (seen[lower]) return;
+        seen[lower] = true;
+        next.push({ name: String(person.name || person.address), address: String(person.address) });
+      });
+      people = next;
+      keepPeople();
+      if (!(got.people || []).length) peopleAt = Date.now() - PEOPLE_FRESH + PEOPLE_SOON;   // the PC is still collecting
+    }).catch(function () { peopleAt = Date.now() - PEOPLE_FRESH + PEOPLE_SOON; });
+  }
+
+  // what is being typed: the part after the last ; or ,
+  function typed(input) {
+    var text = input.value;
+    var cut = Math.max(text.lastIndexOf(";"), text.lastIndexOf(","));
+    return { before: text.slice(0, cut + 1), needle: text.slice(cut + 1).trim().toLowerCase() };
+  }
+  function findPeople(input) {
+    var now = typed(input);
+    if (!now.needle) return [];
+    var already = now.before.toLowerCase();
+    var ranked = [];
+    people.forEach(function (person, order) {
+      var name = person.name.toLowerCase();
+      var address = person.address.toLowerCase();
+      if (already.indexOf(address) >= 0) return;
+      var rank = name.indexOf(now.needle) === 0 ? 0
+        : (" " + name).indexOf(" " + now.needle) >= 0 ? 1
+        : address.indexOf(now.needle) === 0 ? 2
+        : name.indexOf(now.needle) >= 0 || address.indexOf(now.needle) >= 0 ? 3 : -1;
+      if (rank >= 0) ranked.push([rank, order, person]);
+    });
+    ranked.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+    return ranked.slice(0, PEOPLE_ROWS).map(function (entry) { return entry[2]; });
+  }
+  function hidePeople() {
+    $("people").hidden = true;
+    pick.found = [];
+    if (pick.input) pick.input.setAttribute("aria-expanded", "false");
+  }
+  function markPerson(index) {
+    pick.at = index;
+    Array.prototype.forEach.call($("people").querySelectorAll(".person"), function (button, position) {
+      button.classList.toggle("on", position === index);
+    });
+  }
+  function showPeople(input) {
+    var list = $("people");
+    var found = findPeople(input);
+    list.textContent = "";
+    if (!found.length) { hidePeople(); return; }
+    pick.input = input;
+    pick.found = found;
+    found.forEach(function (person) {
+      var item = el("li");
+      var button = el("button", "person");
+      button.type = "button";
+      button.appendChild(face(person.name));
+      button.appendChild(el("span", "personName", person.name));
+      button.appendChild(el("span", "personAddress", person.address));
+      button.onmousedown = function (event) { event.preventDefault(); };   // the field keeps the keyboard
+      button.onclick = function () { choosePerson(person); };
+      item.appendChild(button);
+      list.appendChild(item);
+    });
+    var field = input.parentNode;   // the list sits right under the field being typed in
+    field.parentNode.insertBefore(list, field.nextSibling);
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    markPerson(0);
+  }
+  function choosePerson(person) {
+    var input = pick.input;
+    var now = typed(input);
+    var plain = person.name === person.address || /[,;<>"]/.test(person.name);
+    input.value = now.before + (now.before ? " " : "") + (plain ? person.address : person.name + " <" + person.address + ">") + "; ";
+    hidePeople();
+    showComposeError("");
+    input.focus();
+    rememberComposer();
+  }
+  // "Priya Nair <priya@x.example>; b@x.example" -> "priya@x.example; b@x.example": the PC is handed addresses only
+  function plainAddresses(text) {
+    return text.replace(/\s*[^;,<]*<([^<>]*)>/g, " $1").replace(/[;,\s]+$/, "").trim();
+  }
+  ["toInput", "ccInput"].forEach(function (id) {
+    var input = $(id);
+    input.addEventListener("input", function () { showPeople(input); });
+    input.addEventListener("focus", function () { showPeople(input); });
+    input.addEventListener("blur", function () {
+      setTimeout(function () { if (document.activeElement !== input && pick.input === input) hidePeople(); }, 250);
+    });
+    input.addEventListener("keydown", function (event) {
+      if ($("people").hidden || pick.input !== input) return;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        markPerson((pick.at + (event.key === "ArrowDown" ? 1 : pick.found.length - 1)) % pick.found.length);
+      } else if (event.key === "Enter") {
+        event.preventDefault();   // Enter takes the name, as in Outlook; it does not send
+        choosePerson(pick.found[pick.at]);
+      } else if (event.key === "Escape") {
+        event.stopPropagation();
+        hidePeople();
+      }
+    });
+  });
+
   // ------------------------------------------------------------ composer
   var TITLES = { "new": "New message", reply: "Reply", replyAll: "Reply to all", forward: "Forward", draft: "Draft" };
 
@@ -528,8 +800,11 @@
     $("subjectInput").value = fields.subject;
     $("bodyInput").value = fields.body;
     showComposeError("");
+    hidePeople();
     $("composer").hidden = false;
     document.body.classList.add("composing");
+    learnPeople();
+    keepAwake();
     (answering || $("toInput").value ? $("bodyInput") : $("toInput")).focus();
   }
 
@@ -547,7 +822,17 @@
     if (draft) store.set("titip.compose", JSON.stringify(composerValues()));
   }
 
+  // Away from home the PC looks for questions every 5 s when nobody asks and several times a second
+  // for two minutes after one. Asking while a mail is being written means Send finds the PC listening.
+  var AWAKE_EVERY = 60000;
+  function keepAwake() {
+    if (api !== far || $("composer").hidden || document.hidden) return;
+    api.state().catch(function () { /* only a nudge */ });
+  }
+  setInterval(keepAwake, AWAKE_EVERY);
+
   function closeComposer(forget) {
+    hidePeople();
     $("composer").hidden = true;
     document.body.classList.remove("composing");
     if (forget) store.drop("titip.compose");
@@ -568,7 +853,7 @@
       if (!answering && !values.to) { showComposeError("Add at least one recipient."); $("toInput").focus(); return; }
       if (!values.body.trim() && mode !== "forward") { showComposeError("Write a message first."); $("bodyInput").focus(); return; }
     }
-    var payload = { mode: mode, id: draft.id, action: action, to: values.to, cc: values.cc, subject: values.subject, body: values.body };
+    var payload = { mode: mode, id: draft.id, action: action, to: plainAddresses(values.to), cc: plainAddresses(values.cc), subject: values.subject, body: values.body };
     rememberComposer();
     closeComposer(false);
     if (action === "draft") { deliver(payload, values); return; }
@@ -595,9 +880,11 @@
     if (payload.mode === "reply" && !who) return "Reply sent";
     if (payload.mode === "replyAll") return who ? "Sent to " + who + " and everyone else on the message" : "Reply sent to everyone";
     if (payload.mode !== "reply") {
-      var people = values.to.split(/[;,]/).map(function (part) { return part.trim(); }).filter(Boolean);
-      if (!people.length) return "Sent";
-      who = people[0] + (people.length > 1 ? " and " + (people.length - 1) + " more" : "");
+      var names = values.to.split(/[;,]/).map(function (part) {
+        return part.replace(/\s*<[^<>]*>\s*$/, "").trim() || part.trim();   // the name where one was picked
+      }).filter(Boolean);
+      if (!names.length) return "Sent";
+      who = names[0] + (names.length > 1 ? " and " + (names.length - 1) + " more" : "");
     }
     return "Sent to " + who;
   }
@@ -630,6 +917,7 @@
       else tab.removeAttribute("aria-current");
     });
     document.title = FOLDERS[folder] + " \u00b7 Titip";
+    $("folderName").textContent = FOLDERS[folder];
     if (folderChanged) { view.rows = []; load(false); }
     if (id) openItem(id);
     else closeItem();
@@ -639,7 +927,7 @@
   function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
     var meta = document.querySelectorAll('meta[name="theme-color"]');
-    Array.prototype.forEach.call(meta, function (tag) { tag.setAttribute("content", theme === "dark" ? "#12171d" : "#f4efe6"); });
+    Array.prototype.forEach.call(meta, function (tag) { tag.setAttribute("content", theme === "dark" ? "#292929" : "#0f6cbd"); });
   }
   var dark = window.matchMedia("(prefers-color-scheme: dark)");
   applyTheme(store.get("titip.theme") || (dark.matches ? "dark" : "light"));
@@ -657,14 +945,14 @@
   $("discard").onclick = function () { closeComposer(true); };
   $("saveDraft").onclick = function () { submit("draft"); };
   $("composeForm").onsubmit = function (event) { event.preventDefault(); submit("send"); };
-  $("composeForm").oninput = rememberComposer;
+  $("composeForm").oninput = function () { showComposeError(""); rememberComposer(); };
 
   $("searchToggle").onclick = function () {
     var box = $("searchBox");
     box.hidden = !box.hidden;
     this.setAttribute("aria-expanded", String(!box.hidden));
     if (!box.hidden) $("q").focus();
-    else if (view.query) { view.query = ""; $("q").value = ""; load(false); }
+    else if (view.query) { view.query = ""; $("q").value = ""; view.rows = []; load(false); }
   };
   var searchTimer = 0;
   $("q").oninput = function () {
@@ -673,14 +961,14 @@
     searchTimer = setTimeout(function () {
       if (value === view.query) return;
       view.query = value;
-      view.loading = false;
+      view.rows = [];
       load(false);
     }, 450);
   };
   $("searchBox").onsubmit = function (event) { event.preventDefault(); };
 
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape" && !$("composer").hidden) { rememberComposer(); closeComposer(false); toast("Kept on this phone. Tap Write to continue.", "Open", reopenSaved); }
+    if (event.key === "Escape" && !$("composer").hidden) { rememberComposer(); closeComposer(false); toast("Kept on this phone. Tap New mail to continue.", "Open", reopenSaved); }
   });
 
   function reopenSaved() {
@@ -690,17 +978,30 @@
     if (saved && saved.draft) openComposer("", null, saved);
   }
 
+  // Back on screen (the icon was tapped again, the phone found a network): a list that failed is asked
+  // for again at once, and one older than half a minute is refreshed without a tap.
+  var AGED = 30000;
+  function wake() {
+    if (document.hidden) return;
+    if (view.stale) { retryStale(); return; }
+    if (!view.query && view.rows.length <= PAGE && $("composer").hidden && Date.now() - view.at > AGED) load(false, true);
+  }
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) {
       if (pending) { clearTimeout(pending.timer); var job = pending; pending = null; deliver(job.payload, job.values); }
+    } else {
+      wake();
     }
   });
+  window.addEventListener("online", wake);
+  window.addEventListener("pageshow", function (event) { if (event.persisted) wake(); });
 
   setInterval(function () {
     if (!document.hidden && !view.query && view.rows.length <= PAGE && $("composer").hidden) load(false, true);
   }, REFRESH_MS);
 
   window.addEventListener("hashchange", route);
+  showMe(DEMO ? "" : store.get("titip.me"));
   route();
   refreshCounts();
   if (store.get("titip.compose")) toast("You have an unfinished message.", "Open", reopenSaved, true);

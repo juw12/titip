@@ -3,6 +3,7 @@ import http.client
 import json
 import ssl
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -144,6 +145,14 @@ class Mail(ServerCase):
         self.assertEqual((sent.status, json.loads(data)), (200, {"ok": True, "sent": True}))
         _, sent_page = self.get("/api/mail?folder=sent&limit=1")
         self.assertEqual(sent_page["mail"][0]["subject"], "RE: " + first["subject"])
+
+    def test_the_composer_gets_names_and_addresses_to_suggest(self):
+        reply, got = self.get("/api/people")
+        self.assertEqual((reply.status, reply.getheader("Cache-Control")), (200, "no-store"))
+        self.assertGreaterEqual(len(got["people"]), 8)
+        self.assertEqual(set(got["people"][0]), {"name", "address"})
+        self.assertEqual(self.app.mail_call("people", {}), (200, got))  # what the relay is answered with
+        self.assertEqual(self.phone("GET", "/api/people")[0].status, 401, "not to a phone that is not paired")
 
     def test_problems_come_back_as_plain_messages(self):
         reply, data = self.phone("POST", "/api/send", {"mode": "new", "to": "", "body": "x"}, X, self.token)
@@ -402,6 +411,50 @@ class DeskSwitches(ServerCase):
         reply, data = self.phone("GET", "/far.js", cookie=self.pair()[0])
         self.assertEqual(reply.status, 200)
         self.assertIn(b"TitipFar", data)
+
+
+class StartsReadingAhead(unittest.TestCase):
+    """After a restart the phone's first look should not wait for Outlook, but only if a phone can ask at all."""
+
+    class Box(DemoMailbox):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+
+        def read_ahead_now(self):
+            self.started.set()
+
+    def app(self):
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        app = Titip(self.Box(), Path(home.name), phone_port=0, desk_port=0, phone_host="127.0.0.1", https=False)
+        self.addCleanup(app.stop)
+        return app
+
+    def test_not_while_no_phone_is_paired_and_mail_from_anywhere_is_off(self):
+        app = self.app()
+        app.start()
+        self.assertFalse(app.mailbox.started.wait(0.3))
+
+    def test_with_a_paired_phone(self):
+        app = self.app()
+        app.devices.add("iPhone")
+        app.start()
+        self.assertTrue(app.mailbox.started.wait(5))
+
+    def test_with_mail_from_anywhere_on(self):
+        app = self.app()
+        app.remote.mail_on = True
+        app.start()
+        self.assertTrue(app.mailbox.started.wait(5))
+
+    def test_a_mailbox_that_cannot_read_ahead_is_left_alone(self):
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        app = Titip(DemoMailbox(), Path(home.name), phone_port=0, desk_port=0, phone_host="127.0.0.1", https=False)
+        self.addCleanup(app.stop)
+        app.devices.add("iPhone")
+        app.start()  # must not raise
 
 
 if __name__ == "__main__":

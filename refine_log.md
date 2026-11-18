@@ -434,3 +434,77 @@ the demo. Nothing was out of sync: the icon never had the key.
   holds for the address the camera opens, before and after this change.
 
 stop: run 5 ended after the hard gates; no judged round was run.
+
+
+## Run 6 (2026-11-18): the look of Outlook, names suggested, a faster send, mail on the Home Screen
+
+Asked for: "make the ui interface exactly like outlook itself, and type recipient or cc would be
+auto have the name address just like outlook here, also send email in phone so slow keep on
+sending... , in home screen cannot show mail try agai it says, fix this". Version 0.6.0.
+
+### What was measured first
+
+- One call from the PC to the relay through the office proxy took 2.2 s, almost all of it the new
+  connection. On a connection that was already open the same call took 0.04 to 0.15 s. Every tap on
+  the phone costs the PC two calls (take the question, hand over the answer).
+- A send also waited 5 s behind Undo, then for the PC's next look (every 5 s when nobody had asked
+  for two minutes, which is the normal case after writing a long mail), then in Outlook's queue
+  behind whatever was being read ahead.
+- "Can't show your mail. Try again." is what the app showed whenever the first list did not arrive:
+  the page starts empty, a Home Screen icon starts from nothing each time, and one lost answer or a
+  PC that looked 5 s later than the phone's patience was enough.
+
+### Assumed
+
+- "Exactly like Outlook" means the layout and colours of Outlook's phone app. Microsoft's logo and
+  name are theirs and are not used; the app is still called Titip.
+- Suggestions come from the user's own mail. The company address book is not read: it would be one
+  more slow question to an Outlook that already keeps the phone waiting on this PC.
+- Keeping the first page of each folder on the phone (sender, subject, first lines) is acceptable
+  on a phone that already holds the key to the whole mailbox. Unlink removes it.
+
+### Changed
+
+- Look: blue bar with the folder name and your initials, white list, a coloured round initial per
+  sender, mail under Today / Yesterday / Last 7 days / This month / Older, unread in bold with a
+  blue edge, a bottom bar with icons, a "New mail" pill, a reader with the sender's initial and
+  Reply / Reply all / Forward along the bottom, underlined fields in the composer. Dark theme to
+  match. The airmail stripes and the serif type are gone.
+- To and Cc suggest name and address after the first letter. Tap or Enter takes one as
+  `Name <address>; `. The PC collects the people from the mail it reads ahead and from who the 100
+  newest sent messages went to; whoever you write to most comes first. `GET /api/people` and the
+  relay route `people`.
+- Send: Undo is 3 s (was 5). The PC keeps its connections to the relay open. While the composer is
+  open the phone tells the PC once a minute that somebody is there. A send goes ahead of everything
+  waiting for Outlook. An answer that could not be handed to the relay is handed over once more
+  (the send itself is never repeated).
+- Home Screen: the last list of each folder is kept on the phone and shown at once. If the PC
+  cannot be reached, a note says from when the list is and Titip tries again every 15 s and when
+  the app comes back to the front. A read is asked up to three times. "Can't show your mail" is
+  left only for a phone that has never seen a list.
+- Titip starts reading ahead by itself when a phone is paired or Mail from anywhere is on and
+  Outlook is already open, so the first look after a restart or an update does not wait.
+
+### Hard gates (code-checked)
+
+- 204 unit and server tests pass (30 new: kept connections, the second hand-over of an answer, the
+  people list and its order, the send going first, reading ahead at the start, the two new routes).
+- 115 browser steps pass (was 104), with no console error, page error or sideways overflow. New:
+  suggestions by typing, tap and Enter in To and Cc; the kept list with its note when the PC is out
+  of reach and its recovery; a reload with no network; people through the relay; Unlink clears what
+  the phone kept.
+
+### Found while checking, and fixed
+
+- The browser step "every answer was handed out once" looked at the relay before the phone had
+  picked up its last answer. It now waits up to ten seconds for that.
+
+### Not verified
+
+- A real iPhone, and a real send from it. The checks used Chromium, and the live look at the real
+  mailbox was read-only.
+- How the names read for people whose Outlook name holds a comma: the field then gets the bare
+  address.
+- A PC so busy that Outlook stalls for more than a minute still makes the phone wait.
+
+stop: run 6 ended after the hard gates; no judged round was run.

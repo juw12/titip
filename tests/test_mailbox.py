@@ -109,6 +109,15 @@ class Helpers(unittest.TestCase):
     def test_addresses_split_on_semicolon_comma_and_newline(self):
         self.assertEqual(split_addresses("a@x.com; b@x.com,c@x.com\n"), ["a@x.com", "b@x.com", "c@x.com"])
 
+    def test_of_a_suggested_name_with_address_only_the_address_is_kept(self):
+        typed = "Priya Nair <priya@x.com>; b@x.com, Priscilla Tan <tan@x.com>\nRina <rina@x.com>; "
+        self.assertEqual(split_addresses(typed), ["priya@x.com", "b@x.com", "tan@x.com", "rina@x.com"])
+        self.assertEqual(split_addresses(["Jonas Weber <jonas@x.com>", " c@x.com ", "", None]), ["jonas@x.com", "c@x.com"])
+        self.assertEqual(split_addresses("Tomas"), ["Tomas"])  # a bare name is still Outlook's to resolve
+        self.assertEqual(split_addresses(" ; <>; "), [])
+        request = clean_send_request({"mode": "new", "to": "Priya Nair <priya@x.com>; ", "cc": "Rina <rina@x.com>", "body": "Hi"})
+        self.assertEqual((request["to"], request["cc"]), (["priya@x.com"], ["rina@x.com"]))
+
     def test_send_needs_recipient_and_text(self):
         with self.assertRaises(MailError):
             clean_send_request({"mode": "new", "to": "", "body": "hello"})
@@ -221,28 +230,54 @@ class BusyOutlook(unittest.TestCase):
         self.assertTrue(caught.exception.started)
         gate.set()
 
+    def test_a_send_goes_ahead_of_everything_that_waits(self):
+        from titip.mailbox import _ComThread
+
+        thread = _ComThread()
+        gate = threading.Event()
+        order = []
+        callers = [threading.Thread(target=lambda: thread.call(gate.wait, 5, timeout=5))]  # Outlook is busy with this one
+        callers[0].start()
+        time.sleep(0.1)
+        for name, first in (("read ahead 1", False), ("read ahead 2", False), ("send", True), ("read ahead 3", False)):
+            callers.append(threading.Thread(target=lambda name=name, first=first: thread.call(order.append, name, timeout=5, first=first)))
+            callers[-1].start()
+            time.sleep(0.05)  # they arrive in this order
+        gate.set()
+        for caller in callers:
+            caller.join(5)
+        self.assertEqual(order, ["send", "read ahead 1", "read ahead 2", "read ahead 3"])
+
+    def test_the_send_is_the_call_that_goes_first(self):
+        asked = []
+        box = OutlookMailbox(read_ahead=False)
+        box._do = lambda fn, *args, timeout=20, first=False: asked.append((fn.__name__, first)) or {"ok": True, "counts": {}}
+        box.send({"mode": "new", "to": "a@example.com", "body": "x"})
+        box.state()
+        self.assertEqual(asked, [("_send", True), ("_state", False)])
+
     def test_a_send_that_may_have_gone_out_warns_before_a_second_try(self):
         box = OutlookMailbox()
 
-        def busy(fn, *args, timeout=20):
+        def busy(fn, *args, timeout=20, first=False):
             raise OutlookBusy(started=True)
 
         box._do = busy
         with self.assertRaises(MailError) as caught:
             box.send({"mode": "new", "to": "a@example.com", "body": "x"})
         self.assertIn("before you send it again", str(caught.exception))
-        box._do = lambda fn, *args, timeout=20: (_ for _ in ()).throw(OutlookBusy(started=False))
+        box._do = lambda fn, *args, timeout=20, first=False: (_ for _ in ()).throw(OutlookBusy(started=False))
         with self.assertRaises(MailError) as caught:
             box.send({"mode": "new", "to": "a@example.com", "body": "x"})
         self.assertIn("nothing was sent", str(caught.exception))
 
     def test_pc_page_gets_the_last_known_state_while_outlook_is_busy(self):
         box = OutlookMailbox()
-        box._do = lambda fn, *args, timeout=20: {"ok": True, "counts": {"inbox": 3}}
+        box._do = lambda fn, *args, timeout=20, first=False: {"ok": True, "counts": {"inbox": 3}}
         self.assertEqual(box.quick_state()["counts"]["inbox"], 3)
         box._state_cache = (time.monotonic() - 3600, box._state_cache[1])  # long ago, also on a PC that just started
 
-        def busy(fn, *args, timeout=20):
+        def busy(fn, *args, timeout=20, first=False):
             raise OutlookBusy()
 
         box._do = busy
@@ -256,7 +291,7 @@ class BusyOutlook(unittest.TestCase):
         gate = threading.Event()
         asked = []
 
-        def silent(fn, *args, timeout=20):
+        def silent(fn, *args, timeout=20, first=False):
             asked.append(timeout)
             gate.wait(5)
             return {"ok": True, "counts": {"inbox": 7}}
@@ -275,7 +310,7 @@ class BusyOutlook(unittest.TestCase):
     def test_pc_page_shows_a_real_error_not_busy(self):
         box = OutlookMailbox()
 
-        def closed(fn, *args, timeout=20):
+        def closed(fn, *args, timeout=20, first=False):
             raise MailError("Outlook on your PC did not answer. Open Outlook and try again.")
 
         box._do = closed
@@ -289,7 +324,7 @@ class BusyOutlook(unittest.TestCase):
         box = OutlookMailbox()
         asked = []
 
-        def count(fn, *args, timeout=20):
+        def count(fn, *args, timeout=20, first=False):
             asked.append(timeout)
             return {"ok": True, "counts": {"inbox": len(asked)}}
 
@@ -305,7 +340,7 @@ class BusyOutlook(unittest.TestCase):
 
     def test_a_send_makes_the_next_counts_new(self):
         box = OutlookMailbox()
-        box._do = lambda fn, *args, timeout=20: {"ok": True, "counts": {"drafts": 1}}
+        box._do = lambda fn, *args, timeout=20, first=False: {"ok": True, "counts": {"drafts": 1}}
         box.state()
         box.send({"mode": "new", "to": "a@example.com", "body": "x"})
         self.assertIsNone(box._state_cache)
@@ -394,7 +429,7 @@ class FakeOutlook:
         return [{"id": f"s1.{folder.encode().hex().upper():0<16}{n}", "subject": f"{folder} {n}", "from": "Rina",
                  "time": f"2026-11-17T10:0{n}:00Z"} for n in numbers]
 
-    def __call__(self, fn, *args, timeout=20):
+    def __call__(self, fn, *args, timeout=20, first=False):
         self.asked.append((fn.__name__, args[0] if args else None))
         if fn.__name__ == "_send" and not self.free.is_set():
             raise OutlookBusy(started=False)
@@ -582,6 +617,183 @@ class CopiesInMemory(unittest.TestCase):
         self.assertEqual(box.get(arrived)["id"], arrived)
 
 
+class FakeAccessor:
+    def __init__(self, address):
+        self.address = address
+
+    def GetProperty(self, name):
+        if self.address is None:
+            raise RuntimeError("Outlook does not have it")
+        return self.address
+
+
+class FakePerson:
+    """A recipient as Outlook hands it over: a name, an internal address, and the internet address on request."""
+
+    def __init__(self, name, smtp, address="/o=Office/cn=Recipients/cn=x"):
+        self.Name, self.Address = name, address
+        self.PropertyAccessor = FakeAccessor(smtp)
+
+
+class FakeMessage:
+    def __init__(self, sender, *people):
+        self.SenderName, self.SenderEmailAddress = sender
+        self.PropertyAccessor = FakeAccessor(self.SenderEmailAddress)
+        self.people = list(people)
+        self.Recipients = self
+
+    Count = property(lambda self: len(self.people))
+
+    def Item(self, index):
+        return self.people[index - 1]
+
+
+class People(unittest.TestCase):
+    """Typing a name in To or Cc suggests the people of your own mail, the ones you write to first."""
+
+    ME = ("me@example.com", "Me")
+
+    def box(self):
+        box = OutlookMailbox(read_ahead=False)
+        box._who = self.ME
+        return box
+
+    def names(self, box):
+        return [(person["name"], person["address"]) for person in box.people()["people"]]
+
+    def test_whoever_you_write_to_most_comes_first_and_the_rest_by_name(self):
+        box = self.box()
+        box.remember_people([("Rina Wijaya", "rina@example.com", 1), ("Tomas Berg", "Tomas@Example.com", 3), ("Anna Okafor", "anna@example.com", 1)])
+        box.remember_people([("", "tomas@example.com", 2), ("Rina W.", "rina@example.com", 1)])
+        self.assertEqual(self.names(box), [("Tomas Berg", "Tomas@Example.com"), ("Rina Wijaya", "rina@example.com"), ("Anna Okafor", "anna@example.com")])
+        self.assertEqual(box._people["tomas@example.com"][2], 5, "one person however the address is written")
+
+    def test_only_real_addresses_are_kept_and_never_your_own(self):
+        box = self.box()
+        box.remember_people([
+            ("Internal", "/o=Office/cn=Recipients/cn=x", 3), ("Nobody", "", 3), ("Two", "a@x.com; b@x.com", 3), ("None", None, 3),
+            ("Me", "ME@example.com", 9), ("'priya@example.com'", "priya@example.com", 1), ('  "Jonas   Weber" ', " jonas@example.com ", 1),
+        ])
+        self.assertEqual(self.names(box), [("Jonas Weber", "jonas@example.com"), ("", "priya@example.com")])
+
+    def test_the_list_stays_bounded(self):
+        from titip import mailbox
+
+        saved = mailbox.PEOPLE_KEEP, mailbox.PEOPLE_SHOWN
+        mailbox.PEOPLE_KEEP, mailbox.PEOPLE_SHOWN = 5, 3
+        self.addCleanup(lambda: (setattr(mailbox, "PEOPLE_KEEP", saved[0]), setattr(mailbox, "PEOPLE_SHOWN", saved[1])))
+        box = self.box()
+        box.remember_people([(f"Person {n}", f"p{n}@example.com", n) for n in range(1, 9)])
+        self.assertEqual(len(box._people), 5)
+        self.assertEqual([name for name, _ in self.names(box)], ["Person 5", "Person 4", "Person 3"])
+
+    def test_a_message_counts_once_and_who_you_wrote_to_counts_more_than_who_wrote_to_you(self):
+        box = self.box()
+        mine = FakeMessage(("Me", "me@example.com"), FakePerson("Tomas Berg", "tomas@example.com"), FakePerson("Anna Okafor", None, "anna@example.com"))
+        theirs = FakeMessage(("Rina Wijaya", "rina@example.com"), FakePerson("Me", "me@example.com"), FakePerson("Jonas Weber", "jonas@example.com"))
+        for _ in range(3):  # read ahead, opened on the phone, opened again
+            box._count_people("s1.AA", mine, "Me", "me@example.com")
+            box._count_people("s1.BB", theirs, "Rina Wijaya", "rina@example.com")
+        weights = {address: person[2] for address, person in box._people.items()}
+        self.assertEqual(weights, {"me@example.com": 3, "tomas@example.com": 3, "anna@example.com": 3, "rina@example.com": 2, "jonas@example.com": 1})
+        self.assertEqual([name for name, _ in self.names(box)], ["Anna Okafor", "Tomas Berg", "Rina Wijaya", "Jonas Weber"])
+
+    def test_a_message_outlook_cannot_list_the_people_of_still_opens(self):
+        box = self.box()
+        broken = type("Broken", (), {"Recipients": property(lambda self: 1 / 0)})()
+        box._count_people("s1.CC", broken, "Rina", "rina@example.com")  # must not raise
+        self.assertEqual(box.people(), {"people": []})
+
+    def test_a_mail_to_a_whole_department_does_not_fill_the_list(self):
+        from titip import mailbox
+
+        box = self.box()
+        crowd = FakeMessage(("Rina", "rina@example.com"), *(FakePerson(f"P{n}", f"p{n}@example.com") for n in range(mailbox.PEOPLE_RECIPIENTS + 25)))
+        box._count_people("s1.DD", crowd, "Rina", "rina@example.com")
+        self.assertEqual(len(box._people), mailbox.PEOPLE_RECIPIENTS + 1)
+
+    def test_older_sent_mail_is_looked_at_a_few_a_round_newest_first_and_only_once(self):
+        from titip import mailbox
+
+        saved = mailbox.PEOPLE_PAUSE, mailbox.PEOPLE_PER_ROUND, dict(mailbox.WARM_MESSAGES)
+        mailbox.PEOPLE_PAUSE, mailbox.PEOPLE_PER_ROUND = 0, 2
+        mailbox.WARM_MESSAGES["sent"] = 1  # the first one is read ahead in full anyway
+        self.addCleanup(lambda: (setattr(mailbox, "PEOPLE_PAUSE", saved[0]), setattr(mailbox, "PEOPLE_PER_ROUND", saved[1]),
+                                 mailbox.WARM_MESSAGES.update(saved[2])))
+        asked, busy = [], []
+
+        def outlook(fn, *args, timeout=20, first=False):
+            asked.append((fn.__name__, *args[:2]))
+            if fn.__name__ == "_list":
+                return {"mail": [{"id": f"s1.{n}"} for n in range(5)]}
+            if busy:
+                raise busy.pop()
+            return None
+
+        box = box_with(outlook)
+        box._learn_people()
+        self.assertEqual(asked, [("_list", "sent", mailbox.PEOPLE_SENT), ("_note_people", "s1.1"), ("_note_people", "s1.2")])
+        busy.append(OutlookBusy())
+        with self.assertRaises(OutlookBusy):
+            box._learn_people()
+        busy.append(MailError("deleted in the meantime"))
+        box._learn_people()
+        box._learn_people()
+        box._learn_people()
+        self.assertEqual([args[1] for args in asked[3:]], ["s1.3", "s1.3", "s1.4"], "a busy Outlook is asked again, a deleted message is not")
+        self.assertEqual(sum(1 for args in asked if args[0] == "_list"), 1)
+
+    def test_asking_for_people_never_waits_for_outlook(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook)
+        box._who = self.ME
+        box.remember_people([("Rina Wijaya", "rina@example.com", 2)])
+        outlook.silent()
+        started = time.monotonic()
+        self.assertEqual(box.people(), {"people": [{"name": "Rina Wijaya", "address": "rina@example.com"}]})
+        self.assertLess(time.monotonic() - started, 0.05)
+        self.assertEqual(outlook.asked, [])
+
+
+class ReadAheadAtStart(unittest.TestCase):
+    """After a restart the copies are gone; the newest mail is read again before the phone asks."""
+
+    def setUp(self):
+        from titip import mailbox
+
+        self.saved = {name: getattr(mailbox, name) for name in ("QUICK_SECONDS", "READ_SECONDS", "ASK_SECONDS", "WARM_PAUSE")}
+        mailbox.QUICK_SECONDS, mailbox.READ_SECONDS, mailbox.ASK_SECONDS, mailbox.WARM_PAUSE = 0.1, 0.2, 5, 0
+        self.addCleanup(lambda: [setattr(mailbox, name, value) for name, value in self.saved.items()])
+
+    def test_with_outlook_open_the_newest_mail_is_ready_before_a_phone_asks(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook, read_ahead=True)
+        self.assertTrue(box.read_ahead_now(running=lambda: True))
+        wanted = [row["id"] for folder in ("inbox", "sent", "drafts") for row in outlook.rows(folder)]
+        self.assertTrue(wait_until(lambda: all(mail_id in box._messages for mail_id in wanted)))
+        outlook.closed = True  # these are the slow rounds: they end when Outlook is closed
+        box._nudge.set()
+        self.assertTrue(wait_until(lambda: not box._warmer.is_alive()))
+
+    def test_outlook_is_never_started_for_it(self):
+        outlook = FakeOutlook()
+        box = box_with(outlook, read_ahead=True)
+        self.assertFalse(box.read_ahead_now(running=lambda: False))
+        self.assertIsNone(box._warmer)
+        self.assertEqual(outlook.asked, [])
+
+    def test_not_when_reading_ahead_is_off_or_a_phone_already_asked(self):
+        asked = []
+        running = lambda: asked.append(1) or True  # noqa: E731
+        self.assertFalse(box_with(FakeOutlook(), read_ahead=False).read_ahead_now(running=running))
+        box = box_with(FakeOutlook(), read_ahead=True)
+        box.list("inbox")
+        at = box._phone_at
+        self.assertFalse(box.read_ahead_now(running=running))
+        self.assertEqual((box._phone_at, asked), (at, []), "the phone in use is not mistaken for one put down")
+        box._phone_at = -1e9
+
+
 class FakeNamespace:
     def __init__(self, items):
         self.items = items
@@ -642,6 +854,12 @@ class Demo(unittest.TestCase):
         self.assertTrue(hits and all("gasket" in m["subject"].lower() for m in hits))
         with self.assertRaises(MailError):
             box.list("../secrets")
+
+    def test_the_people_of_the_invented_mail_can_be_suggested(self):
+        people = DemoMailbox().people()["people"]
+        self.assertGreaterEqual(len(people), 8)
+        self.assertTrue(all(person["name"] and "@" in person["address"] for person in people))
+        self.assertTrue(all(person["address"].endswith(".example") for person in people), "nobody real")
 
     def test_reply_lands_in_sent_and_draft_in_drafts(self):
         box = DemoMailbox()

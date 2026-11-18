@@ -8,23 +8,37 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 
 **Try it with invented mail:** <https://juw12.github.io/titip/>
 
-![Titip on a phone: inbox, a message with a table, and the reply screen](docs/shots/phone.png)
+![Titip on a phone: the inbox, a message with a table, and a new mail with names suggested under To](docs/shots/phone.png)
 
 ## What it does
 
 - Shows Inbox, Sent and Drafts from the classic Outlook desktop app, newest first, including mail that
-  rules or archivers moved into `.pst` data files. Unread mail carries a red dot.
+  rules or archivers moved into `.pst` data files. It is laid out the way Outlook's phone app is:
+  a round initial for each sender, mail grouped under Today, Yesterday and so on, unread mail in
+  bold with a blue edge.
 - Opens a message with its formatting in a frame that cannot run scripts or load remote pictures,
   or as plain text. Attachments download to the phone.
 - Reply, Reply all, Forward and new mail. Outlook adds the earlier thread. (No automatic signature: type it, or keep it in a draft.)
-- Every send waits 5 seconds behind an **Undo** button. **Save as draft** puts it in Outlook's Drafts.
+- Type a few letters in To or Cc and Titip suggests the people of your own mail, name and address,
+  the ones you write to first. Tap one, or press Enter.
+- Every send waits 3 seconds behind an **Undo** button. **Save as draft** puts it in Outlook's Drafts.
   If a send fails, the message comes back with your text and the reason.
 - Search by subject or person. Light and dark. Works as a home-screen app.
 
-It stores no password and writes no mail to disk. It drives the Outlook that is already signed in on
-your PC. Once a phone has asked for mail, Titip keeps the first page of each folder and the messages on
-it in its own memory, so a tap opens at once. Those copies are gone when Titip stops.
+It stores no password, and on the PC it writes no mail to disk. It drives the Outlook that is already
+signed in on your PC. Titip keeps the first page of each folder and the messages on it in its own
+memory, so a tap opens at once. Those copies are gone when Titip stops.
+The phone keeps a little as well, see [What the phone keeps](#what-the-phone-keeps).
 It keeps itself up to date (see [Updates](#updates)).
+
+### What the phone keeps
+
+So that the app opens with your mail on screen instead of an empty page, the browser on the phone
+keeps the first page of each folder as it was last shown (sender, subject and the first lines, not
+the messages themselves) and the names and addresses it suggests. When the PC cannot be reached,
+that list is shown with a note that says from when, and Titip keeps trying by itself until the PC
+answers. **Unlink**, unpairing the phone, or clearing the browser's data removes it. The demo keeps
+nothing.
 
 ## Autopilot for Gmail
 
@@ -98,7 +112,11 @@ Autopilot page; the code is the same.
 - A send is carried out once. A question the PC has seen before, one older than two minutes, or a
   send made before Titip last started is refused, so a mail cannot go out twice.
 - It is slower than your own network. The PC looks for questions every 5 seconds while nobody reads
-  mail and about once a second while somebody does, so the first tap can take a few seconds.
+  mail and about once a second while somebody does, so the first tap can take a few seconds. The PC
+  keeps its connection to the relay open between questions: through an office proxy a new one took
+  about two seconds each time, and every tap needs two.
+- While you write, the phone tells the PC once a minute that somebody is there, so **Send** is picked
+  up within a second or so and does not wait for the PC's slow look.
 - An attachment over 1 MB is not sent through the relay. A very long formatted mail arrives as plain text.
 - Anyone holding the link the phone saved can read and send your mail while the switch is on. **Switch
   off** closes that at once; **Make a new code** cuts off every phone.
@@ -211,10 +229,16 @@ Titip opens a door from your network to your mailbox. Read this first.
   If a tool on the PC lowers the priority of background programs, Titip puts itself back to normal
   (never higher), so the phone still gets an answer while the PC is busy.
 - Outlook answers one program at a time, and a full PC can keep any program waiting. So Titip reads
-  ahead once a phone has asked for mail: the newest 40 messages of the Inbox, 20 of Sent and 10 drafts,
-  and whatever an older page or a search showed the phone. Those open at once whatever Outlook is
-  doing. When Outlook is busy the list is shown from memory with a note that says from when, and is
-  replaced as soon as Outlook answers.
+  ahead: the newest 40 messages of the Inbox, 20 of Sent and 10 drafts, and whatever an older page or
+  a search showed the phone. Those open at once whatever Outlook is doing. It starts when a phone
+  asks for mail, or with Titip itself when a phone is paired and Outlook is already open, so the
+  first look after a restart does not wait either. When Outlook is busy the list is shown from
+  memory with a note that says from when, and is replaced as soon as Outlook answers.
+- The names Titip suggests in To and Cc come from that same mail, plus who the 100 newest sent
+  messages went to (read one a second, only for their recipients). They are kept in memory on the
+  PC and in the phone's browser. It is not the company address book: a name Titip does not suggest
+  can still be typed, and Outlook resolves it when the mail is sent.
+- A send goes ahead of everything else that waits for Outlook, the reading ahead included.
 - After the phone is put down, Titip goes on looking for new mail every five minutes for eight hours,
   so what arrived in the meantime is already there when the phone is picked up again. It stops the
   first time it finds Outlook closed, and never opens Outlook for a phone nobody holds.
@@ -240,7 +264,9 @@ Titip opens a door from your network to your mailbox. Read this first.
   edit on the phone goes as plain text.
 - Search looks at subject and sender (recipient in Sent), not the message body.
 - Calendar invitations can be read, not accepted.
-- Opening a message on the phone clears its red dot on that phone only. Outlook still shows it as unread.
+- Opening a message on the phone clears its unread mark on that phone only. Outlook still shows it as unread.
+- It looks like Outlook's phone app but is not it: no swipe to delete or archive, no folders beyond
+  Inbox, Sent and Drafts, no calendar. Recipients are typed text (`Name <address>;`), not chips.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 

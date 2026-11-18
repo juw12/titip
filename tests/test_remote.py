@@ -378,6 +378,61 @@ class MailFromAnywhere(unittest.TestCase):
         with self.assertRaises(OSError):
             link.mail_step()
 
+    def test_an_answer_that_did_not_arrive_is_handed_over_once_more_and_nothing_is_done_twice(self):
+        link = self.make()
+        patch = mock.patch.object(remote, "ANSWER_AGAIN_S", 0)
+        patch.start()
+        self.addCleanup(patch.stop)
+        lost = []
+
+        def flaky(method, url, body=None, headers=None):
+            if "/answer/" in url and len(lost) < self.lose:
+                lost.append(url)
+                raise OSError("the proxy closed the connection")
+            return self.relay.send(method, url, body, headers)
+
+        link.send = flaky
+        self.lose = 1
+        identity = self.ask(link, "send", {"mode": "new", "to": "a@mail.example", "body": "Hi"})
+        answers = self.round(link)
+        self.assertEqual(answers[identity]["data"], {"ok": True, "sent": True})
+        self.assertEqual([route for route, _ in self.mailbox.calls], ["send"], "only the answer is repeated, never the send")
+        self.assertEqual(link.mail_error, "")
+        lost.clear()
+        self.lose = 2  # the relay stays out of reach: say so on the PC page instead of crashing
+        second = self.ask(link, "mail", {"folder": "inbox"})
+        self.assertNotIn(second, self.round(link))
+        self.assertEqual(len(lost), 2)
+        self.assertIn("could not be handed to the relay", link.mail_error)
+
+    def test_the_composer_may_ask_for_people(self):
+        self.assertIn("people", remote.ASK_ROUTES)
+        link = self.make()
+        self.mailbox.reply = (200, {"people": [{"name": "Priya Nair", "address": "priya.nair@lumenworks.example"}]})
+        identity = self.ask(link, "people")
+        answers = self.round(link)
+        self.assertEqual(self.mailbox.calls, [("people", {})])
+        self.assertEqual(answers[identity]["data"]["people"][0]["name"], "Priya Nair")
+        self.assertNotIn("Priya", self.relay.answers[identity])
+
+    def test_after_a_failure_the_pc_looks_again_soon_only_while_someone_reads(self):
+        link = self.make()
+        waits = []
+
+        def failing():
+            link._stop.set()  # one round is enough
+            raise OSError("no way out")
+
+        link.mail_step = failing
+        link._stop.wait = waits.append
+        link.last_ask = self.now - 5  # someone is reading mail right now
+        link._run_mail()
+        self.assertIn("could not be reached", link.mail_error)
+        link._stop.clear()
+        link.last_ask = self.now - remote.ASK_BUSY_FOR_S - 1  # nobody has for a while
+        link._run_mail()
+        self.assertEqual(waits, [remote.ASK_RETRY_BUSY_S, remote.ASK_RETRY_S])
+        self.assertLess(remote.ASK_RETRY_BUSY_S, remote.ASK_RETRY_S)
 
 
 class WaysOut(unittest.TestCase):
@@ -516,6 +571,104 @@ class KeptOpener(unittest.TestCase):
         for thread in threads:
             thread.join()
         self.assertEqual((len({id(opener) for opener in found}), len(self.contexts)), (1, 1))
+
+
+class FakeConnection:
+    """What _Kept needs of a connection: request, getresponse (status, will_close, read) and close."""
+
+    def __init__(self, status=200, will_close=False, fails=()):
+        self.status, self.will_close = status, will_close
+        self.fails = list(fails)  # what the next requests raise instead of answering
+        self.asked, self.closed = [], False
+
+    def request(self, method, selector, body=None, headers=None):
+        if self.fails:
+            raise self.fails.pop(0)
+        self.asked.append((method, selector))
+
+    def getresponse(self):
+        return self
+
+    def read(self, amount):
+        return b"sealed"
+
+    def close(self):
+        self.closed = True
+
+
+class KeptConnections(unittest.TestCase):
+    """Through an office proxy a new connection takes two seconds, so the one to the relay stays open."""
+
+    def setUp(self):
+        self.now = 100.0
+        self.made = []
+        self.next = []  # connections handed out before plain working ones
+        self.kept = remote._Kept(connect=self.connect, clock=lambda: self.now)
+
+    def connect(self, way, host, port):
+        connection = self.next.pop(0) if self.next else FakeConnection()
+        connection.where = (host, port)
+        self.made.append(connection)
+        return connection
+
+    def call(self, way=None, path="/c/x/asks/take"):
+        return self.kept.open(way or {}, urllib.request.Request("https://relay.example" + path, data=b"", method="POST"))
+
+    def test_the_next_call_goes_over_the_connection_that_is_already_open(self):
+        self.assertEqual(self.call(), (200, b"sealed"))
+        self.now += remote.KEEP_IDLE_S - 1
+        self.assertEqual(self.call(path="/c/x/answer/1"), (200, b"sealed"))
+        self.assertEqual(len(self.made), 1)
+        self.assertEqual(self.made[0].where, ("relay.example", 443))
+        self.assertEqual(self.made[0].asked, [("POST", "/c/x/asks/take"), ("POST", "/c/x/answer/1")])
+
+    def test_one_that_was_silent_too_long_is_closed_and_not_used_again(self):
+        self.call()
+        self.now += remote.KEEP_IDLE_S
+        self.call()
+        self.assertEqual(len(self.made), 2)
+        self.assertTrue(self.made[0].closed)
+        self.assertFalse(self.made[1].closed)
+
+    def test_a_kept_one_that_went_dead_costs_one_more_try_on_a_new_one(self):
+        self.call()
+        self.made[0].fails = [ConnectionResetError("the proxy dropped it")]
+        self.assertEqual(self.call(), (200, b"sealed"))
+        self.assertEqual(len(self.made), 2)
+        self.assertTrue(self.made[0].closed)
+        self.assertEqual(self.made[1].asked, [("POST", "/c/x/asks/take")])
+
+    def test_a_new_one_that_fails_is_an_error_for_the_next_way_out_and_is_not_tried_again(self):
+        for failure in (TimeoutError("no answer"), remote.http_client.RemoteDisconnected("closed")):
+            self.made.clear()
+            self.next = [FakeConnection(fails=[failure]), FakeConnection()]
+            with self.assertRaises(OSError):
+                self.call()
+            self.assertEqual(len(self.made), 1)
+            self.assertTrue(self.made[0].closed)
+
+    def test_a_proxy_that_wants_a_password_is_an_error_not_an_answer(self):
+        self.next = [FakeConnection(status=407, will_close=True)]
+        with self.assertRaises(OSError):
+            self.call()
+        self.assertTrue(self.made[0].closed)
+
+    def test_one_the_other_side_closes_is_not_kept_and_each_way_out_has_its_own(self):
+        self.next = [FakeConnection(will_close=True)]
+        self.call()
+        self.call()
+        self.assertEqual(len(self.made), 2)
+        self.assertTrue(self.made[0].closed)
+        self.call(way={"https": "http://proxy.office:80"})
+        self.assertEqual(len(self.made), 3, "a call through the proxy does not use the straight connection")
+        self.kept.close()
+        self.assertTrue(all(connection.closed for connection in self.made))
+
+    def test_what_the_relay_refuses_is_still_an_answer(self):
+        self.next = [FakeConnection(status=403)]
+        self.assertEqual(self.call(), (403, b"sealed"))
+        self.call()
+        self.assertEqual(len(self.made), 1)
 
 
 if __name__ == "__main__":

@@ -212,7 +212,7 @@ class PhoneHandler(_Handler):
                 return self._error(HTTPStatus.BAD_GATEWAY, str(error))
             except ValueError:
                 return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
-        if route in ("/api/state", "/api/mail", "/api/item"):
+        if route in ("/api/state", "/api/mail", "/api/item", "/api/people"):
             return self._json(*self.app.mail_call(route[5:], query))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -357,6 +357,10 @@ class Titip:
         self.autopilot.start()
         self.remote.start()
         self.updater.start()
+        # a phone can ask for mail: have the newest ready, so its first look after a restart does not wait for Outlook
+        read_ahead = getattr(self.mailbox, "read_ahead_now", None)
+        if read_ahead is not None and (self.remote.mail_on or self.devices.devices()):
+            threading.Thread(target=read_ahead, daemon=True, name="titip-start").start()
 
     def stop(self) -> None:
         self.updater.stop()
@@ -419,6 +423,8 @@ class Titip:
                 )
             if route == "item":
                 return 200, self.mailbox.get(str(params.get("id", "")))
+            if route == "people":  # who the composer suggests: from memory, Outlook is not asked
+                return 200, self.mailbox.people()
             if route == "attachment":  # only the relay asks this way; a paired phone downloads the file itself
                 name, data = self.attachment(str(params.get("id", "")), int(params.get("index", 0)), MAX_FAR_FILE)
                 return 200, {"name": name, "size": len(data), "data": base64.b64encode(data).decode("ascii")}

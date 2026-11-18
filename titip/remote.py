@@ -25,6 +25,7 @@ Without a relay address this module does nothing.
 from __future__ import annotations
 
 import base64
+import http.client as http_client
 import json
 import os
 import secrets
@@ -32,6 +33,7 @@ import ssl
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -43,13 +45,18 @@ ORDER_MAX_AGE_S = 15 * 60
 MAX_EVENTS = 40
 MAX_TEXT = 700
 TIMEOUT_S = 25
+KEEP_IDLE_S = 30  # a connection to the relay that was silent this long is not used again
+KEEP_CONNECTIONS = 6  # open ones kept for each way out
+MAX_REPLY = 8_000_000
 ALLOWED_ORDERS = ("switch", "mode", "check", "send", "drop")
-ASK_ROUTES = ("state", "mail", "item", "attachment", "send")
+ASK_ROUTES = ("state", "mail", "item", "attachment", "send", "people")
 ASK_MAX_AGE_S = 120
 ASK_IDLE_S = 5  # how often the PC looks for a question while nobody is reading mail
 ASK_BUSY_S = 0.7  # ... and while somebody is
 ASK_BUSY_FOR_S = 120
 ASK_RETRY_S = 20  # after the relay could not be reached
+ASK_RETRY_BUSY_S = 3  # ... while somebody is reading mail
+ANSWER_AGAIN_S = 1
 MAX_ANSWER = 1_900_000  # sealed characters; the relay refuses more than 2,000,000
 MAX_WORKERS = 4
 
@@ -129,9 +136,113 @@ def _opener(way: dict) -> urllib.request.OpenerDirector:
         return _openers[key]
 
 
+_context_lock = threading.Lock()
+_context_made: list[ssl.SSLContext] = []
+
+
+def _context() -> ssl.SSLContext:
+    """Windows' certificates, read once for every kept connection."""
+    with _context_lock:
+        if not _context_made:
+            _context_made.append(ssl.create_default_context())
+        return _context_made[0]
+
+
+def _connect(way: dict, host: str, port: int):
+    """A new connection to an https address, straight or through the proxy of this way out."""
+    proxy = urllib.parse.urlsplit(way.get("https", "")) if way.get("https") else None
+    if proxy is not None and proxy.hostname and not urllib.request.proxy_bypass(host):
+        connection = http_client.HTTPSConnection(proxy.hostname, proxy.port or 80, timeout=TIMEOUT_S, context=_context())
+        connection.set_tunnel(host, port)
+    else:
+        connection = http_client.HTTPSConnection(host, port, timeout=TIMEOUT_S, context=_context())
+    return connection
+
+
+class _Kept:
+    """Connections to the relay that stay open between calls.
+
+    Through an office proxy a new connection takes about two seconds (measured: 2.2 s to connect,
+    0.1 s for a call on a connection that is already open). Titip makes two calls for everything the
+    phone asks, so a new connection each time made every tap on the phone four seconds slower.
+
+    A connection nobody used for KEEP_IDLE_S is not trusted any more: proxies drop silent ones. When
+    a kept one turns out dead anyway, the call is made once more on a new one.
+    """
+
+    def __init__(self, connect=_connect, clock=time.monotonic):
+        self.connect, self.clock = connect, clock
+        self._idle: dict[tuple, list] = {}  # (way, host, port) -> [(connection, last used)]
+        self._lock = threading.Lock()
+
+    def _take(self, key: tuple):
+        with self._lock:
+            waiting = self._idle.get(key, [])
+            while waiting:
+                connection, used = waiting.pop()
+                if self.clock() - used < KEEP_IDLE_S:
+                    return connection
+                _close(connection)
+        return None
+
+    def _give_back(self, key: tuple, connection) -> None:
+        with self._lock:
+            waiting = self._idle.setdefault(key, [])
+            if len(waiting) < KEEP_CONNECTIONS:
+                waiting.append((connection, self.clock()))
+                return
+        _close(connection)
+
+    def open(self, way: dict, request: urllib.request.Request) -> tuple[int, bytes]:
+        address = urllib.parse.urlsplit(request.full_url)
+        key = (tuple(sorted(way.items())), address.hostname, address.port or 443)
+        headers = dict(request.header_items())
+        connection = self._take(key)
+        kept = connection is not None
+        while True:
+            if connection is None:
+                connection = self.connect(way, key[1], key[2])
+            try:
+                connection.request(request.get_method(), request.selector, body=request.data, headers=headers)
+                reply = connection.getresponse()
+                body = reply.read(MAX_REPLY + 1)
+            except (OSError, http_client.HTTPException) as error:
+                _close(connection)
+                if kept:  # it went dead while it waited: once more, on a new one
+                    connection, kept = None, False
+                    continue
+                raise error if isinstance(error, OSError) else OSError(str(error) or type(error).__name__)
+            if reply.will_close or len(body) > MAX_REPLY:
+                _close(connection)
+            else:
+                self._give_back(key, connection)
+            if reply.status == 407:
+                raise OSError("the proxy wants a password")
+            return reply.status, body[:MAX_REPLY]
+
+    def close(self) -> None:
+        with self._lock:
+            for waiting in self._idle.values():
+                for connection, _ in waiting:
+                    _close(connection)
+            self._idle.clear()
+
+
+def _close(connection) -> None:
+    try:
+        connection.close()
+    except OSError:
+        pass
+
+
+_kept = _Kept()
+
+
 def _open(way: dict, request: urllib.request.Request) -> tuple[int, bytes]:
+    if request.type == "https":
+        return _kept.open(way, request)
     with _opener(way).open(request, timeout=TIMEOUT_S) as reply:
-        return reply.status, reply.read(8_000_000)
+        return reply.status, reply.read(MAX_REPLY)
 
 
 _good_way = [0]  # the way that worked last is tried first, so a dead one costs time only once
@@ -396,12 +507,19 @@ class Remote:
         if len(sealed) > MAX_ANSWER:
             sealed = seal(self.key, {"id": identity, "status": 413, "data": {
                 "error": "That is too large to pass through the relay. Open it on your own network or at your PC."}})
-        status, _ = self.send(
-            "PUT", self._url(f"answer/{identity}"), sealed.encode("ascii"),
-            {"X-Titip-Write": self.settings["write"], "Content-Type": "text/plain"},
-        )
-        if status != 200:
-            raise OSError(f"the relay answered {status}")
+        for last in (False, True):  # an answer that does not arrive leaves the phone waiting: hand it over twice if need be
+            try:
+                status, _ = self.send(
+                    "PUT", self._url(f"answer/{identity}"), sealed.encode("ascii"),
+                    {"X-Titip-Write": self.settings["write"], "Content-Type": "text/plain"},
+                )
+                if status != 200:
+                    raise OSError(f"the relay answered {status}")
+                return True
+            except OSError:
+                if last:
+                    raise
+                time.sleep(ANSWER_AGAIN_S)
         return True
 
     def _answer_in_thread(self, identity: str, ask: dict | None) -> None:
@@ -439,7 +557,7 @@ class Remote:
                 wait = self.mail_step()
             except Exception as error:
                 self.mail_error = f"The relay could not be reached ({type(error).__name__})."
-                wait = ASK_RETRY_S
+                wait = ASK_RETRY_BUSY_S if self.clock() - self.last_ask < ASK_BUSY_FOR_S else ASK_RETRY_S
             self._stop.wait(wait)
 
     # ------------------------------------------------------------ the threads

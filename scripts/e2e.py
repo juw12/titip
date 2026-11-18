@@ -310,9 +310,34 @@ def main() -> None:
             page.click("#send")
             check(page.inner_text("#composeError") == "Add at least one recipient.", "sending without a recipient is stopped")
             page.fill("#subjectInput", "Drop test")
+
+            # ---- To suggests people by name, with their address, the way Outlook does
+            page.locator("#toInput").press_sequentially("pri")
+            expect(page.locator("#people .person")).to_have_count(2)
+            check(page.locator("#people .personName").all_inner_texts() == ["Priya Nair", "Priscilla Tan"]
+                  and page.locator("#people .personAddress").first.inner_text() == "priya.nair@lumenworks.example",
+                  "typing in To suggests the people whose name starts that way, each with the address")
+            low = [round(box["height"]) for box in (button.bounding_box() for button in page.locator("#people .person").all())
+                   if box["height"] < 44]
+            check(not low and overflow(page) <= 0, f"suggestions are at least 44 px high and do not overflow sideways {low if low else ''}")
+            page.screenshot(path=SHOTS / "phone-people.png")
+            page.locator("#people .person").first.click()
+            check(page.input_value("#toInput") == "Priya Nair <priya.nair@lumenworks.example>; " and page.locator("#people").is_hidden()
+                  and page.evaluate("document.activeElement.id") == "toInput",
+                  "a tap puts the name and address in To and leaves the cursor there for the next one")
+            page.locator("#toInput").press_sequentially("web")
+            expect(page.locator("#people .personName")).to_have_text(["Jonas Weber"])
+            page.keyboard.press("Enter")
+            check(page.input_value("#toInput") == "Priya Nair <priya.nair@lumenworks.example>; Jonas Weber <jonas.weber@lumenworks.example>; "
+                  and page.locator("#composer").is_visible() and page.locator("#toast").is_hidden(),
+                  "Enter takes the suggested name and does not send")
+            page.locator("#ccInput").press_sequentially("okafor")
+            expect(page.locator("#people .personName")).to_have_text(["Okafor Supplies", "Marek Novak"])
+            page.keyboard.press("Escape")
+            check(page.locator("#people").is_hidden() and page.locator("#composer").is_visible(),
+                  "Cc suggests too (the address matches as well), and Escape closes the suggestions, not the message")
+            page.fill("#ccInput", "")
             page.screenshot(path=SHOTS / "phone-new.png")
-            page.fill("#toInput", "jonas.weber@lumenworks.example")
-            page.fill("#subjectInput", "Drop test")
             page.click("#saveDraft")
             expect(page.locator("#toastText")).to_have_text("Saved to Drafts", timeout=30000)
             apart = page.evaluate(
@@ -325,6 +350,9 @@ def main() -> None:
             page.click(".tabs a[data-folder=drafts]")
             page.wait_for_selector(".row .subject:has-text('Drop test')")
             check(page.inner_text("#draftCount") == "2", "draft is saved and counted")
+            check("priya.nair@lumenworks.example; jonas.weber@lumenworks.example"
+                  in page.inner_text(".row:has(.subject:text-is('Drop test')) .who"),
+                  "the PC was handed the two addresses, not the names in front of them")
             page.locator(".row:has(.subject:text-is('Drop test'))").click()
             page.wait_for_selector("#actions button:has-text('Edit draft')")
             check(True, "a draft opens with Edit draft")
@@ -342,17 +370,38 @@ def main() -> None:
             page.click("#searchToggle")
             expect(page.locator(".row").nth(5)).to_be_visible()
 
-            # ---- the PC out of reach: plain words and a way back
+            # ---- the PC out of reach: the list stays on screen with a note, and comes back by itself
             expect(page.locator("#toast")).to_be_hidden(timeout=8000)
             page.route("**/api/mail*", lambda route: route.abort())
             page.click("#refresh")
+            expect(page.locator("#savedNote")).to_contain_text("Can't reach your PC", timeout=5000)
+            check(page.locator(".row").count() >= 6 and "This is the list from" in page.inner_text("#savedNote")
+                  and page.locator("#state strong").count() == 0,
+                  "an unreachable PC leaves the list on screen, with a note that says from when")
+            page.screenshot(path=SHOTS / "phone-kept.png")
+            page.unroute("**/api/mail*")
+            page.evaluate("window.dispatchEvent(new Event('online'))")  # the phone found its network again
+            expect(page.locator("#savedNote")).to_be_hidden(timeout=10000)
+            check(page.locator(".row").count() >= 6, "the fresh list replaces it without a tap once the PC is back")
+
+            # ---- opened while the PC is out of reach: the phone shows the list it kept
+            page.route("**/api/mail*", lambda route: route.abort())
+            page.reload()
+            page.wait_for_selector(".row")
+            expect(page.locator("#savedNote")).to_contain_text("This is the list from", timeout=5000)
+            check(page.locator(".row").count() >= 6 and page.locator("#state strong").count() == 0,
+                  "opened with the PC out of reach, the app shows the list this phone kept, not an error")
+
+            # ---- nothing kept and the PC out of reach: plain words and a way back
+            page.evaluate("localStorage.removeItem('titip.list.inbox')")
+            page.reload()
             page.wait_for_selector("#state strong:has-text(\"Can't show your mail\")")
             page.screenshot(path=SHOTS / "phone-offline.png")
             page.unroute("**/api/mail*")
-            errors[:] = [e for e in errors if "ERR_FAILED" not in e]  # the blocked request above, on purpose
+            errors[:] = [e for e in errors if "ERR_FAILED" not in e]  # the blocked requests above, on purpose
             page.click("#state button")
             expect(page.locator(".row").nth(5)).to_be_visible()
-            check(True, "an unreachable PC is explained and Try again recovers")
+            check(True, "with no list kept, an unreachable PC is explained and Try again recovers")
 
             # ---- every width, list and reader, no sideways scroll, tap targets
             for width in WIDTHS:
@@ -539,6 +588,8 @@ def main() -> None:
             away.click(".tabs a[data-folder=sent]")
             away.wait_for_selector(".row .subject:has-text('RE: Hinge sample B')", timeout=40000)
             check(True, "Sent through the relay shows what this PC sent earlier in the run")
+            away.wait_for_function("JSON.parse(localStorage.getItem('titip.people') || '[]').length >= 8", timeout=40000)
+            check(True, "the names and addresses for To and Cc come through the relay too")
             away.click(".tabs a[data-folder=inbox]")
             away.wait_for_selector(".row .subject:has-text('Hinge sample B')", timeout=40000)
             away.locator(".row").first.click()
@@ -570,6 +621,10 @@ def main() -> None:
                         if word in remote.unb64(text)]
             check(sealed_only and not readable,
                   "the relay only ever held sealed text: no subject, name, body, file or folder")
+            for _ in range(100):  # the phone may still be on its way to pick up the last one
+                if not stand_in.answers:
+                    break
+                time.sleep(0.1)
             check(not stand_in.answers and stand_in.handle("GET", f"/c/{settings['channel']}/answer/{stand_in.asked[0]}", "", "")[0] == 204,
                   "every answer was handed out once and is gone from the relay")
             away.goto(f"{public}/home.html")  # not an iPhone: nothing to carry, on to the mail
@@ -720,9 +775,13 @@ def main() -> None:
             icon.click(".tabs a[href='auto.html']")
             icon.wait_for_selector("#feed .entry")
             said: list[str] = []
+            kept_keys = "Object.keys(localStorage).filter(k => /^titip\\.(list\\.|people|me)/.test(k)).length"
+            kept_before = icon.evaluate(kept_keys)
             icon.once("dialog", lambda dialog: (said.append(dialog.message), dialog.accept()))
             icon.click("#forget")
             expect(icon.locator("#headline")).to_have_text("You unlinked this icon")
+            check(kept_before >= 3 and icon.evaluate(kept_keys) == 0,
+                  f"Unlink also clears the lists and names the phone kept ({kept_before} entries before, none after)")
             check(len(said) == 1 and "Delete it from the Home Screen" in said[0], "Unlink inside the icon says the icon has to be deleted too")
             icon.goto("about:blank")
             icon.goto(icon_address)  # the icon's address still carries the key
@@ -786,7 +845,7 @@ def main() -> None:
             desk_page.evaluate("window.scrollTo(0, 0)")  # the masks land where the page is scrolled to, so start at the top
             # the screenshot hides this PC's network address, so it is safe to share
             desk_page.screenshot(
-                path=SHOTS / "desk.png", full_page=True, mask_color="#d9cfbd",
+                path=SHOTS / "desk.png", full_page=True, mask_color="#e0e0e0",
                 mask=[desk_page.locator("#url"), desk_page.locator("#addresses")],
             )
 
