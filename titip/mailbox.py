@@ -4,7 +4,7 @@ OutlookMailbox drives the classic Outlook desktop app on this PC through COM, so
 Outlook is already signed in to: no password, token or mail server setting is stored by Titip.
 DemoMailbox serves the invented mail in web/demo.json (tests, screenshots, the public demo).
 
-Both expose the same five calls: state, list, get, attachment, send.
+Both expose the same six calls: state, list, get, attachment, send, people.
 """
 
 from __future__ import annotations
@@ -15,7 +15,10 @@ import hashlib
 import html
 import json
 import queue
+import itertools
 import re
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -49,6 +52,15 @@ WARM_MESSAGES = {"inbox": 40, "sent": 20, "drafts": 10}  # newest messages read 
 WANTED = 100  # rows of older pages and searches the phone was shown: read ahead as well
 FIND_AGAIN_ROWS = 100
 
+# Who the composer on the phone suggests while a name is typed: the people in the mail that was read
+# ahead, in memory only like the copies above.
+PEOPLE_KEEP = 3000
+PEOPLE_SHOWN = 400
+PEOPLE_RECIPIENTS = 40  # of one message; a mail to a whole department does not fill the list
+PEOPLE_SENT = 100  # newest sent messages looked at only for who they went to
+PEOPLE_PER_ROUND = 10
+PEOPLE_PAUSE = 1.0
+
 PROP = "http://schemas.microsoft.com/mapi/proptag/"
 P_DELIVERED = PROP + "0x0E060040"  # PR_MESSAGE_DELIVERY_TIME (UTC)
 P_SUBMITTED = PROP + "0x00390040"  # PR_CLIENT_SUBMIT_TIME (UTC)
@@ -57,6 +69,7 @@ P_HAS_ATTACH = PROP + "0x0E1B000B"
 P_DISPLAY_TO = PROP + "0x0E04001F"
 P_PREVIEW = PROP + "0x1000001F"  # PR_BODY: a table returns only its first 255 characters
 P_SMTP = PROP + "0x39FE001F"
+P_SENDER_SMTP = PROP + "0x5D01001F"
 P_ATTACH_HIDDEN = PROP + "0x7FFE000B"
 
 OL_INBOX, OL_SENT, OL_DRAFTS = 6, 5, 16
@@ -92,9 +105,32 @@ def insert_into_html(existing: str, block: str) -> str:
 
 
 def split_addresses(value) -> list[str]:
+    """What was typed in To or Cc, one entry each. Of "Rina Wijaya <rina@example.com>" only the address is kept."""
     if isinstance(value, str):
-        value = re.split(r"[;,\n]", value)
-    return [part.strip() for part in (value or []) if part and part.strip()]
+        value = re.findall(r"[^;,\n<]*<[^<>]*>|[^;,\n]+", value)
+    found = []
+    for part in value or []:
+        part = str(part or "").strip()
+        named = re.search(r"<([^<>]*)>\s*$", part)
+        if named:
+            part = named.group(1).strip()
+        if part:
+            found.append(part)
+    return found
+
+
+def outlook_running() -> bool:
+    """Is Outlook open on this PC right now? Asked of Windows, not of Outlook: asking Outlook would start it."""
+    if sys.platform != "win32":
+        return False
+    try:
+        listed = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq OUTLOOK.EXE", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=15, creationflags=0x08000000,  # no console window
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "outlook.exe" in listed.lower()
 
 
 def clean_send_request(payload: dict) -> dict:
@@ -144,7 +180,8 @@ class _ComThread:
     """
 
     def __init__(self):
-        self._jobs: queue.Queue = queue.Queue()
+        self._jobs: queue.PriorityQueue = queue.PriorityQueue()  # (0 for a send, in order of arrival, job)
+        self._arrival = itertools.count()
         self._lock = threading.Lock()
         self._running_since: float | None = None
         threading.Thread(target=self._run, daemon=True, name="titip-outlook").start()
@@ -154,7 +191,7 @@ class _ComThread:
 
         pythoncom.CoInitialize()
         while True:
-            job = self._jobs.get()
+            job = self._jobs.get()[2]
             with self._lock:
                 if job.state == "dropped":
                     continue
@@ -172,11 +209,12 @@ class _ComThread:
         since = self._running_since
         return time.monotonic() - since if since is not None else 0.0
 
-    def call(self, fn, *args, timeout: float = READ_SECONDS):
+    def call(self, fn, *args, timeout: float = READ_SECONDS, first: bool = False):
+        """`first` puts the call ahead of everything that waits: a send does not queue behind reading ahead."""
         if self.stuck_for() >= timeout:  # Outlook has been silent longer than this caller would wait anyway
             raise OutlookBusy(False)
         job = _Job(fn, args)
-        self._jobs.put(job)
+        self._jobs.put((0 if first else 1, next(self._arrival), job))
         try:
             ok, value = job.done.get(timeout=timeout)
         except queue.Empty:
@@ -238,9 +276,12 @@ class OutlookMailbox:
         self._warmer: threading.Thread | None = None
         self._wanted: collections.OrderedDict[str, None] = collections.OrderedDict()  # ids shown further down
         self._nudge = threading.Event()  # wakes the reading ahead before its next round is due
+        self._people: dict[str, list] = {}  # address in lower case -> [name, address, weight]
+        self._people_counted: collections.OrderedDict[str, None] = collections.OrderedDict()  # message ids
+        self._people_rows: list[str] | None = None  # sent messages still to look at for who they went to
 
     # every public method hops to the COM thread and maps COM failures to MailError
-    def _do(self, fn, *args, timeout: float = READ_SECONDS):
+    def _do(self, fn, *args, timeout: float = READ_SECONDS, first: bool = False):
         import pythoncom
 
         def guarded():
@@ -259,7 +300,7 @@ class OutlookMailbox:
 
         if self._thread is None:
             self._thread = _ComThread()
-        return self._thread.call(guarded, timeout=timeout)
+        return self._thread.call(guarded, timeout=timeout, first=first)
 
     def _connect(self):
         if self._app is not None:
@@ -387,12 +428,28 @@ class OutlookMailbox:
         self._phone_at = now
         if not self._read_ahead:
             return
+        self._start_warmer()
+        if back:
+            self._nudge.set()  # the slow rounds are minutes apart: look now
+
+    def _start_warmer(self) -> None:
         with self._lock:
             if self._warmer is None or not self._warmer.is_alive():
                 self._warmer = threading.Thread(target=self._warm, daemon=True, name="titip-warm")
                 self._warmer.start()
-        if back:
-            self._nudge.set()  # the slow rounds are minutes apart: look now
+
+    def read_ahead_now(self, running=outlook_running) -> bool:
+        """Right after Titip starts: read ahead as if a phone had been put down a while ago.
+
+        The copies live in memory, so a restart (an update, Windows starting) empties them, and the
+        phone's first look would wait for Outlook. Only when Outlook is already open: Titip never
+        starts it for a phone nobody holds. False when nothing was started.
+        """
+        if not self._read_ahead or self._phone_at or not running():
+            return False
+        self._phone_at = time.monotonic() - WARM_SECONDS  # the slow rounds, which end when Outlook is closed
+        self._start_warmer()
+        return True
 
     def _want(self, rows: list) -> None:
         """The phone was shown these rows (an older page, a search): read them ahead as well."""
@@ -409,7 +466,8 @@ class OutlookMailbox:
     def _warm(self) -> None:
         """Read ahead of the phone, so that a tap opens a message from memory instead of waiting for Outlook.
 
-        Starts only once a phone asks for something (so Titip never starts Outlook by itself). While
+        Starts once a phone asks for something, or with Titip when Outlook is already open (so Titip
+        never starts Outlook by itself). While
         the phone is in use a round runs every WARM_EVERY seconds. After WARM_SECONDS without a phone
         the rounds go on WARM_LONG_EVERY seconds apart for WARM_LONG_SECONDS, so mail that arrives in
         the meantime is already there when the phone is picked up again. Those slow rounds end the
@@ -449,11 +507,35 @@ class OutlookMailbox:
             with self._lock:
                 mail_id = next(reversed(self._wanted), None)  # what the phone was shown last comes first
             if mail_id is None:
-                return
+                break
             if self._kept_message(mail_id) is None:
                 self._read_one(mail_id)
             with self._lock:
                 self._wanted.pop(mail_id, None)
+        self._learn_people()
+
+    def _learn_people(self) -> None:
+        """A few more sent messages each round, looked at only for who they went to.
+
+        The people you write to are the ones the composer should suggest, and the newest
+        WARM_MESSAGES of Sent do not hold many. One message a second, PEOPLE_PER_ROUND a round,
+        PEOPLE_SENT in all, once for as long as Titip runs.
+        """
+        if self._people_rows is None:
+            page = self._do(self._list, "sent", PEOPLE_SENT, 0, "", timeout=ASK_SECONDS)
+            self._people_rows = [row["id"] for row in page["mail"][WARM_MESSAGES["sent"]:]]
+        for _ in range(PEOPLE_PER_ROUND):
+            if not self._people_rows:
+                return
+            time.sleep(PEOPLE_PAUSE)
+            mail_id = self._people_rows.pop(0)  # the newest first
+            try:
+                self._do(self._note_people, mail_id, timeout=ASK_SECONDS)
+            except OutlookBusy:
+                self._people_rows.insert(0, mail_id)
+                raise
+            except MailError:
+                pass  # deleted in the meantime
 
     def _read_one(self, mail_id: str) -> bool:
         """Ask Outlook for one message so its copy is kept. False when it cannot be read; a busy Outlook raises."""
@@ -518,7 +600,8 @@ class OutlookMailbox:
             return {**self._state_cache[1], "busy": True, "busyFor": silent}
         return {"ok": False, "busy": True, "busyFor": silent, "error": str(OutlookBusy())}
 
-    def _state(self) -> dict:
+    def _account(self) -> tuple[str, str]:
+        """(address, name) of the account Outlook sends from."""
         who = self._who
         if who is None:
             account = ""
@@ -529,6 +612,10 @@ class OutlookMailbox:
             who = (account, self._ns.CurrentUser.Name)
             if account:  # an address that could not be read is asked for again next time
                 self._who = who
+        return who
+
+    def _state(self) -> dict:
+        who = self._account()
         return {
             "ok": True,
             "demo": False,
@@ -698,13 +785,8 @@ class OutlookMailbox:
             except Exception:
                 return default
 
-        sender_address = ""
-        try:
-            sender_address = item.SenderEmailAddress or ""
-            if "@" not in sender_address:  # Exchange gives an internal name; ask for the SMTP one
-                sender_address = item.Sender.GetExchangeUser().PrimarySmtpAddress
-        except Exception:
-            pass
+        sender_address = self._sender_address(item, access)
+        self._count_people(mail_id, item, getattr(item, "SenderName", "") or "", sender_address)
         attachments = []
         try:
             for index in range(1, item.Attachments.Count + 1):
@@ -733,6 +815,89 @@ class OutlookMailbox:
             "attachments": attachments,
         }
 
+    # -------------------------------------------------- people, for the composer's suggestions
+    @staticmethod
+    def _sender_address(item, access) -> str:
+        """The sender's internet address. Exchange gives an internal name for a colleague, so ask the
+        message for the SMTP one it carries, and only then the address book (which can fail)."""
+        try:
+            address = access.GetProperty(P_SENDER_SMTP) or ""
+            if "@" in address:
+                return address
+        except Exception:
+            pass
+        try:
+            address = item.SenderEmailAddress or ""
+            if "@" not in address:
+                address = item.Sender.GetExchangeUser().PrimarySmtpAddress
+            return address or ""
+        except Exception:
+            return ""
+
+    def _note_people(self, mail_id: str) -> None:
+        """One message read only for who wrote it and who it went to."""
+        with self._lock:
+            if self._moved.get(mail_id, mail_id) in self._people_counted:
+                return
+        item = self._item(mail_id)
+        mail_id = self._moved.get(mail_id, mail_id)
+        sender = self._sender_address(item, item.PropertyAccessor)
+        self._count_people(mail_id, item, getattr(item, "SenderName", "") or "", sender)
+
+    def _count_people(self, mail_id: str, item, sender_name: str, sender_address: str) -> None:
+        """Remember the people on this message. Each message counts once; never fails the read it is part of."""
+        with self._lock:
+            if mail_id in self._people_counted:
+                return
+            self._people_counted[mail_id] = None
+            while len(self._people_counted) > KEEP_ROWS:
+                self._people_counted.popitem(last=False)
+        found = []
+        try:
+            recipients = item.Recipients
+            for index in range(1, min(recipients.Count, PEOPLE_RECIPIENTS) + 1):
+                recipient = recipients.Item(index)
+                try:
+                    address = recipient.PropertyAccessor.GetProperty(P_SMTP)
+                except Exception:
+                    address = getattr(recipient, "Address", "")
+                found.append((getattr(recipient, "Name", "") or "", address or ""))
+            mine = self._account()[0].lower()
+        except Exception:
+            return
+        # someone you wrote to is who you will write to again; someone who wrote to you comes next
+        from_me = bool(mine) and sender_address.lower() == mine
+        self.remember_people([(sender_name, sender_address, 2)] + [(name, address, 3 if from_me else 1) for name, address in found])
+
+    def remember_people(self, entries) -> None:
+        """(name, address, weight) for each: add to what the composer suggests."""
+        with self._lock:
+            for name, address, weight in entries:
+                address = str(address or "").strip()
+                if not re.fullmatch(r"[^@\s<>;,]+@[^@\s<>;,]+", address):
+                    continue
+                name = " ".join(str(name or "").strip("'\" ").split())
+                if "@" in name:  # Outlook shows the address where it knows no name
+                    name = ""
+                known = self._people.get(address.lower())
+                if known is None:
+                    if len(self._people) >= PEOPLE_KEEP:
+                        continue
+                    self._people[address.lower()] = [name, address, weight]
+                else:
+                    known[0] = known[0] or name
+                    known[2] += weight
+
+    def people(self) -> dict:
+        """Names and addresses to suggest in To and Cc, most written-to first. From memory at once:
+        Outlook is not asked, so the list grows as mail is read ahead."""
+        self._phone_asked()
+        mine = (self._who or ("", ""))[0].lower()
+        with self._lock:
+            known = [person for address, person in self._people.items() if address != mine]
+        known.sort(key=lambda person: (-person[2], (person[0] or person[1]).lower()))
+        return {"people": [{"name": name, "address": address} for name, address, _ in known[:PEOPLE_SHOWN]]}
+
     def attachment(self, mail_id: str, index: int, folder: Path) -> tuple[str, Path]:
         """Save one attachment into `folder`; returns (file name, path)."""
         return self._do(self._attachment, mail_id, index, folder)
@@ -752,7 +917,7 @@ class OutlookMailbox:
         request = clean_send_request(payload)
         self._state_cache = None
         try:
-            return self._do(self._send, request, timeout=SEND_SECONDS)
+            return self._do(self._send, request, timeout=SEND_SECONDS, first=True)
         except OutlookBusy as error:
             if error.started:  # Outlook is in the middle of it: we cannot know yet whether it went out
                 raise MailError(
@@ -830,6 +995,7 @@ class DemoMailbox:
     def __init__(self):
         data = json.loads((WEB / "demo.json").read_text(encoding="utf-8"))
         self.me = data["me"]
+        self.people_known = data.get("people", [])
         now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
         self.mail: list[dict] = []
         for index, mail in enumerate(data["mail"]):
@@ -901,6 +1067,10 @@ class DemoMailbox:
                 for index, a in enumerate(mail["attachments"])
             ],
         }
+
+    def people(self) -> dict:
+        """Everyone in the invented mail, for the composer's suggestions."""
+        return {"people": [dict(person) for person in self.people_known]}
 
     def attachment(self, mail_id: str, index: int, folder: Path) -> tuple[str, Path]:
         mail = self._find(mail_id)

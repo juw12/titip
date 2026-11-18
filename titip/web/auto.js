@@ -367,6 +367,8 @@
       : "Unlink this phone? You will need to scan the code on your PC again.")) return;
     if (icon) store.setItem(FORGOT, JSON.stringify(ticket));   // or the icon's own address would link it again at the next start
     store.removeItem(KEY);
+    // what the mail app kept on this phone to open fast: the last lists and the names with their addresses
+    ["titip.list.inbox", "titip.list.sent", "titip.list.drafts", "titip.people", "titip.me"].forEach(function (name) { store.removeItem(name); });
     location.reload();
   };
 
