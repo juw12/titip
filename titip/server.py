@@ -423,8 +423,11 @@ class Titip:
                 )
             if route == "item":
                 return 200, self.mailbox.get(str(params.get("id", "")))
-            if route == "people":  # who the composer suggests: from memory, Outlook is not asked
-                return 200, self.mailbox.people()
+            if route == "people":
+                typed = str(params.get("q", "")).strip()
+                if typed:  # a name being typed: Outlook's address book is asked for it
+                    return 200, self.mailbox.lookup(typed)
+                return 200, self.mailbox.people()  # who the composer suggests: from memory, Outlook is not asked
             if route == "attachment":  # only the relay asks this way; a paired phone downloads the file itself
                 name, data = self.attachment(str(params.get("id", "")), int(params.get("index", 0)), MAX_FAR_FILE)
                 return 200, {"name": name, "size": len(data), "data": base64.b64encode(data).decode("ascii")}

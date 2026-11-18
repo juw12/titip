@@ -20,7 +20,9 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   or as plain text. Attachments download to the phone.
 - Reply, Reply all, Forward and new mail. Outlook adds the earlier thread. (No automatic signature: type it, or keep it in a draft.)
 - Type a few letters in To or Cc and Titip suggests the people of your own mail, name and address,
-  the ones you write to first. Tap one, or press Enter.
+  the ones you write to first, and under them people from Outlook's address book (the company
+  directory). Tap one, or press Enter. Each person becomes a label with the name on it, the way
+  Outlook shows them; tap a label or press Backspace to take it out.
 - Every send waits 3 seconds behind an **Undo** button. **Save as draft** puts it in Outlook's Drafts.
   If a send fails, the message comes back with your text and the reason.
 - Search by subject or person. Light and dark. Works as a home-screen app.
@@ -35,7 +37,8 @@ It keeps itself up to date (see [Updates](#updates)).
 
 So that the app opens with your mail on screen instead of an empty page, the browser on the phone
 keeps the first page of each folder as it was last shown (sender, subject and the first lines, not
-the messages themselves) and the names and addresses it suggests. When the PC cannot be reached,
+the messages themselves) and the names and addresses it suggests. What the address book answers
+while you type is not kept, only a person you picked from it. When the PC cannot be reached,
 that list is shown with a note that says from when, and Titip keeps trying by itself until the PC
 answers. **Unlink**, unpairing the phone, or clearing the browser's data removes it. The demo keeps
 nothing.
@@ -111,10 +114,12 @@ Autopilot page; the code is the same.
   cannot read either. A question waits there at most 5 minutes, an answer is handed out once.
 - A send is carried out once. A question the PC has seen before, one older than two minutes, or a
   send made before Titip last started is refused, so a mail cannot go out twice.
-- It is slower than your own network. The PC looks for questions every 5 seconds while nobody reads
-  mail and about once a second while somebody does, so the first tap can take a few seconds. The PC
-  keeps its connection to the relay open between questions: through an office proxy a new one took
-  about two seconds each time, and every tap needs two.
+- It is slower than your own network. The PC looks for questions every 0.7 seconds while somebody
+  reads mail, every 1.5 seconds for half an hour after that, and every 3 seconds the rest of the
+  day, so the first tap after a long pause can take a few seconds. With the 20-second look for
+  Autopilot that is about 33,000 requests on a day nobody uses it; the relay's free plan allows
+  100,000. The PC keeps its connection to the relay open between questions: through an office proxy
+  a new one took about two seconds each time, and every tap needs two.
 - While you write, the phone tells the PC once a minute that somebody is there, so **Send** is picked
   up within a second or so and does not wait for the PC's slow look.
 - An attachment over 1 MB is not sent through the relay. A very long formatted mail arrives as plain text.
@@ -236,8 +241,15 @@ Titip opens a door from your network to your mailbox. Read this first.
   memory with a note that says from when, and is replaced as soon as Outlook answers.
 - The names Titip suggests in To and Cc come from that same mail, plus who the 100 newest sent
   messages went to (read one a second, only for their recipients). They are kept in memory on the
-  PC and in the phone's browser. It is not the company address book: a name Titip does not suggest
-  can still be typed, and Outlook resolves it when the mail is sent.
+  PC and in the phone's browser.
+- The address book is asked after two letters and a short pause, and answers with up to eight
+  people whose name, as the book lists it, starts with what you typed (for "Lie, Juwen" type
+  "lie"), or the one person a short name (alias) belongs to. It does not find a first name in the
+  middle of an entry. A name it does not suggest can still be typed: it becomes a grey label, and
+  Outlook resolves it when the mail is sent. If Outlook is busy, the address book part is left
+  out and the people of your own mail are still suggested.
+- Names with a comma in them ("Okonkwo, Chidi") stay one person: the phone sends recipients as a
+  list, not as one line of text.
 - A send goes ahead of everything else that waits for Outlook, the reading ahead included.
 - After the phone is put down, Titip goes on looking for new mail every five minutes for eight hours,
   so what arrived in the meantime is already there when the phone is picked up again. It stops the

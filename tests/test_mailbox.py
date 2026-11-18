@@ -115,6 +115,8 @@ class Helpers(unittest.TestCase):
         self.assertEqual(split_addresses(["Jonas Weber <jonas@x.com>", " c@x.com ", "", None]), ["jonas@x.com", "c@x.com"])
         self.assertEqual(split_addresses("Tomas"), ["Tomas"])  # a bare name is still Outlook's to resolve
         self.assertEqual(split_addresses(" ; <>; "), [])
+        # the phone hands over a list, one entry for each person: a comma inside a name stays in the name
+        self.assertEqual(split_addresses(["Okonkwo, Chidi", "a@x.com"]), ["Okonkwo, Chidi", "a@x.com"])
         request = clean_send_request({"mode": "new", "to": "Priya Nair <priya@x.com>; ", "cc": "Rina <rina@x.com>", "body": "Hi"})
         self.assertEqual((request["to"], request["cc"]), (["priya@x.com"], ["rina@x.com"]))
 
@@ -794,6 +796,108 @@ class ReadAheadAtStart(unittest.TestCase):
         box._phone_at = -1e9
 
 
+class FakeBook:
+    """Outlook's address book: sorted by name, and it can only jump to the first name at or after a text."""
+
+    def __init__(self, *entries, alias=None):
+        self.entries = sorted((FakePerson(name, smtp) for name, smtp in entries), key=lambda entry: entry.Name.lower())
+        self.alias = alias or {}
+        self.jumps = []
+        self.AddressEntries = self
+
+    def Item(self, seek):
+        self.jumps.append(seek)
+        for entry in self.entries:
+            if entry.Name.lower() >= seek.lower():
+                return entry
+        raise RuntimeError("past the last name")
+
+    def GetGlobalAddressList(self):
+        return self
+
+    def CreateRecipient(self, typed):
+        book = self
+
+        class Recipient:
+            Name = typed
+            AddressEntry = None
+
+            def Resolve(self):
+                found = book.alias.get(typed.lower())
+                if found is None:
+                    return False
+                self.Name, self.AddressEntry = found[0], FakePerson(*found)
+                return True
+
+        return Recipient()
+
+
+class AddressBook(unittest.TestCase):
+    """A name typed in To or Cc is also looked up in Outlook's own address book, the company directory."""
+
+    def found(self, book, typed):
+        box = OutlookMailbox(read_ahead=False)
+        box._ns = book
+        return [(person["name"], person["address"]) for person in box._lookup(typed)]
+
+    def test_the_names_that_start_with_what_was_typed_each_with_the_address(self):
+        book = FakeBook(
+            ("Priya Nair", "priya@x.example"), ("Pritam Das", "pritam@x.example"), ("priyanka rao", "rao@x.example"),
+            ("Quentin Blake", "quentin@x.example"), ("Hana Sato", "hana@x.example"),
+        )
+        self.assertEqual(self.found(book, "PRI"), [
+            ("Pritam Das", "pritam@x.example"), ("Priya Nair", "priya@x.example"), ("priyanka rao", "rao@x.example"),
+        ])
+        self.assertEqual(self.found(book, "hana s"), [("Hana Sato", "hana@x.example")])
+        self.assertEqual(self.found(book, "zed"), [], "nothing starts that way, also past the last name")
+
+    def test_only_a_few_names_are_read_however_many_match(self):
+        from titip import mailbox
+
+        book = FakeBook(*((f"Lee {number:03d}", f"lee{number}@x.example") for number in range(200)))
+        found = self.found(book, "lee")
+        self.assertEqual([name for name, _ in found], [f"Lee {number:03d}" for number in range(mailbox.LOOKUP_ROWS)])
+        self.assertLessEqual(len(book.jumps), mailbox.LOOKUP_ROWS, "one jump for each name, not a walk through the book")
+
+    def test_an_entry_without_an_internet_address_is_left_out_and_the_rest_still_come(self):
+        book = FakeBook(("Lab A", None), ("Lab B", "lab-b@x.example"), ("Lab C", "/o=Office/cn=lab-c"), ("Lab D", "lab-b@x.example"))
+        self.assertEqual(self.found(book, "lab"), [("Lab B", "lab-b@x.example")])
+
+    def test_a_short_name_that_outlook_can_match_to_one_person_is_found_too(self):
+        book = FakeBook(("Rina Wijaya (R&D)", "rina@x.example"), alias={"rwijaya": ("Rina Wijaya (R&D)", "rina@x.example")})
+        self.assertEqual(self.found(book, "rwijaya"), [("Rina Wijaya (R&D)", "rina@x.example")])
+        self.assertEqual(self.found(book, "nobody"), [])
+        self.assertEqual(self.found(book, "rw@"), [], "something with an @ is an address being typed, not a name")
+
+    def test_an_account_without_a_directory_has_nothing_to_suggest(self):
+        class NoBook:
+            def GetGlobalAddressList(self):
+                return None
+
+        self.assertEqual(self.found(NoBook(), "pri"), [])
+
+    def test_typing_never_waits_long_and_goes_ahead_of_the_reading_ahead(self):
+        from titip import mailbox
+
+        asked = []
+
+        def outlook(fn, *args, timeout=20, first=False):
+            asked.append((fn.__name__, args, timeout, first))
+            if args == ("busy",):
+                raise OutlookBusy()
+            return [{"name": "Priya Nair", "address": "priya@x.example"}]
+
+        box = box_with(outlook)
+        self.assertEqual(box.lookup("  pri  "), {"people": [{"name": "Priya Nair", "address": "priya@x.example"}], "book": True})
+        self.assertEqual(asked, [("_lookup", ("pri",), mailbox.LOOKUP_SECONDS, True)])
+        self.assertEqual(box.lookup("busy"), {"people": [], "book": True, "busy": True}, "an empty answer, not a try-again")
+        self.assertEqual(box.lookup("p"), {"people": [], "book": True})
+        self.assertEqual(box.lookup(None), {"people": [], "book": True})
+        self.assertEqual(len(asked), 2, "one letter is not looked up")
+        box.lookup("x" * 500)
+        self.assertEqual(len(asked[-1][1][0]), mailbox.LOOKUP_LONGEST)
+
+
 class FakeNamespace:
     def __init__(self, items):
         self.items = items
@@ -860,6 +964,17 @@ class Demo(unittest.TestCase):
         self.assertGreaterEqual(len(people), 8)
         self.assertTrue(all(person["name"] and "@" in person["address"] for person in people))
         self.assertTrue(all(person["address"].endswith(".example") for person in people), "nobody real")
+
+    def test_the_invented_address_book_is_looked_up_by_the_start_of_a_name(self):
+        box = DemoMailbox()
+        found = box.lookup("PRI")
+        self.assertTrue(found["book"])
+        self.assertEqual([person["name"] for person in found["people"]], ["Priya Nair", "Pritam Das", "Priyanka Rao"])
+        self.assertTrue(all(person["address"].endswith(".example") for person in box.book), "nobody real")
+        self.assertEqual(box.lookup("p")["people"], [], "one letter is not looked up")
+        self.assertEqual(box.lookup("nair")["people"], [], "only the start of the name, as in Outlook's book")
+        known = {person["address"] for person in box.people()["people"]}
+        self.assertTrue(any(person["address"] not in known for person in box.book), "people the mail does not hold")
 
     def test_reply_lands_in_sent_and_draft_in_drafts(self):
         box = DemoMailbox()

@@ -89,6 +89,7 @@ class StandInRelay:
         self.answers: dict[str, str] = {}
         self.wire: list[str] = []
         self.asked: list[str] = []
+        self.given: list[str] = []
         httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -129,6 +130,7 @@ class StandInRelay:
                 answer = self.answers.pop(parts[4], None)
                 if answer is not None:
                     self.wire.append(answer)
+                    self.given.append(parts[4])
                 return (200, answer) if answer is not None else (204, "")
         return 404, ""
 
@@ -316,21 +318,56 @@ def main() -> None:
             expect(page.locator("#people .person")).to_have_count(2)
             check(page.locator("#people .personName").all_inner_texts() == ["Priya Nair", "Priscilla Tan"]
                   and page.locator("#people .personAddress").first.inner_text() == "priya.nair@lumenworks.example",
-                  "typing in To suggests the people whose name starts that way, each with the address")
+                  "typing in To suggests at once the people of your mail whose name starts that way, each with the address")
+            expect(page.locator("#people .peopleNote")).to_have_text("From the address book", timeout=10000)
+            check(page.locator("#people .personName").all_inner_texts() == ["Priya Nair", "Priscilla Tan", "Pritam Das", "Priyanka Rao"]
+                  and page.locator("#people .person.on .personName").inner_text() == "Priya Nair",
+                  "a moment later the PC's address book adds the people your mail does not hold, nobody twice")
             low = [round(box["height"]) for box in (button.bounding_box() for button in page.locator("#people .person").all())
                    if box["height"] < 44]
             check(not low and overflow(page) <= 0, f"suggestions are at least 44 px high and do not overflow sideways {low if low else ''}")
             page.screenshot(path=SHOTS / "phone-people.png")
             page.locator("#people .person").first.click()
-            check(page.input_value("#toInput") == "Priya Nair <priya.nair@lumenworks.example>; " and page.locator("#people").is_hidden()
+            chips = page.locator("#toField .chip")
+            check(chips.locator(".chipName").all_inner_texts() == ["Priya Nair"]
+                  and chips.first.get_attribute("title") == "priya.nair@lumenworks.example"
+                  and page.input_value("#toInput") == "" and page.locator("#people").is_hidden()
                   and page.evaluate("document.activeElement.id") == "toInput",
-                  "a tap puts the name and address in To and leaves the cursor there for the next one")
+                  "a tap turns the name into a rounded label that knows the address, and the cursor stays for the next one")
             page.locator("#toInput").press_sequentially("web")
             expect(page.locator("#people .personName")).to_have_text(["Jonas Weber"])
             page.keyboard.press("Enter")
-            check(page.input_value("#toInput") == "Priya Nair <priya.nair@lumenworks.example>; Jonas Weber <jonas.weber@lumenworks.example>; "
+            check(chips.locator(".chipName").all_inner_texts() == ["Priya Nair", "Jonas Weber"]
                   and page.locator("#composer").is_visible() and page.locator("#toast").is_hidden(),
                   "Enter takes the suggested name and does not send")
+            page.locator("#toInput").press_sequentially("okon")
+            expect(page.locator("#people .peopleNote")).to_have_text("From the address book", timeout=10000)
+            expect(page.locator("#people .personName")).to_have_text(["Okonkwo, Chidi"])
+            page.locator("#people .person").first.click()
+            check(chips.locator(".chipName").all_inner_texts() == ["Priya Nair", "Jonas Weber", "Okonkwo, Chidi"]
+                  and chips.nth(2).get_attribute("title") == "chidi.okonkwo@lumenworks.example",
+                  "someone found only in the address book can be picked, and a name with a comma stays one person")
+            page.locator("#toInput").press_sequentially("new.person@lumenworks.example;")
+            expect(chips).to_have_count(4)
+            check(chips.nth(3).inner_text().startswith("new.person@lumenworks.example") and page.input_value("#toInput") == "",
+                  "an address typed by hand becomes a label at the semicolon")
+            page.keyboard.press("Backspace")
+            expect(chips).to_have_count(3)
+            page.locator("#toInput").press_sequentially("Tomas")
+            page.keyboard.press("Tab")
+            expect(page.locator("#toField .chip.asName .chipName")).to_have_text(["Tomas"])
+            check(page.input_value("#toInput") == "", "Backspace takes the last label away, and a bare name is kept for Outlook to look up")
+            page.locator("#toField .chip.asName").click()
+            expect(chips).to_have_count(3)
+            small_chips = [round(box["height"]) for box in (chip.bounding_box() for chip in chips.all()) if box["height"] < 32]
+            check(not small_chips and overflow(page) <= 0, f"a tap on a label removes it; labels do not overflow sideways {small_chips if small_chips else ''}")
+            page.keyboard.press("Escape")
+            expect(page.locator("#toastText")).to_contain_text("Kept on this phone")
+            page.click("#toastAction")
+            expect(chips).to_have_count(3)
+            check(chips.locator(".chipName").all_inner_texts() == ["Priya Nair", "Jonas Weber", "Okonkwo, Chidi"]
+                  and page.input_value("#subjectInput") == "Drop test",
+                  "a message put aside comes back with its people")
             page.locator("#ccInput").press_sequentially("okafor")
             expect(page.locator("#people .personName")).to_have_text(["Okafor Supplies", "Marek Novak"])
             page.keyboard.press("Escape")
@@ -350,12 +387,15 @@ def main() -> None:
             page.click(".tabs a[data-folder=drafts]")
             page.wait_for_selector(".row .subject:has-text('Drop test')")
             check(page.inner_text("#draftCount") == "2", "draft is saved and counted")
-            check("priya.nair@lumenworks.example; jonas.weber@lumenworks.example"
+            check("priya.nair@lumenworks.example; jonas.weber@lumenworks.example; chidi.okonkwo@lumenworks.example"
                   in page.inner_text(".row:has(.subject:text-is('Drop test')) .who"),
-                  "the PC was handed the two addresses, not the names in front of them")
+                  "the PC was handed the three addresses, not the names shown on the labels")
             page.locator(".row:has(.subject:text-is('Drop test'))").click()
             page.wait_for_selector("#actions button:has-text('Edit draft')")
-            check(True, "a draft opens with Edit draft")
+            page.click("#actions button:has-text('Edit draft')")
+            expect(page.locator("#toField .chip")).to_have_count(3)
+            check(page.input_value("#bodyInput") == "Thursday works.", "a draft opens with Edit draft, its people as labels")
+            page.click("#discard")
             page.click("#back")
 
             # ---- search and empty state
@@ -579,6 +619,12 @@ def main() -> None:
             check(away.locator(".row").count() >= 6 and len(stand_in.asked) >= 2,
                   f"scanning it shows the inbox through the relay ({away.locator('.row').count()} rows, {len(stand_in.asked)} asks)")
             check("r=" not in away.url, "the key leaves the address bar of the mail app once the phone has kept it")
+            # a page that leaves in the middle of a question never collects its answer (the relay drops it after
+            # a while); let this one finish, so the count at the end is about answers that were collected
+            for _ in range(200):
+                if len(stand_in.asked) >= 3 and len(stand_in.given) == len(stand_in.asked):
+                    break
+                away.wait_for_timeout(100)
             away.click(".tabs a[href='auto.html']")
             away.wait_for_selector("#feed .entry")
             expect(away.locator("#mailTab")).to_be_visible(timeout=20000)

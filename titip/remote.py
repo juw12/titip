@@ -51,9 +51,11 @@ MAX_REPLY = 8_000_000
 ALLOWED_ORDERS = ("switch", "mode", "check", "send", "drop")
 ASK_ROUTES = ("state", "mail", "item", "attachment", "send", "people")
 ASK_MAX_AGE_S = 120
-ASK_IDLE_S = 5  # how often the PC looks for a question while nobody is reading mail
+ASK_IDLE_S = 3  # how often the PC looks for a question while nobody is reading mail
 ASK_BUSY_S = 0.7  # ... and while somebody is
 ASK_BUSY_FOR_S = 120
+ASK_RECENT_S = 1.5  # ... and after that for a while: a phone put down is often picked up again
+ASK_RECENT_FOR_S = 30 * 60
 ASK_RETRY_S = 20  # after the relay could not be reached
 ASK_RETRY_BUSY_S = 3  # ... while somebody is reading mail
 ANSWER_AGAIN_S = 1
@@ -545,7 +547,18 @@ class Remote:
                 self._answer_in_thread(identity, ask)
             else:
                 threading.Thread(target=self._answer_in_thread, args=(identity, ask), daemon=True).start()
-        return ASK_BUSY_S if self.clock() - self.last_ask < ASK_BUSY_FOR_S else ASK_IDLE_S
+        return self.ask_pause()
+
+    def ask_pause(self) -> float:
+        """Seconds until the next look for asks: short while a phone is in use, longer the longer it is not.
+
+        The relay's free plan counts requests (100,000 a day). A look every ASK_IDLE_S is 28,800 a
+        day; the shorter pauses only run for a while after a phone asked for something.
+        """
+        quiet = self.clock() - self.last_ask
+        if quiet < ASK_BUSY_FOR_S:
+            return ASK_BUSY_S
+        return ASK_RECENT_S if quiet < ASK_RECENT_FOR_S else ASK_IDLE_S
 
     def _run_mail(self) -> None:
         while not self._stop.is_set():

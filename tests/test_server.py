@@ -154,6 +154,16 @@ class Mail(ServerCase):
         self.assertEqual(self.app.mail_call("people", {}), (200, got))  # what the relay is answered with
         self.assertEqual(self.phone("GET", "/api/people")[0].status, 401, "not to a phone that is not paired")
 
+    def test_a_name_being_typed_is_looked_up_in_the_address_book(self):
+        reply, got = self.get("/api/people?q=pri")
+        self.assertEqual((reply.status, got["book"]), (200, True))
+        self.assertGreaterEqual(len(got["people"]), 2)
+        self.assertTrue(all(person["name"].lower().startswith("pri") and "@" in person["address"] for person in got["people"]))
+        self.assertEqual(self.app.mail_call("people", {"q": "pri"}), (200, got))  # what the relay is answered with
+        self.assertEqual(self.get("/api/people?q=p")[1], {"people": [], "book": True}, "one letter is not looked up")
+        self.assertNotIn("book", self.get("/api/people?q=")[1], "nothing typed: the usual list")
+        self.assertEqual(self.phone("GET", "/api/people?q=pri")[0].status, 401, "not to a phone that is not paired")
+
     def test_problems_come_back_as_plain_messages(self):
         reply, data = self.phone("POST", "/api/send", {"mode": "new", "to": "", "body": "x"}, X, self.token)
         self.assertEqual(reply.status, 400)
