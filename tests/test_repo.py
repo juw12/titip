@@ -44,6 +44,13 @@ class Hygiene(unittest.TestCase):
                 f"docs/{name} is stale: run python scripts/sync_docs.py",
             )
 
+    def test_the_phone_page_names_the_version_it_is(self):
+        """A Home Screen icon can keep an old page for days; the version under the list tells which one runs."""
+        from titip import __version__
+
+        script = (ROOT / "titip" / "web" / "app.js").read_text(encoding="utf-8")
+        self.assertIn(f'var VERSION = "{__version__}";', script)
+
     def test_mail_text_never_goes_through_innerhtml(self):
         for name in ("app.js", "far.js", "auto.js", "home.js", "desk.js", "pair.js"):
             script = (ROOT / "titip" / "web" / name).read_text(encoding="utf-8")

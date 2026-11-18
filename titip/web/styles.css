@@ -148,6 +148,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 }
 .state button { margin-top: var(--s3); }
 .more { display: block; margin: var(--s4) auto var(--s6); color: var(--link); }
+.build { margin: var(--s4) 0 var(--s6); color: var(--muted); font-size: 12px; text-align: center; }
 
 .day { padding: var(--s3) var(--s4) var(--s1); color: var(--muted); font-size: 13px; font-weight: 600; }
 .row {

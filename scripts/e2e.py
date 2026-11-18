@@ -542,6 +542,7 @@ def main() -> None:
             page.screenshot(path=SHOTS / "phone-autopilot-paused.png", full_page=True)
 
             # ---- the public page: the demo, then a relay that is only ever handed ciphertext
+            from titip import __version__ as titip_version
             from titip import remote
 
             public = serve_public_pages()
@@ -673,6 +674,63 @@ def main() -> None:
                 time.sleep(0.1)
             check(not stand_in.answers and stand_in.handle("GET", f"/c/{settings['channel']}/answer/{stand_in.asked[0]}", "", "")[0] == 204,
                   "every answer was handed out once and is gone from the relay")
+            # ---- the relay out of reach from the phone: the app finds out why and says what to do
+            trouble = {"mode": "", "dropped": 0}
+            other_key = os.urandom(32)
+
+            def troubled(route) -> None:
+                request, mode = route.request, trouble["mode"]
+                cors = {"Access-Control-Allow-Origin": "*"}
+                about_state = request.url.endswith("/state")
+                if mode == "blocked" or (mode in ("unknown", "old key") and not about_state):
+                    return route.abort()
+                if mode == "hiccup" and not trouble["dropped"]:
+                    trouble["dropped"] += 1
+                    return route.abort()
+                if mode == "error" and not about_state:
+                    return route.fulfill(status=500, headers=cors, content_type="text/plain", body="")
+                if mode == "unknown":
+                    return route.fulfill(status=404, headers=cors, content_type="text/plain", body="")
+                if mode == "old key":
+                    return route.fulfill(status=200, headers=cors, content_type="text/plain",
+                                         body=remote.seal(other_key, {"published": int(time.time()), "mail": True}))
+                through(route)
+
+            def refresh_in(mode: str) -> None:
+                away.wait_for_timeout(3200)  # one look at what is wrong serves the requests of the same moment
+                trouble["mode"] = mode
+                away.click("#refresh")
+
+            away.click(".tabs a[data-folder=inbox]")
+            away.wait_for_selector(".row .subject:has-text('Hinge sample B')", timeout=40000)
+            away.route("https://relay.invalid/**", troubled)  # on top of the plain one: with no trouble set it passes everything on
+            refresh_in("hiccup")
+            away.wait_for_function("!document.getElementById('refresh').classList.contains('busy')", timeout=40000)
+            check(trouble["dropped"] == 1 and away.locator("#savedNote").is_hidden() and away.locator(".row").count() >= 6,
+                  "one request that does not get through is made again: the list refreshes and nothing is said")
+            refresh_in("blocked")
+            expect(away.locator("#savedNote")).to_contain_text("does not let the phone reach the relay (relay.invalid)", timeout=30000)
+            check("Switch between Wi-Fi and mobile data" in away.inner_text("#savedNote") and away.locator(".row").count() >= 6,
+                  "a network that blocks the relay while the page's own site answers is named as that, over the kept list")
+            away.screenshot(path=SHOTS / "phone-relay-blocked.png")
+            refresh_in("error")
+            expect(away.locator("#savedNote")).to_contain_text("The relay answered with an error (500)", timeout=30000)
+            check(True, "a relay that answers with an error is reported with its status")
+            refresh_in("unknown")
+            expect(away.locator("#savedNote")).to_contain_text("The relay does not know the code this phone has", timeout=30000)
+            check("show the code again and scan it" in away.inner_text("#savedNote"), "a code the relay does not know leads to: scan again")
+            refresh_in("old key")
+            expect(away.locator("#savedNote")).to_contain_text("This phone has an older code than your PC", timeout=30000)
+            check(True, "a key that does not open what the PC wrote is told apart from a network problem")
+            away.wait_for_timeout(3200)
+            trouble["mode"] = ""
+            away.evaluate("window.dispatchEvent(new Event('online'))")
+            expect(away.locator("#savedNote")).to_be_hidden(timeout=40000)
+            check(away.locator(".row").count() >= 6, "once the relay is back the list refreshes without a tap")
+            check(re.fullmatch(r"Titip \d+\.\d+\.\d+", away.inner_text("#build")) is not None
+                  and away.inner_text("#build") == "Titip " + titip_version,
+                  f"the page says which version it is ({away.inner_text('#build')})")
+            errors[:] = [e for e in errors if "ERR_FAILED" not in e and "status of 500" not in e and "status of 404" not in e]
             away.goto(f"{public}/home.html")  # not an iPhone: nothing to carry, on to the mail
             away.wait_for_selector(".row", timeout=40000)
             check(away.url == public + "/", "on a phone that is not an iPhone the Home Screen page goes straight on to the mail app")
