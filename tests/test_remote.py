@@ -348,7 +348,17 @@ class MailFromAnywhere(unittest.TestCase):
         self.ask(link, "state")
         self.assertEqual(link.mail_step(), remote.ASK_BUSY_S)
         self.now += remote.ASK_BUSY_FOR_S + 1
+        self.assertEqual(link.mail_step(), remote.ASK_RECENT_S, "a phone put down is often picked up again")
+        self.now += remote.ASK_RECENT_FOR_S
         self.assertEqual(link.mail_step(), remote.ASK_IDLE_S)
+        self.assertLess(remote.ASK_BUSY_S, remote.ASK_RECENT_S)
+        self.assertLess(remote.ASK_RECENT_S, remote.ASK_IDLE_S)
+
+    def test_looking_for_questions_all_day_stays_well_inside_what_the_relay_allows(self):
+        idle_looks = 24 * 3600 / remote.ASK_IDLE_S + 24 * 3600 / remote.POLL_S  # for mail, and for Autopilot's orders
+        self.assertLess(idle_looks, 40_000, "the free plan counts 100,000 requests a day")
+        ten_pickups = 10 * (remote.ASK_BUSY_FOR_S / remote.ASK_BUSY_S + remote.ASK_RECENT_FOR_S / remote.ASK_RECENT_S)
+        self.assertLess(idle_looks + ten_pickups, 60_000)
 
     def test_switched_off_the_pc_never_asks_the_relay_for_mail(self):
         link = self.make(mail_on=False)

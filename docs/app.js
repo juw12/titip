@@ -102,6 +102,7 @@
     get: function (id) { return request("/api/item?id=" + encodeURIComponent(id)); },
     send: function (payload) { return request("/api/send", payload); },
     people: function () { return request("/api/people"); },
+    lookup: function (typed) { return request("/api/people?q=" + encodeURIComponent(typed)); },
     fileUrl: function (id, index) { return "/api/attachment?id=" + encodeURIComponent(id) + "&index=" + index; }
   };
 
@@ -163,7 +164,7 @@
     send: function (payload) {
       return demoLoad().then(function (data) {
         var source = data.mail.filter(function (candidate) { return candidate.id === payload.id; })[0];
-        var to = payload.to || "";
+        var to = [].concat(payload.to || []).join("; ");
         var subject = payload.subject || "";
         if (payload.mode === "reply" || payload.mode === "replyAll") {
           to = to || source.from;
@@ -173,13 +174,18 @@
         if (payload.mode === "draft") data.mail.splice(data.mail.indexOf(source), 1);
         data.mail.push({
           id: "demo.n" + Date.now(), folder: payload.action === "draft" ? "drafts" : "sent",
-          from: data.me.name, fromAddress: data.me.address, to: to, cc: payload.cc || "",
+          from: data.me.name, fromAddress: data.me.address, to: to, cc: [].concat(payload.cc || []).join("; "),
           subject: subject || "(no subject)", body: payload.body, time: new Date().toISOString(), attachments: []
         });
         return payload.action === "draft" ? { ok: true, saved: true } : { ok: true, sent: true };
       });
     },
     people: function () { return demoLoad().then(function (data) { return { people: data.people || [] }; }); },
+    lookup: function (typed) {
+      return demoLoad().then(function (data) {
+        return { book: true, people: (data.book || []).filter(function (person) { return person.name.toLowerCase().indexOf(typed) === 0; }) };
+      });
+    },
     fileUrl: function () { return ""; }
   };
   // ---- your PC from any network: every request is a sealed question the PC answers through the relay
@@ -222,6 +228,7 @@
     get: function (id) { return farRequest("item", { id: id }); },
     send: function (payload) { return farRequest("send", payload, true); },
     people: function () { return farRequest("people", {}); },
+    lookup: function (typed) { return farRequest("people", { q: typed }); },
     fileUrl: function () { return ""; },
     file: function (id, index) { return farRequest("attachment", { id: id, index: index }); }
   };
@@ -672,30 +679,134 @@
     }).catch(function () { peopleAt = Date.now() - PEOPLE_FRESH + PEOPLE_SOON; });
   }
 
-  // what is being typed: the part after the last ; or ,
-  function typed(input) {
+  // ------------------------------------------------------------ who a mail goes to: one rounded name each
+  // {name, address}. Picked from the suggestions it has both. Typed by hand it is an address, or only a
+  // name (address ""), which Outlook looks up in its address book when it sends.
+  var ADDRESS = /^[^\s@<>;,]+@[^\s@<>;,]+$/;
+  var chosen = { toInput: [], ccInput: [] };
+
+  function handed(person) { return person.address || person.name; }   // what the PC is given for this one
+  function typedPerson(text) {
+    text = text.trim();
+    var named = /^(.*)<([^<>]+)>$/.exec(text);
+    if (named) return { name: named[1].trim().replace(/^["']+|["']+$/g, "") || named[2].trim(), address: named[2].trim() };
+    return { name: text, address: ADDRESS.test(text) ? text : "" };
+  }
+  // "a@x.example; Priya Nair" -> people. A comma also ends a name that is typed here. In text that comes
+  // from Outlook ("Okonkwo, Chidi; Hana Sato") it belongs to the name, unless every piece is an address.
+  function peopleIn(text, typedHere) {
+    var found = [];
+    String(text || "").split(/[;\n]/).forEach(function (part) {
+      var pieces = part.split(",");
+      var each = typedHere || pieces.every(function (piece) { return piece.indexOf("@") >= 0; });
+      (each ? pieces : [part]).forEach(function (piece) { if (piece.trim()) found.push(typedPerson(piece)); });
+    });
+    return found;
+  }
+  function fieldPeople(input) { return chosen[input.id].concat(peopleIn(input.value, true)); }   // the chips, and what is still being typed
+  function drawChips(input) {
+    var box = input.parentNode;
+    Array.prototype.slice.call(box.querySelectorAll(".chip")).forEach(function (chip) { box.removeChild(chip); });
+    chosen[input.id].forEach(function (person, index) {
+      var chip = el("button", person.address ? "chip" : "chip asName");
+      var cross = el("span", "chipX", "\u00d7");
+      chip.type = "button";
+      chip.title = person.address || "Outlook looks this name up when it sends";
+      chip.setAttribute("aria-label", "Remove " + person.name);
+      cross.setAttribute("aria-hidden", "true");
+      chip.appendChild(el("span", "chipName", person.name));
+      chip.appendChild(cross);
+      chip.onmousedown = function (event) { event.preventDefault(); };   // the field keeps the keyboard
+      chip.onclick = function () {
+        chosen[input.id].splice(index, 1);
+        drawChips(input);
+        showComposeError("");
+        rememberComposer();
+        input.focus();
+      };
+      box.insertBefore(chip, input);
+    });
+    input.placeholder = chosen[input.id].length ? "" : input.getAttribute("data-hint") || "";
+  }
+  function addChips(input, list) {
+    list.forEach(function (person) {
+      var name = String(person.name || person.address || "").trim();
+      var address = String(person.address || "").trim();
+      var key = (address || name).toLowerCase();
+      if (!key || chosen[input.id].some(function (had) { return handed(had).toLowerCase() === key; })) return;
+      chosen[input.id].push({ name: name, address: address });
+    });
+    drawChips(input);
+  }
+  // start over: from what was being written (a list) or from a draft (the text Outlook shows in To)
+  function setChips(input, value) {
+    chosen[input.id] = [];
+    input.value = "";
+    addChips(input, Array.isArray(value) ? value.filter(Boolean) : peopleIn(value, false));
+  }
+  // What was typed becomes a chip: up to the last ; or , while typing, all of it when the field is left.
+  function settle(input, all) {
     var text = input.value;
-    var cut = Math.max(text.lastIndexOf(";"), text.lastIndexOf(","));
-    return { before: text.slice(0, cut + 1), needle: text.slice(cut + 1).trim().toLowerCase() };
+    var cut = all ? text.length : Math.max(text.lastIndexOf(";"), text.lastIndexOf(",")) + 1;
+    if (!cut) return;
+    addChips(input, peopleIn(text.slice(0, cut), true));
+    input.value = text.slice(cut).replace(/^\s+/, "");
+  }
+
+  // ------------------------------------------------------------ suggestions while a name is typed
+  function needleOf(input) { return input.value.trim().toLowerCase(); }
+  function taken(input) {
+    var have = {};
+    chosen[input.id].forEach(function (person) { if (person.address) have[person.address.toLowerCase()] = true; });
+    return have;
   }
   function findPeople(input) {
-    var now = typed(input);
-    if (!now.needle) return [];
-    var already = now.before.toLowerCase();
+    var needle = needleOf(input);
+    if (!needle) return [];
+    var already = taken(input);
     var ranked = [];
     people.forEach(function (person, order) {
       var name = person.name.toLowerCase();
       var address = person.address.toLowerCase();
-      if (already.indexOf(address) >= 0) return;
-      var rank = name.indexOf(now.needle) === 0 ? 0
-        : (" " + name).indexOf(" " + now.needle) >= 0 ? 1
-        : address.indexOf(now.needle) === 0 ? 2
-        : name.indexOf(now.needle) >= 0 || address.indexOf(now.needle) >= 0 ? 3 : -1;
+      if (already[address]) return;
+      var rank = name.indexOf(needle) === 0 ? 0
+        : (" " + name).indexOf(" " + needle) >= 0 ? 1
+        : address.indexOf(needle) === 0 ? 2
+        : name.indexOf(needle) >= 0 || address.indexOf(needle) >= 0 ? 3 : -1;
       if (rank >= 0) ranked.push([rank, order, person]);
     });
     ranked.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
     return ranked.slice(0, PEOPLE_ROWS).map(function (entry) { return entry[2]; });
   }
+
+  // Outlook's address book on the PC (the company directory): asked once the typing pauses. What it
+  // answers is used for this visit and not kept on the phone; a name picked from it is.
+  var BOOK_WAIT = 350, BOOK_SHORTEST = 2, BOOK_ROWS = 6, BOOK_AGAIN = 15000;
+  var book = { known: {}, timer: 0 };   // typed text -> its matches, or "asking"
+  function askBook(input, needle) {
+    clearTimeout(book.timer);
+    if (needle.length < BOOK_SHORTEST || book.known[needle]) return;
+    book.timer = setTimeout(function () {
+      if (document.activeElement !== input || needleOf(input) !== needle) return;
+      book.known[needle] = "asking";
+      showPeople(input, true);
+      api.lookup(needle).then(function (got) {
+        // an older Titip on the PC answers with its usual list, which is not a lookup
+        return got && got.book && Array.isArray(got.people) ? got.people : [];
+      }, function () {
+        setTimeout(function () { delete book.known[needle]; }, BOOK_AGAIN);   // not reached: ask again later, not at once
+        return [];
+      }).then(function (found) {
+        book.known[needle] = found.filter(function (person) {
+          return person && ADDRESS.test(String(person.address || ""));
+        }).map(function (person) {
+          return { name: String(person.name || person.address), address: String(person.address) };
+        });
+        if (document.activeElement === input && needleOf(input) === needle) showPeople(input, true);
+      });
+    }, BOOK_WAIT);
+  }
+
   function hidePeople() {
     $("people").hidden = true;
     pick.found = [];
@@ -707,14 +818,25 @@
       button.classList.toggle("on", position === index);
     });
   }
-  function showPeople(input) {
+  // keep: the same typing, drawn again (the address book answered), so the marked row stays marked
+  function showPeople(input, keep) {
     var list = $("people");
+    var needle = needleOf(input);
     var found = findPeople(input);
+    var known = book.known[needle];
+    var fromBook = [];
+    if (Array.isArray(known)) {
+      var have = taken(input);
+      found.forEach(function (person) { have[person.address.toLowerCase()] = true; });
+      fromBook = known.filter(function (person) { return !have[person.address.toLowerCase()]; }).slice(0, BOOK_ROWS);
+    }
+    askBook(input, needle);
     list.textContent = "";
-    if (!found.length) { hidePeople(); return; }
+    if (!found.length && !fromBook.length && known !== "asking") { hidePeople(); return; }
+    var marked = keep && pick.input === input ? pick.at : 0;
     pick.input = input;
-    pick.found = found;
-    found.forEach(function (person) {
+    pick.found = found.concat(fromBook);
+    function row(person) {
       var item = el("li");
       var button = el("button", "person");
       button.type = "button";
@@ -722,48 +844,59 @@
       button.appendChild(el("span", "personName", person.name));
       button.appendChild(el("span", "personAddress", person.address));
       button.onmousedown = function (event) { event.preventDefault(); };   // the field keeps the keyboard
-      button.onclick = function () { choosePerson(person); };
+      button.onclick = function () { choosePerson(input, person); };
       item.appendChild(button);
       list.appendChild(item);
-    });
-    var field = input.parentNode;   // the list sits right under the field being typed in
+    }
+    found.forEach(row);
+    if (fromBook.length) list.appendChild(el("li", "peopleNote", "From the address book"));
+    else if (known === "asking") list.appendChild(el("li", "peopleNote", "Searching the address book\u2026"));
+    fromBook.forEach(row);
+    var field = input.closest(".field");   // the list sits right under the field being typed in
     field.parentNode.insertBefore(list, field.nextSibling);
     list.hidden = false;
     input.setAttribute("aria-expanded", "true");
-    markPerson(0);
+    markPerson(marked < pick.found.length ? marked : 0);
   }
-  function choosePerson(person) {
-    var input = pick.input;
-    var now = typed(input);
-    var plain = person.name === person.address || /[,;<>"]/.test(person.name);
-    input.value = now.before + (now.before ? " " : "") + (plain ? person.address : person.name + " <" + person.address + ">") + "; ";
+  function choosePerson(input, person) {
+    input.value = "";
+    addChips(input, [person]);
+    addPerson(person.name, person.address);   // one from the address book is suggested at once next time
     hidePeople();
     showComposeError("");
     input.focus();
     rememberComposer();
   }
-  // "Priya Nair <priya@x.example>; b@x.example" -> "priya@x.example; b@x.example": the PC is handed addresses only
-  function plainAddresses(text) {
-    return text.replace(/\s*[^;,<]*<([^<>]*)>/g, " $1").replace(/[;,\s]+$/, "").trim();
-  }
   ["toInput", "ccInput"].forEach(function (id) {
     var input = $(id);
-    input.addEventListener("input", function () { showPeople(input); });
+    input.parentNode.addEventListener("click", function (event) { if (event.target === input.parentNode) input.focus(); });
+    input.addEventListener("input", function () { settle(input, false); showPeople(input); });
     input.addEventListener("focus", function () { showPeople(input); });
     input.addEventListener("blur", function () {
-      setTimeout(function () { if (document.activeElement !== input && pick.input === input) hidePeople(); }, 250);
+      setTimeout(function () {   // a tap on a suggestion or a chip comes first
+        if (document.activeElement === input) return;
+        settle(input, true);
+        if (pick.input === input) hidePeople();
+        rememberComposer();
+      }, 250);
     });
     input.addEventListener("keydown", function (event) {
-      if ($("people").hidden || pick.input !== input) return;
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      var listed = !$("people").hidden && pick.input === input;
+      if (listed && pick.found.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
         event.preventDefault();
         markPerson((pick.at + (event.key === "ArrowDown" ? 1 : pick.found.length - 1)) % pick.found.length);
       } else if (event.key === "Enter") {
-        event.preventDefault();   // Enter takes the name, as in Outlook; it does not send
-        choosePerson(pick.found[pick.at]);
-      } else if (event.key === "Escape") {
+        event.preventDefault();   // Enter takes the name, as in Outlook; it never sends
+        if (listed && pick.found.length) { choosePerson(input, pick.found[pick.at]); return; }
+        if (input.value.trim()) { settle(input, true); hidePeople(); rememberComposer(); return; }
+        ($("subjectField").hidden ? $("bodyInput") : $("subjectInput")).focus();
+      } else if (event.key === "Escape" && listed) {
         event.stopPropagation();
         hidePeople();
+      } else if (event.key === "Backspace" && !input.value && chosen[id].length) {
+        chosen[id].pop();   // back over the last name
+        drawChips(input);
+        rememberComposer();
       }
     });
   });
@@ -795,8 +928,8 @@
     $("toField").hidden = answering;
     $("subjectField").hidden = draft.mode !== "new" && draft.mode !== "draft";
     $("ccLabel").textContent = answering ? "Add Cc" : "Cc";
-    $("toInput").value = fields.to;
-    $("ccInput").value = fields.cc;
+    setChips($("toInput"), fields.to);
+    setChips($("ccInput"), fields.cc);
     $("subjectInput").value = fields.subject;
     $("bodyInput").value = fields.body;
     showComposeError("");
@@ -805,14 +938,14 @@
     document.body.classList.add("composing");
     learnPeople();
     keepAwake();
-    (answering || $("toInput").value ? $("bodyInput") : $("toInput")).focus();
+    (answering || chosen.toInput.length ? $("bodyInput") : $("toInput")).focus();
   }
 
   function composerValues() {
     return {
       draft: draft,
-      to: $("toInput").value.trim(),
-      cc: $("ccInput").value.trim(),
+      to: fieldPeople($("toInput")),   // people, as {name, address}
+      cc: fieldPeople($("ccInput")),
       subject: $("subjectInput").value.trim(),
       body: $("bodyInput").value
     };
@@ -822,7 +955,7 @@
     if (draft) store.set("titip.compose", JSON.stringify(composerValues()));
   }
 
-  // Away from home the PC looks for questions every 5 s when nobody asks and several times a second
+  // Away from home the PC looks for questions every 3 s when nobody asks and more than once a second
   // for two minutes after one. Asking while a mail is being written means Send finds the PC listening.
   var AWAKE_EVERY = 60000;
   function keepAwake() {
@@ -850,10 +983,10 @@
     var mode = draft.mode;
     var answering = mode === "reply" || mode === "replyAll";
     if (action === "send") {
-      if (!answering && !values.to) { showComposeError("Add at least one recipient."); $("toInput").focus(); return; }
+      if (!answering && !values.to.length) { showComposeError("Add at least one recipient."); $("toInput").focus(); return; }
       if (!values.body.trim() && mode !== "forward") { showComposeError("Write a message first."); $("bodyInput").focus(); return; }
     }
-    var payload = { mode: mode, id: draft.id, action: action, to: plainAddresses(values.to), cc: plainAddresses(values.cc), subject: values.subject, body: values.body };
+    var payload = { mode: mode, id: draft.id, action: action, to: values.to.map(handed), cc: values.cc.map(handed), subject: values.subject, body: values.body };
     rememberComposer();
     closeComposer(false);
     if (action === "draft") { deliver(payload, values); return; }
@@ -880,9 +1013,7 @@
     if (payload.mode === "reply" && !who) return "Reply sent";
     if (payload.mode === "replyAll") return who ? "Sent to " + who + " and everyone else on the message" : "Reply sent to everyone";
     if (payload.mode !== "reply") {
-      var names = values.to.split(/[;,]/).map(function (part) {
-        return part.replace(/\s*<[^<>]*>\s*$/, "").trim() || part.trim();   // the name where one was picked
-      }).filter(Boolean);
+      var names = values.to.map(function (person) { return person.name; });
       if (!names.length) return "Sent";
       who = names[0] + (names.length > 1 ? " and " + (names.length - 1) + " more" : "");
     }

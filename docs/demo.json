@@ -37,6 +37,36 @@
    "address": "marek.novak@okafor-supplies.example"
   }
  ],
+ "book": [
+  {
+   "name": "Priya Nair",
+   "address": "priya.nair@lumenworks.example"
+  },
+  {
+   "name": "Pritam Das",
+   "address": "pritam.das@lumenworks.example"
+  },
+  {
+   "name": "Priyanka Rao",
+   "address": "priyanka.rao@lumenworks.example"
+  },
+  {
+   "name": "Hana Sato",
+   "address": "hana.sato@lumenworks.example"
+  },
+  {
+   "name": "Henrik Olsen",
+   "address": "henrik.olsen@lumenworks.example"
+  },
+  {
+   "name": "Hardware Team",
+   "address": "hardware@lumenworks.example"
+  },
+  {
+   "name": "Okonkwo, Chidi",
+   "address": "chidi.okonkwo@lumenworks.example"
+  }
+ ],
  "mail": [
   {
    "folder": "inbox",

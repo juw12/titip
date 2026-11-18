@@ -508,3 +508,63 @@ sending... , in home screen cannot show mail try agai it says, fix this". Versio
 - A PC so busy that Outlook stalls for more than a minute still makes the phone wait.
 
 stop: run 6 ended after the hard gates; no judged round was run.
+
+
+## Run 7 (2026-11-18): labels for recipients, the address book, a faster first tap
+
+Asked for: "continue whats open until all done", the open points of run 6. Version 0.7.0.
+
+### What was measured first
+
+- Outlook's address book on this PC: 55,264 entries, kept on the PC (cached mode). Jumping to a
+  typed text and reading six names with their addresses took 0.03 to 0.1 s. Stepping to the next
+  entry does not follow such a jump, so each further name is a new jump to just past the last one.
+- The slow first tap after a pause was the PC's 5-second look at the relay, not Outlook.
+
+### Changes kept
+
+- To and Cc hold labels (name, a cross to remove it) instead of a line of text. A label is made by
+  a tap on a suggestion, Enter, a semicolon, a comma after an address, or leaving the field.
+  Backspace in an empty field removes the last one. Enter in To or Cc never sends.
+- Under the people of your own mail, "From the address book": up to eight people whose name starts
+  with what was typed, or the owner of a short name. Asked after two letters and 350 ms, ahead of
+  the reading ahead, at most 8 s; a busy Outlook leaves that part out and nothing is tried again.
+- Recipients travel as a list, so "Okonkwo, Chidi" is one person. A typed name without an address
+  is a grey label that Outlook resolves when it sends.
+- The PC looks at the relay every 0.7 s for 2 minutes after a question, every 1.5 s for the next
+  30 minutes, then every 3 s (was 5 s). A day nobody uses it costs 86400/3 + 86400/20 = 33,120
+  requests of the 100,000 the free plan allows. A test holds that under 40,000, and under 60,000
+  with the phone picked up ten times.
+- A field with labels that is not being typed in no longer keeps an empty line under them
+  (seen in WebKit at an iPhone's width).
+- The picture in the README shows a label and the address book.
+
+### Hard gates (code-checked)
+
+- 213 unit and server tests pass (9 new: the address book with a stand-in book, its route, names
+  with commas as a list, the three speeds of looking and the day's request count).
+- 121 browser steps pass (was 115), with no console error, page error or sideways overflow. New:
+  the address book under the known people, a pick becomes a label, a comma name from the book,
+  a typed address and a semicolon, Backspace, a bare name as a grey label, a tap removes a label,
+  labels come back from a kept text and from an Outlook draft.
+- 12 further steps pass in WebKit with an iPhone 14 profile, light and dark (demo mail): the
+  suggestions, labels, Backspace, removing by tap, no sideways overflow, no page error.
+
+### Found while checking, and fixed
+
+- The browser step "every answer was handed out once" failed: the page had left for Autopilot
+  before it collected the answer to its people question, which then stayed at the stand-in relay.
+  The step now lets the first page finish its questions. The real relay drops such an answer by
+  itself.
+
+### Not verified
+
+- A real iPhone, and a real send from it. WebKit on Windows is the same engine family as Safari,
+  not the phone itself, and has no on-screen keyboard.
+- The address book through the relay against the real mailbox is checked read-only after release
+  (see the Update Log), not in this run's gates.
+- A PC so busy that Outlook stalls for more than a minute still makes the phone wait. The cause is
+  outside Titip.
+- The look is close to Outlook, not identical, and carries no Microsoft mark.
+
+stop: run 7 ended after the hard gates; no judged round was run.

@@ -4,7 +4,7 @@ OutlookMailbox drives the classic Outlook desktop app on this PC through COM, so
 Outlook is already signed in to: no password, token or mail server setting is stored by Titip.
 DemoMailbox serves the invented mail in web/demo.json (tests, screenshots, the public demo).
 
-Both expose the same six calls: state, list, get, attachment, send, people.
+Both expose the same seven calls: state, list, get, attachment, send, people, lookup.
 """
 
 from __future__ import annotations
@@ -60,6 +60,12 @@ PEOPLE_RECIPIENTS = 40  # of one message; a mail to a whole department does not 
 PEOPLE_SENT = 100  # newest sent messages looked at only for who they went to
 PEOPLE_PER_ROUND = 10
 PEOPLE_PAUSE = 1.0
+
+# Outlook's own address book (the company directory), asked while a name is typed. It is read
+# from the copy Outlook keeps on this PC, a few names per question, and nothing of it is stored.
+LOOKUP_ROWS = 8
+LOOKUP_SECONDS = 8  # typing does not wait longer than this for Outlook
+LOOKUP_SHORTEST, LOOKUP_LONGEST = 2, 60  # characters of the typed name that are looked up
 
 PROP = "http://schemas.microsoft.com/mapi/proptag/"
 P_DELIVERED = PROP + "0x0E060040"  # PR_MESSAGE_DELIVERY_TIME (UTC)
@@ -898,6 +904,62 @@ class OutlookMailbox:
         known.sort(key=lambda person: (-person[2], (person[0] or person[1]).lower()))
         return {"people": [{"name": name, "address": address} for name, address, _ in known[:PEOPLE_SHOWN]]}
 
+    def lookup(self, query: str) -> dict:
+        """People in Outlook's address book whose name starts with what was typed, each with the address.
+
+        Asked while a name is typed, so it goes ahead of the reading ahead and never makes the
+        phone wait or try again: a busy Outlook is an empty answer marked `busy`.
+        """
+        needle = " ".join(str(query or "").split())[:LOOKUP_LONGEST]
+        if len(needle) < LOOKUP_SHORTEST:
+            return {"people": [], "book": True}
+        self._phone_asked()
+        try:
+            return {"people": self._do(self._lookup, needle, timeout=LOOKUP_SECONDS, first=True), "book": True}
+        except OutlookBusy:
+            return {"people": [], "book": True, "busy": True}
+
+    def _lookup(self, needle: str) -> list[dict]:
+        book = self._ns.GetGlobalAddressList()
+        if book is None:  # an account without a company directory
+            return []
+        entries = book.AddressEntries
+        found: list[dict] = []
+        seen = set()
+
+        def take(entry, name: str) -> None:
+            try:
+                address = entry.PropertyAccessor.GetProperty(P_SMTP) or ""
+            except Exception:
+                address = getattr(entry, "Address", "") or ""
+            address = str(address).strip()
+            if re.fullmatch(r"[^@\s<>;,]+@[^@\s<>;,]+", address) and address.lower() not in seen:
+                seen.add(address.lower())
+                found.append({"name": " ".join(name.split()) or address, "address": address})
+
+        # The book is sorted by name and Outlook can only jump to the first name at or after a
+        # text. So: jump to what was typed, then to just past each name found, a few times.
+        seek, last = needle, None
+        for _ in range(LOOKUP_ROWS):
+            try:
+                entry = entries.Item(seek)
+                name = str(entry.Name or "")
+            except Exception:  # past the last name
+                break
+            if not name.lower().startswith(needle.lower()) or name == last:
+                break
+            take(entry, name)
+            seek, last = name + "\x01", name
+        if not found and "@" not in needle:
+            # not the start of a name: a short name (alias) that Outlook can match to one person
+            try:
+                recipient = self._ns.CreateRecipient(needle)
+                if recipient.Resolve():
+                    take(recipient.AddressEntry, str(recipient.Name or ""))
+            except Exception:
+                pass
+        return found
+
     def attachment(self, mail_id: str, index: int, folder: Path) -> tuple[str, Path]:
         """Save one attachment into `folder`; returns (file name, path)."""
         return self._do(self._attachment, mail_id, index, folder)
@@ -996,6 +1058,7 @@ class DemoMailbox:
         data = json.loads((WEB / "demo.json").read_text(encoding="utf-8"))
         self.me = data["me"]
         self.people_known = data.get("people", [])
+        self.book = data.get("book", [])  # the invented company directory
         now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
         self.mail: list[dict] = []
         for index, mail in enumerate(data["mail"]):
@@ -1071,6 +1134,14 @@ class DemoMailbox:
     def people(self) -> dict:
         """Everyone in the invented mail, for the composer's suggestions."""
         return {"people": [dict(person) for person in self.people_known]}
+
+    def lookup(self, query: str) -> dict:
+        """The invented directory, matched the way Outlook's is: by the start of the name."""
+        needle = " ".join(str(query or "").split())[:LOOKUP_LONGEST].lower()
+        if len(needle) < LOOKUP_SHORTEST:
+            return {"people": [], "book": True}
+        found = [dict(person) for person in self.book if person["name"].lower().startswith(needle)]
+        return {"people": found[:LOOKUP_ROWS], "book": True}
 
     def attachment(self, mail_id: str, index: int, folder: Path) -> tuple[str, Path]:
         mail = self._find(mail_id)
