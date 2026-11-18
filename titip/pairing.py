@@ -185,6 +185,6 @@ def qr_svg(text: str) -> str | None:
     # svgns: the page parses this as XML, where an <svg> without its namespace is not a picture at all.
     segno.make(text, error="m").save(
         out, kind="svg", xmldecl=False, svgns=True, nl=False, omitsize=True,
-        scale=6, border=2, dark="#16202b", light="#ffffff",
+        scale=6, border=2, dark="#1b1a17", light="#ffffff",
     )
     return out.getvalue().decode("utf-8")

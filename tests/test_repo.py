@@ -38,7 +38,8 @@ class Hygiene(unittest.TestCase):
             self.assertIn(mail["folder"], ("inbox", "sent", "drafts"))
 
     def test_public_demo_is_the_same_web_app(self):
-        for name in ("index.html", "app.js", "far.js", "auto.html", "auto.js", "home.html", "home.js", "styles.css", "demo.json", "icon.svg", "icon-192.png", "manifest.webmanifest"):
+        for name in ("index.html", "app.js", "far.js", "auto.html", "auto.js", "home.html", "home.js", "styles.css", "demo.json", "icon.svg", "icon-192.png", "manifest.webmanifest",
+                     "instrument-serif.woff2", "geist.woff2", "geist-mono.woff2"):
             self.assertEqual(
                 (ROOT / "docs" / name).read_bytes(), (ROOT / "titip" / "web" / name).read_bytes(),
                 f"docs/{name} is stale: run python scripts/sync_docs.py",

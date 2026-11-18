@@ -568,3 +568,75 @@ Asked for: "continue whats open until all done", the open points of run 6. Versi
 - The look is close to Outlook, not identical, and carries no Microsoft mark.
 
 stop: run 7 ended after the hard gates; no judged round was run.
+
+
+## Run 8 (2026-11-18): the phone says why it cannot reach the PC (0.7.1), Outlook's layout in Cairn's hand (0.8.0)
+
+Asked for: "why my home screen web app in iphone still cannot reach the relay, fix it" and
+"continue the look to follow outlook x cairn look".
+
+### What was measured first
+
+- From the PC everything was in order: the relay's name resolves, the PC had spoken to it seconds
+  before, no error. The same page in WebKit with an iPhone 14 profile, opened the way a Home Screen
+  icon opens it, against the real relay and the real PC, showed the inbox: 40 rows in 4.6 s
+  (read-only). So the page and the PC were not the fault. What stops a real phone is on the phone's
+  side, and one sentence ("Can't reach the relay. Check this phone's connection.") covered eight
+  different causes.
+
+### Changes kept, 0.7.1
+
+- A request to the relay that hangs is given up after 10 s and asked again; a question is posted
+  again for 8 s (the PC answers each question id once, so a send is not repeated); the wait for an
+  answer survives 12 lost looks instead of 4.
+- When it still fails, the page asks the relay one plain question and says what it found: this phone
+  is offline, this network does not let the phone reach the relay (with the relay's name), the relay
+  does not know this code, the phone has an older code than the PC, the PC was last heard from at a
+  time, mail from anywhere is switched off, or the relay answered with an error number.
+- "Titip 0.8.0" under the list says which page runs. A page older than 12 hours loads itself again
+  when it wakes with nothing open.
+- README: "When the phone cannot reach your PC", a table of each sentence, what it means and what to do.
+
+### Changes kept, 0.8.0 (the look)
+
+One direction, given in the request, so no bracket of directions was run. Written down in `design.md`.
+
+- Layout unchanged, Outlook's: the bar with the folder's name, round initials, day groups, folders at
+  the thumb, the New mail button, labels for recipients.
+- Drawn like Cairn: paper `#f4f1ea` and `#fffdf8`, ink `#1b1a17`, hairlines, radius 6 instead of
+  pills. The bar, links and the filled button are Cairn's task blue `#2f5b8c` where Outlook's blue was.
+- Three typefaces that ship with Titip (no request to another server): Instrument Serif for the
+  folder's name, a letter's subject and page headings; Geist for text; Geist Mono for day labels,
+  times, counts and field names.
+- One signal colour, trail orange: the edge and time of unread mail, a short mark over the tab you
+  are on, the line under the field you type in, the focus ring, the drafts count. Unread subjects are
+  bold ink, no longer blue.
+- Initials in Cairn's eight soft type colours; the purple and magenta ones are gone.
+- The icon: the same blue, a paper envelope, the orange edge on its left.
+- Dark follows Cairn's dark: `#151412`, `#1c1b18`, light blue `#86aee0` for the filled button.
+
+### Hard gates (code-checked)
+
+- 215 unit and server tests pass (2 new since run 7: the page's version equals the program's; the
+  three typefaces named in the style sheet are served on both listeners, also to a phone that is not
+  paired yet).
+- 128 browser steps pass (was 121), no console error, page error or sideways overflow at 320, 390,
+  768, 1024 and 1440. The 7 new ones are from 0.7.1: a hiccup is tried again without a word, a
+  blocked network, a relay error, an unknown code, an old code, the note going away by itself, the
+  version under the list.
+- 12 steps pass in WebKit with an iPhone 14 profile, light and dark, with the new look.
+- Contrast computed for every text pair in both themes: lowest shown pair 4.62:1 (initials),
+  muted text on paper 5.59:1 light and 5.37:1 dark.
+- Slop check on `docs/`: 0 blockers, 0 warnings.
+- Looked at by eye at 390 and 1440, light and dark: inbox, a letter with a table, a new mail with
+  names suggested, a failed send, the blocked-network note, Autopilot, the Home Screen page, the PC page.
+
+### Not verified
+
+- A real iPhone. Which of the causes stops this user's phone is not known until the phone shows the
+  new sentence. If it names the network, the lasting fix is the relay on an own domain, which needs
+  the owner's Cloudflare account.
+- An icon already on a Home Screen keeps its old picture; the new one shows after the icon is added again.
+- No judged round was run on the look.
+
+stop: run 8 ended after the hard gates; no judged round was run.

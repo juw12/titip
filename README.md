@@ -15,7 +15,8 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - Shows Inbox, Sent and Drafts from the classic Outlook desktop app, newest first, including mail that
   rules or archivers moved into `.pst` data files. It is laid out the way Outlook's phone app is:
   a round initial for each sender, mail grouped under Today, Yesterday and so on, unread mail in
-  bold with a blue edge.
+  bold with a coloured edge. It is drawn the way [Cairn](https://github.com/juw12/cairn) is: warm
+  paper, ink, hairlines, a serif for headings, and one orange for what is new (see `design.md`).
 - Opens a message with its formatting in a frame that cannot run scripts or load remote pictures,
   or as plain text. Attachments download to the phone.
 - Reply, Reply all, Forward and new mail. Outlook adds the earlier thread. (No automatic signature: type it, or keep it in a draft.)
@@ -300,7 +301,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Search looks at subject and sender (recipient in Sent), not the message body.
 - Calendar invitations can be read, not accepted.
 - Opening a message on the phone clears its unread mark on that phone only. Outlook still shows it as unread.
-- It looks like Outlook's phone app but is not it: no swipe to delete or archive, no folders beyond
+- It is laid out like Outlook's phone app but is not it: no swipe to delete or archive, no folders beyond
   Inbox, Sent and Drafts, no calendar.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
