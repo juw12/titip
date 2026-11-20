@@ -16,7 +16,9 @@ mailbox. They are opinions of models, not of users. Nobody has judged it on a re
 - [x] Run 2 (Autopilot for Gmail, relay pairing): built, hard gates pass, live checks below
 - [ ] Open: no council judged the Autopilot page. Soft scores below are for the mail screens only
 - [ ] Open: scan the any-network code with a real phone on mobile data
-- [ ] Open: watch the first mail Autopilot answers on its own
+- [x] Run 9 (0.8.1 to 0.8.3): the first answer left through Gmail on 2026-11-20, sent by a press
+  of Send on the Autopilot page
+- [ ] Open: watch the first mail Autopilot answers on its own (nobody pressing Send)
 
 ## Assumptions
 
@@ -640,3 +642,48 @@ One direction, given in the request, so no bracket of directions was run. Writte
 - No judged round was run on the look.
 
 stop: run 8 ended after the hard gates; no judged round was run.
+
+## Run 9 (2026-11-20): the first answer leaves through Gmail (0.8.1, 0.8.2, 0.8.3)
+
+Asked for: go through the mail Autopilot kept and find out why it never answered one. Not a judged
+round; three fixes, each found on the live mailbox.
+
+### What was wrong, and what changed
+
+- 0.8.1 (PR #13, `5252963`): a mail the model did not answer about, or whose sender Gmail's page did
+  not show, went straight to Waiting for you and was never read again. That was 10 of the first 20
+  kept mails. Now it stays unread and is read again at the next check, three looks in all, then kept
+  with the reason. Shown as Trying again.
+- 0.8.2 (PR #14, `dd01480`): Gmail leaves the address out of the header of somebody you have written
+  to. The sender is now read from the header cell of the last message, and when that cell holds a
+  name only, from that message's own Show details (opened, the from line read and checked against
+  the name, closed again). Details of another message are not believed. Verified sender is no
+  longer part of a name.
+- 0.8.3 (PR #15, `342313e`): no answer had ever left through Gmail. The check before Send looked for
+  a line that belongs to the messages (to me), not to the reply form. The form names its recipient
+  as Name (address). The answer leaves only when that is the address the last message came from,
+  and no other; a Reply-To address or a second recipient stops it.
+
+### Hard gates (code-checked)
+
+- 229 unit and server tests pass (221 with 0.8.1, 225 with 0.8.2).
+- 0.8.2 live on one mailbox: 10 ordinary mails read as before, 4 answers to own mail now name their
+  sender.
+- 0.8.3 live on one thread, without sending: the form's address matches the sender, another address
+  does not, text written, draft discarded.
+
+### Live result
+
+- The 20 kept mails were gone through with 0.8.3 running: 1 answered, 9 left without an answer by
+  choice, 10 that could not be judged before were read and cleared. Waiting for you 0, could not be
+  judged 0.
+- The one answer was a draft Autopilot wrote, sent by a press of Send on the Autopilot page. It left
+  at 09:44 and is in Gmail's Sent folder.
+
+### Not verified
+
+- An answer Autopilot sends on its own, with nobody pressing Send. The same check runs before
+  either send, but only the pressed one has been seen.
+- Gmail in another language, or a reply form that names its recipient another way.
+
+stop: run 9 ended after the live result; no judged round was run.
