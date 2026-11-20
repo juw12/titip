@@ -198,6 +198,74 @@ class Loop(unittest.TestCase):
         self.pilot.check()
         self.assertEqual(self.kinds()[-1], "left")
 
+    def test_a_mail_the_model_could_not_judge_is_read_again_at_the_next_look(self):
+        answers = [RuntimeError("the model is busy"), answer()("")]
+
+        def ask(prompt):
+            result = answers.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        self.pilot = self.make(ask)
+        self.box.put("m1", "Tomas Lind", "tomas@lind.example", "Your template", "Is it free?")
+        self.pilot.check()
+        self.assertEqual((self.box.sent, self.pilot.state["held"]), ([], []))
+        self.assertEqual(self.kinds()[-1], "retry")
+        self.assertIn("Trying again at the next check (try 1 of 3)", self.pilot.state["events"][-1]["text"])
+        self.assertEqual(self.box.unread_again, ["m1"])  # it still looks new in Gmail meanwhile
+        self.assertNotIn("m1", self.pilot.state["seen"])
+        self.pilot.check()
+        self.assertEqual(self.box.sent, [("tomas@lind.example", "Thanks, noted.\n\nNadia")])
+        self.assertEqual(self.pilot.state["tries"], {})
+        self.pilot.check()
+        self.assertEqual(len(self.box.sent), 1)
+
+    def test_after_three_failed_looks_the_mail_is_kept_for_you_and_left_alone(self):
+        asked = []
+
+        def ask(prompt):
+            asked.append(prompt)
+            raise TimeoutError("no answer")
+
+        self.pilot = self.make(ask)
+        self.box.put("m1", "Tomas Lind", "tomas@lind.example", "Your template", "Is it free?")
+        for _ in range(5):
+            self.pilot.check()
+        self.assertEqual(len(asked), autopilot.MAX_TRIES)
+        self.assertEqual(self.kinds()[-3:], ["retry", "retry", "held"])
+        held = self.pilot.snapshot()["held"]
+        self.assertEqual([item["reason"] for item in held], ["The model did not answer (TimeoutError)."])
+        self.assertEqual((self.box.sent, self.pilot.state["tries"]), ([], {}))
+
+    def test_a_sender_address_that_was_not_on_the_page_gets_another_look(self):
+        self.box.put("m1", "Tomas Lind", "", "Your template", "Is it free?")
+        self.pilot.check()
+        self.assertEqual((self.kinds()[-1], self.pilot.state["held"]), ("retry", []))
+        self.box.put("m1", "Tomas Lind", "tomas@lind.example", "Your template", "Is it free?")
+        self.pilot.check()
+        self.assertEqual(self.box.sent, [("tomas@lind.example", "Thanks, noted.\n\nNadia")])
+
+    def test_a_mail_the_rules_keep_is_not_tried_again(self):
+        self.box.put("m1", "Harbor Print", "billing@harborprint.example", "Invoice", "Please transfer the payment to our bank account.")
+        self.pilot.check()
+        self.pilot.check()
+        self.assertEqual(self.kinds().count("held"), 1)
+        self.assertNotIn("retry", self.kinds())
+
+    def test_the_count_of_looks_survives_a_restart(self):
+        def ask(prompt):
+            raise RuntimeError("down")
+
+        self.pilot = self.make(ask)
+        self.box.put("m1", "Tomas Lind", "tomas@lind.example", "Your template", "Is it free?")
+        self.pilot.check()
+        self.pilot.check()
+        self.pilot = self.make(ask)
+        self.assertEqual(self.pilot.state["tries"], {"m1": 2})
+        self.pilot.check()
+        self.assertEqual(len(self.pilot.state["held"]), 1)
+
     def test_a_failed_send_keeps_the_draft(self):
         self.box.fail = "Gmail showed no Reply button."
         self.box.put("m1", "Tomas", "tomas@lind.example", "Template", "Is it free?")

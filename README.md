@@ -60,6 +60,10 @@ for each mail does one of three things. All three are written down on the **Auto
   a draft. You edit it and press Send, or press Don't answer.
 - **Leaves it alone.** Newsletters, receipts, machines.
 
+A mail it could not judge, because the model did not answer or Gmail's page did not show the sender's
+address, is read again at the next look, three times in all, before it is kept for you with that
+reason. The Autopilot page shows each of those looks as *Trying again*.
+
 What it can never do is fixed in code, not in a prompt:
 
 - answer anyone but the sender of the mail it just read
