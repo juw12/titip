@@ -18,7 +18,9 @@ mailbox. They are opinions of models, not of users. Nobody has judged it on a re
 - [ ] Open: scan the any-network code with a real phone on mobile data
 - [x] Run 9 (0.8.1 to 0.8.3): the first answer left through Gmail on 2026-11-20, sent by a press
   of Send on the Autopilot page
-- [ ] Open: watch the first mail Autopilot answers on its own (nobody pressing Send)
+- [x] Run 10: Autopilot answered a new mail on its own on 2026-11-20 11:35, nobody pressing Send
+  (a mail sent to the mailbox by itself, in a harness outside the app; see Run 10)
+- [ ] Open: see the first mail from another person answered by the running app
 
 ## Assumptions
 
@@ -687,3 +689,43 @@ round; three fixes, each found on the live mailbox.
 - Gmail in another language, or a reply form that names its recipient another way.
 
 stop: run 9 ended after the live result; no judged round was run.
+
+## Run 10 (2026-11-20): Autopilot answers a new mail on its own
+
+Asked for: try it and close the open item. Not a judged round and no change to the app; one live
+check of the automatic send, which run 9 left unseen.
+
+### How it was done
+
+- No second mailbox was at hand, so the mail was sent to juwpegatron@gmail.com by itself, through
+  the Gmail relay the job digest uses. The app never opens such a mail: its search leaves out
+  `from:me`, and a mail from the mailbox's own address is kept as "Your own message".
+- So the check ran in a harness outside the app (a script, not in this repository), around the same
+  `Autopilot` and `ChromeGmail` classes at 0.8.3, with the real model and a state folder of its own.
+  Two things were set aside, in the harness only: the search was narrowed to the one test subject
+  (`in:inbox is:unread from:me subject:"..."`), so no other mail could be opened, and the mailbox
+  got a label that differs from its address, so the own-message rule did not stop it. The harness
+  refused to answer any address but the mailbox's own.
+- Before anything was sent, the same mail was run against a mailbox that sends nothing: the model
+  chose to answer.
+
+### Live result
+
+- 11:34 first look: the watch started, 0 mails with that subject.
+- 11:35:02 the mail (a short thank-you for Titip) was handed to the relay.
+- Second look, 30 s later: Autopilot found the unread mail, opened it, read sender, subject and
+  text, the model wrote a short answer, the reply form named the sender's address alone, the answer
+  was written and Send was pressed by Autopilot. Gmail confirmed it; the event is `sent`, nothing
+  held. Done at 11:35:50.
+- Checked afterwards in Gmail, without opening anything: the thread holds 2 messages and is in
+  Sent, with the answer's first line as its snippet.
+- The running app was not touched: its own search does not show the thread.
+
+### Not verified
+
+- A mail from another person, answered by the running app with its own search and its own-message
+  rule in place. The read, judge, address check and Send path is the same code; what has not been
+  seen is that path started by the app's own check on somebody else's mail.
+- Gmail in another language, or a reply form that names its recipient another way (as in run 9).
+
+stop: run 10 ended after the live result; no judged round was run.
