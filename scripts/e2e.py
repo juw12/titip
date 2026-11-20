@@ -4,7 +4,9 @@
 
 Starts Titip with invented mail on spare ports, pairs a browser through the real QR link (HTTPS on this
 PC's network address), then reads, answers, undoes, sends, saves a draft and searches, at phone and
-desktop sizes, light and dark. Then Autopilot: on the paired phone, on the public page (demo), and
+desktop sizes, light and dark. Changes who a Reply all goes to, attaches files, forwards without one of
+the original's files, opens the Outbox and stops a mail there, reads the calendar and accepts an
+invitation. Then Autopilot: on the paired phone, on the public page (demo), and
 through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
 trip: the code for any network opens the public mail app, a stand-in relay with the worker's rules
 passes sealed text, this Titip answers. Then the iPhone Home Screen: a browser with an iPhone's name
@@ -90,6 +92,7 @@ class StandInRelay:
         self.wire: list[str] = []
         self.asked: list[str] = []
         self.given: list[str] = []
+        self.largest_ask = 0
         httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -116,6 +119,9 @@ class StandInRelay:
             if what == "orders/take" and method == "POST":
                 return (200, json.dumps({"orders": self.orders.pop(channel, [])})) if owns else (404, "")
             if what.startswith("ask/") and method == "POST":
+                self.largest_ask = max(self.largest_ask, len(body))
+                if len(body) > 200000:  # MAX_ASK in worker/titip-relay.js
+                    return 413, "Too large."
                 self.asks.setdefault(channel, []).append({"id": parts[4], "body": body})
                 self.asked.append(parts[4])
                 return 200, "ok"
@@ -228,7 +234,9 @@ def main() -> None:
 
             # ---- reply, undo, send
             page.click("#actions button:has-text('Reply')")
-            check(page.locator("#toField").is_hidden(), "reply hides To (Outlook addresses it)")
+            check(page.locator("#toField .chipName").all_inner_texts() == ["Mateo Silva"] and page.locator("#ccField .chip").count() == 0
+                  and page.evaluate("document.activeElement.id") == "bodyInput",
+                  "a reply shows who it goes to as a label that can be changed, and the cursor is in the text")
             page.fill("#bodyInput", "Run the remaining 5,000 cycles please. We section one on Monday.")
             page.screenshot(path=SHOTS / "phone-compose.png")
             page.click("#send")
@@ -398,6 +406,199 @@ def main() -> None:
             page.click("#discard")
             page.click("#back")
 
+            # ---- 0.9.0: who an answer goes to can be changed, Bcc, and files that go along
+            posted: list[tuple[str, dict]] = []
+            page.on("request", lambda request: posted.append((request.url.rsplit("/", 1)[1], request.post_data_json))
+                    if request.method == "POST" and "/api/" in request.url else None)
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            page.locator(".row").first.click()
+            page.wait_for_selector("#actions button:has-text('Reply all')")
+            page.click("#actions button:has-text('Reply all')")
+            to_chips, cc_chips = page.locator("#toField .chip"), page.locator("#ccField .chip")
+            check(to_chips.locator(".chipName").all_inner_texts() == ["Mateo Silva"]
+                  and cc_chips.locator(".chipName").all_inner_texts() == ["Priya Nair"] and page.locator("#bccField").is_hidden(),
+                  "Reply all lists everyone it goes to, To and Cc, each as a label")
+            cc_chips.first.click()
+            page.locator("#ccInput").press_sequentially("jon")
+            expect(page.locator("#people .personName").first).to_have_text("Jonas Weber")
+            page.locator("#people .person").first.click()
+            page.click("#bccToggle")
+            page.locator("#bccInput").press_sequentially("quiet@lumenworks.example;")
+            check(cc_chips.locator(".chipName").all_inner_texts() == ["Jonas Weber"]
+                  and page.locator("#bccField .chipName").all_inner_texts() == ["quiet@lumenworks.example"],
+                  "somebody is taken out of Cc, somebody else put in, and Bcc opens when asked for")
+            page.set_input_files("#fileInput", [
+                {"name": "cam-close-up.jpg", "mimeType": "image/jpeg", "buffer": os.urandom(700_000)},
+                {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"Section unit seven first."},
+                {"name": "wrong-file.zip", "mimeType": "application/zip", "buffer": b"PK"},
+            ])
+            files = page.locator("#attached .fileChip")
+            expect(files).to_have_count(3)
+            files.nth(2).click()
+            check(page.locator("#attached .fileName").all_inner_texts() == ["cam-close-up.jpg", "notes.txt"]
+                  and "684 KB" in files.first.inner_text(),
+                  "files picked on the phone are listed with their size, and a tap takes one out again")
+            low = [round(box["height"]) for box in (chip.bounding_box() for chip in files.all()) if box["height"] < 44]
+            check(not low and overflow(page) <= 0 and page.locator("#attach").bounding_box()["height"] >= 44,
+                  f"the file labels are at least 44 px high and nothing overflows sideways {low if low else ''}")
+            page.fill("#bodyInput", "Thanks. A closer photo of the cam is attached.")
+            page.screenshot(path=SHOTS / "phone-answer-files.png")
+            page.set_input_files("#fileInput", [{"name": "whole-test-video.mov", "mimeType": "video/quicktime", "buffer": bytes(15_000_001)}])
+            check("does not fit" in page.inner_text("#composeError") and files.count() == 2,
+                  "a file that would make the mail too large is refused with the reason, and the others stay")
+            posted.clear()
+            page.click("#send")
+            expect(page.locator("#toastText")).to_have_text("Sent to Mateo Silva and 2 more", timeout=30000)
+            pieces = [body for name, body in posted if name == "upload"]
+            sent_as = next(body for name, body in posted if name == "send")
+            check(len(pieces) == 3 and [piece["index"] for piece in pieces] == [0, 1, 0] and [piece["last"] for piece in pieces] == [False, True, True],
+                  "a file goes to the PC in pieces, each small enough for one request")
+            check(sent_as["recipients"] == "exact" and sent_as["to"] == ["mateo.silva@lumenworks.example"]
+                  and sent_as["cc"] == ["jonas.weber@lumenworks.example"] and sent_as["bcc"] == ["quiet@lumenworks.example"]
+                  and len(sent_as["files"]) == 2,
+                  "the PC is handed exactly the people on the labels and the names of the two files")
+            page.click("#back")
+            page.click(".tabs a[data-folder=sent]")
+            page.wait_for_selector(".row .preview:has-text('A closer photo')")
+            page.locator(".row:has(.preview:has-text('A closer photo'))").click()
+            page.wait_for_selector("#files a")
+            held = ["".join(text.split()) for text in page.locator("#files a").all_inner_texts()]
+            check(held == ["cam-close-up.jpg684KB", "notes.txt1KB"] and "quiet@lumenworks.example" in page.inner_text("#bccRow"),
+                  f"the sent mail holds both files whole, and shows who was on Bcc {held if len(held) != 2 else ''}")
+            page.click("#back")
+
+            # ---- forward: the original's files are listed and one can be left behind
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            page.locator(".row").first.click()
+            page.wait_for_selector("#actions button:has-text('Forward')")
+            page.click("#actions button:has-text('Forward')")
+            check(page.locator("#attached .fileName").all_inner_texts() == ["hinge-B-torque.xlsx", "cam-scuffing.jpg"]
+                  and page.locator("#toField").is_visible() and page.locator("#subjectField").is_hidden(),
+                  "a forward lists the files of the original that go along")
+            page.locator("#attached .fileChip").nth(1).click()
+            page.locator("#toInput").press_sequentially("pri")
+            page.locator("#people .person").first.click()
+            posted.clear()
+            page.click("#send")
+            expect(page.locator("#toastText")).to_have_text("Sent to Priya Nair", timeout=30000)
+            forwarded = next(body for name, body in posted if name == "send")
+            check(forwarded["drop"] == [{"index": 2, "name": "cam-scuffing.jpg"}] and "files" not in forwarded,
+                  "the PC is told which file of the original stays behind")
+            page.click("#back")
+            page.click(".tabs a[data-folder=sent]")
+            page.wait_for_selector(".row .subject:has-text('FW: Hinge sample B')")
+            page.locator(".row:has(.subject:has-text('FW: Hinge sample B'))").click()
+            page.wait_for_selector("#files a")
+            check(page.locator("#files a").count() == 1 and "hinge-B-torque.xlsx" in page.inner_text("#files"),
+                  "the forward left with one file, not two")
+            page.click("#back")
+
+            # ---- every folder under the folder's name; a mail in the Outbox can be stopped
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            expect(page.locator("#outboxNote")).to_be_visible(timeout=10000)
+            check("1 mail is waiting in the Outbox" in page.inner_text("#outboxNote"), "a mail that has not left yet is said over the list")
+            page.click("#folderPick")
+            check(page.locator("#folderMenu a").all_inner_texts()[:3] == ["Inbox", "Drafts", "Sent"]
+                  and page.locator("#folderMenu a[data-folder=outbox]").inner_text().split() == ["Outbox", "1"]
+                  and page.locator("#folderMenu a[aria-current=page]").inner_text() == "Inbox" and overflow(page) <= 0,
+                  "the folder's name opens the list of every folder, with the one you are in marked")
+            page.screenshot(path=SHOTS / "phone-folders.png")
+            page.keyboard.press("Escape")
+            check(page.locator("#folderMenu").is_hidden(), "Escape closes the list of folders")
+            page.click("#outboxNote a")
+            page.wait_for_selector(".row .subject:has-text('RE: Quote Q-2291')")
+            check(page.inner_text("#folderName") == "Outbox" and page.locator("#outboxNote").is_hidden()
+                  and "Okafor Supplies" in page.inner_text(".row .who"),
+                  "the Outbox lists the mail by who it goes to")
+            page.locator(".row").first.click()
+            page.wait_for_selector("#body pre")
+            check("Waiting in Outlook's Outbox" in page.inner_text("#body") and page.locator("#actions").is_hidden()
+                  and page.inner_text("#remove") == "Delete",
+                  "a mail in the Outbox says that it waits, and can be deleted but not answered or changed")
+            page.click("#remove")
+            expect(page.locator("#toastText")).to_contain_text("Deleting in")
+            page.click("#toastAction")
+            page.wait_for_timeout(3600)
+            check(page.locator("#letter").is_visible() and page.locator("#toast").is_hidden(), "Undo within three seconds and nothing is deleted")
+            page.click("#remove")
+            expect(page.locator("#toastText")).to_have_text("Deleted. It will not be sent.", timeout=30000)
+            page.wait_for_selector("#state strong:has-text('Nothing is waiting')")
+            check(page.locator("#letter").is_hidden() and page.locator(".row").count() == 0, "deleted from the Outbox, the mail is gone from it")
+            page.click("#folderPick")
+            page.click("#folderMenu a[data-folder=deleted]")
+            page.wait_for_selector(".row .subject:has-text('RE: Quote Q-2291')")
+            page.locator(".row").first.click()
+            page.wait_for_selector("#body pre")
+            check(page.locator("#remove").is_hidden(), "it is in Deleted, where nothing can be removed for good from the phone")
+            page.click("#back")
+
+            # ---- the calendar, and an invitation answered from it
+            page.click(".tabs a[data-folder=calendar]")
+            page.wait_for_selector(".row.event")
+            days = page.locator("#rows .day").all_inner_texts()
+            check(page.locator(".row.event").count() >= 6 and days[0].upper().startswith("TODAY") and days[1].upper().startswith("TOMORROW")
+                  and page.locator("#searchToggle").is_hidden() and page.inner_text("#more") == "Show later days",
+                  f"the calendar lists the days ahead under Today, Tomorrow and their dates ({page.locator('.row.event').count()} entries)")
+            invited = page.locator(".row.event.unread")
+            check(invited.count() == 1 and "Drop test, corner drops" in invited.inner_text() and "INVITED" in invited.inner_text().upper()
+                  and "Jonas Weber" in invited.inner_text(),
+                  "an invitation nobody answered yet is marked the way unread mail is, with who sent it")
+            check(overflow(page) <= 0, "the calendar does not overflow sideways at 390")
+            page.screenshot(path=SHOTS / "phone-calendar.png")
+            invited.click()
+            page.wait_for_selector("#body pre")
+            check("high-speed camera" in page.inner_text("#body") and page.inner_text("#inviteSaid") == "You have not answered yet."
+                  and "Drop tower" in page.inner_text("#inviteWhere") and " to " in page.inner_text("#inviteWhen")
+                  and "Rin Aoki" in page.inner_text("#to") and "Priya Nair" in page.inner_text("#cc")
+                  and page.locator("#actions").is_hidden() and page.locator("#remove").is_hidden(),
+                  "a meeting opens with when, where, who is invited and its text")
+            page.screenshot(path=SHOTS / "phone-meeting.png")
+            page.click("#answers button[data-answer=accept]")
+            expect(page.locator("#toastText")).to_contain_text("Accepting in")
+            expect(page.locator("#toastText")).to_have_text("Accepted. Jonas Weber is told.", timeout=30000)
+            expect(page.locator("#inviteSaid")).to_have_text("You accepted.")
+            check(page.get_attribute("#answers button[data-answer=accept]", "aria-pressed") == "true", "Accept waits behind Undo, then the meeting says You accepted")
+            page.click("#back")
+            expect(page.locator(".row.event.unread")).to_have_count(0)
+            shown = page.locator(".row.event").count()
+            page.click("#more")
+            expect(page.locator("#refresh.busy")).to_have_count(0)
+            check(page.locator(".row.event").count() >= shown and page.locator("#state strong").count() == 0
+                  and page.locator("#more").is_visible(), "Show later days adds the next two weeks")
+
+            # ---- the page can be newer than the Titip on the PC: what is new says so instead of waiting for an answer
+            def older_pc(route) -> None:
+                reply = route.fetch()
+                route.fulfill(response=reply, json={**reply.json(), "version": "0.8.3"})
+
+            page.route("**/api/state", older_pc)
+            page.click("#refresh")
+            expect(page.locator("#state")).to_contain_text("Titip on your PC is version 0.8.3 and this needs 0.9.0", timeout=10000)
+            check(page.locator(".row").count() == 0, "with an older Titip on the PC the calendar says that it is on its way")
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            page.click("#write")
+            page.click("#attach")
+            check("this needs 0.9.0" in page.inner_text("#composeError"), "and so does Attach a file, while the inbox and writing work as before")
+            page.click("#discard")
+            page.unroute("**/api/state")
+            page.click("#refresh")
+            page.click(".tabs a[data-folder=calendar]")
+            page.wait_for_selector(".row.event", timeout=15000)
+            check(True, "once the PC is on the same version the calendar is there again")
+
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Drop test, corner drops')")
+            page.locator(".row:has(.subject:has-text('Drop test, corner drops'))").click()
+            page.wait_for_selector("#invite:not([hidden])")
+            check(page.inner_text("#inviteSaid") == "You accepted." and page.locator("#answers button").count() == 3
+                  and page.locator("#actions button").count() == 3,
+                  "the invitation in the inbox shows the same meeting and answer, next to Reply")
+            page.click("#back")
+
             # ---- search and empty state
             page.click(".tabs a[data-folder=inbox]")
             page.click("#searchToggle")
@@ -559,10 +760,12 @@ def main() -> None:
             wire: list[str] = []
             orders: list[dict | None] = []
 
+            wrote_at = int(time.time()) - 5  # the PC's last write: it does not write again while the phone looks
+
             def relay(route) -> None:
                 request, cors = route.request, {"Access-Control-Allow-Origin": "*"}
                 if request.method == "GET":
-                    sealed = remote.seal(key, {**remote.slim(desk("/api/auto")), "published": int(time.time()) - 5})
+                    sealed = remote.seal(key, {**remote.slim(desk("/api/auto")), "published": wrote_at})
                     wire.append(sealed)
                     return route.fulfill(status=200, headers=cors, content_type="text/plain", body=sealed)
                 wire.append(request.post_data or "")
@@ -660,6 +863,25 @@ def main() -> None:
             away.click(".tabs a[data-folder=sent]")
             away.wait_for_selector(".row .preview:has-text('Understood from the road')", timeout=40000)
             check(True, "the reply written away from home is sent by the PC and shows in Sent")
+
+            # ---- a file attached away from home reaches the PC in sealed pieces the relay accepts
+            away.click("#write")
+            away.locator("#toInput").press_sequentially("priya.nair@lumenworks.example;")
+            away.fill("#subjectInput", "Photo from the road")
+            away.fill("#bodyInput", "The scuffed cam, close up.")
+            away.set_input_files("#fileInput", [{"name": "cam-on-site.jpg", "mimeType": "image/jpeg", "buffer": os.urandom(250_000)}])
+            expect(away.locator("#attached .fileName")).to_have_text(["cam-on-site.jpg"])
+            asked_before = len(stand_in.asked)
+            away.click("#send")
+            expect(away.locator("#toastText")).to_have_text("Sent to priya.nair@lumenworks.example", timeout=90000)
+            away.wait_for_selector(".row .subject:has-text('Photo from the road')", timeout=40000)
+            away.locator(".row:has(.subject:has-text('Photo from the road'))").click()
+            away.wait_for_selector("#files a", timeout=40000)
+            check(["".join(text.split()) for text in away.locator("#files a").all_inner_texts()] == ["cam-on-site.jpg244KB"]
+                  and 100_000 < stand_in.largest_ask <= 200_000
+                  and len(stand_in.asked) - asked_before >= 4,
+                  f"a file attached away from home arrives whole, in pieces the relay accepts (largest {stand_in.largest_ask} characters)")
+            away.click("#back")
             sends = [text for text in stand_in.wire if "Understood" in str(remote.unseal(remote.unb64(settings["key"]), text))]
             check(len(sends) >= 1 and len(stand_in.wire) > 10, f"the PC could open what the phone sealed ({len(stand_in.wire)} bodies passed)")
             sealed_only = all(re.fullmatch(r"[A-Za-z0-9_-]+", text) for text in stand_in.wire)

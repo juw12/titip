@@ -425,6 +425,25 @@ class MailFromAnywhere(unittest.TestCase):
         self.assertEqual(answers[identity]["data"]["people"][0]["name"], "Priya Nair")
         self.assertNotIn("Priya", self.relay.answers[identity])
 
+    def test_files_the_calendar_and_what_changes_something_pass_the_relay_too(self):
+        link = self.make()
+        self.now += 5
+        self.mailbox.reply = (200, {"ok": True})
+        asked = [self.ask(link, route, {"id": "x"}) for route in ("upload", "calendar", "event", "act")]
+        answers = self.round(link)
+        self.assertEqual(sorted(route for route, _ in self.mailbox.calls), ["act", "calendar", "event", "upload"])
+        self.assertTrue(all(answers[identity]["status"] == 200 for identity in asked))
+
+    def test_a_delete_or_an_answer_from_before_the_start_is_refused_and_a_piece_of_a_file_is_not(self):
+        link = self.make()
+        early = self.ask(link, "act", {"what": "delete", "id": "x"}, at=self.now - 30)
+        piece = self.ask(link, "upload", {"upload": "x"}, at=self.now - 30)
+        answers = self.round(link)
+        self.assertEqual([route for route, _ in self.mailbox.calls], ["upload"])
+        self.assertEqual(answers[early]["status"], 400)
+        self.assertIn("nothing was changed", answers[early]["data"]["error"])
+        self.assertEqual(answers[piece]["status"], 200)
+
     def test_after_a_failure_the_pc_looks_again_soon_only_while_someone_reads(self):
         link = self.make()
         waits = []

@@ -17,11 +17,17 @@
 <body class="mail">
 <header class="bar">
   <span id="me" hidden></span>
-  <h1 class="brand" id="folderName">Inbox</h1>
+  <h1 class="brand">
+    <button type="button" id="folderPick" aria-expanded="false" aria-controls="folderMenu">
+      <span id="folderName">Inbox</span><span class="sr">. Show all folders</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
+    </button>
+  </h1>
   <nav class="tabs" aria-label="Folders">
     <a href="#/inbox" data-folder="inbox">Inbox</a>
     <a href="#/sent" data-folder="sent">Sent</a>
     <a href="#/drafts" data-folder="drafts">Drafts<span class="count" id="draftCount" hidden></span></a>
+    <a href="#/calendar" data-folder="calendar">Calendar</a>
     <a href="auto.html">Autopilot</a>
   </nav>
   <div class="tools">
@@ -37,6 +43,16 @@
   </div>
 </header>
 
+<nav class="folderMenu" id="folderMenu" aria-label="All folders" hidden>
+  <a href="#/inbox" data-folder="inbox">Inbox</a>
+  <a href="#/drafts" data-folder="drafts">Drafts</a>
+  <a href="#/sent" data-folder="sent">Sent</a>
+  <a href="#/outbox" data-folder="outbox">Outbox<span class="count" id="outboxCount" hidden></span></a>
+  <a href="#/deleted" data-folder="deleted">Deleted</a>
+  <a href="#/junk" data-folder="junk">Junk</a>
+  <a href="#/calendar" data-folder="calendar">Calendar</a>
+</nav>
+
 <form class="search" id="searchBox" role="search" hidden>
   <label class="sr" for="q">Search this folder by subject or person</label>
   <input id="q" type="search" placeholder="Search subject or person" autocomplete="off" enterkeyhint="search">
@@ -44,6 +60,7 @@
 
 <p class="demo" id="demoNote" hidden>Demo with invented mail. Nothing is sent.</p>
 <p class="demo" id="savedNote" role="status" hidden></p>
+<p class="demo" id="outboxNote" hidden><span id="outboxText"></span> <a href="#/outbox">Show the Outbox</a></p>
 
 <main class="panes">
   <section class="list" aria-label="Messages">
@@ -56,19 +73,33 @@
   <article class="reader" id="reader" aria-live="polite">
     <p class="hint" id="readerHint">Pick a message to read it here.</p>
     <div id="letter" hidden>
-      <button class="back" id="back" type="button">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span id="backLabel">Inbox</span>
-      </button>
+      <div class="readerTop">
+        <button class="back" id="back" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span id="backLabel">Inbox</span>
+        </button>
+        <button class="link danger" id="remove" type="button" hidden>Delete</button>
+      </div>
       <h2 id="subject"></h2>
       <div class="meta">
         <span id="face"></span>
         <dl>
           <div class="sender"><dt class="sr">From</dt><dd><strong id="from"></strong> <span id="fromAddress"></span></dd></div>
-          <div><dt>To:</dt><dd id="to"></dd></div>
-          <div id="ccRow"><dt>Cc:</dt><dd id="cc"></dd></div>
+          <div id="toRow"><dt id="toLabel">To:</dt><dd id="to"></dd></div>
+          <div id="ccRow"><dt id="ccRowLabel">Cc:</dt><dd id="cc"></dd></div>
+          <div id="bccRow" hidden><dt>Bcc:</dt><dd id="bcc"></dd></div>
           <div><dt class="sr">When</dt><dd id="when"></dd></div>
         </dl>
       </div>
+      <section class="invite" id="invite" aria-label="Meeting" hidden>
+        <p class="inviteWhen" id="inviteWhen"></p>
+        <p class="inviteWhere" id="inviteWhere"></p>
+        <p class="inviteSaid" id="inviteSaid"></p>
+        <div class="answers" id="answers">
+          <button type="button" data-answer="accept">Accept</button>
+          <button type="button" data-answer="tentative">Tentative</button>
+          <button type="button" data-answer="decline">Decline</button>
+        </div>
+      </section>
       <ul class="files" id="files" aria-label="Attachments"></ul>
       <div class="view" id="viewRow">
         <button class="link" id="viewToggle" type="button"></button>
@@ -105,6 +136,12 @@
       <div class="chips">
         <input id="ccInput" type="text" inputmode="email" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-controls="people" aria-expanded="false">
       </div>
+      <button type="button" class="link" id="bccToggle" aria-expanded="false" aria-controls="bccField">Bcc</button>
+    </div>
+    <div class="field" id="bccField" hidden><label for="bccInput">Bcc</label>
+      <div class="chips">
+        <input id="bccInput" type="text" inputmode="email" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-controls="people" aria-expanded="false">
+      </div>
     </div>
     <ul class="people" id="people" aria-label="People that match" hidden></ul>
     <label class="field" id="subjectField"><span>Subject</span>
@@ -113,7 +150,12 @@
     <label class="field grow"><span class="sr">Message</span>
       <textarea id="bodyInput" rows="8" placeholder="Write your message"></textarea>
     </label>
+    <ul class="files attached" id="attached" aria-label="Attached files" hidden></ul>
+    <input class="sr" id="fileInput" type="file" multiple tabindex="-1" aria-hidden="true">
     <div class="composeFoot">
+      <button type="button" id="attach">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L14 7"/></svg>Attach a file
+      </button>
       <button type="button" id="saveDraft">Save as draft</button>
       <span class="footNote" id="footNote">Leaves from Outlook on your PC, from your own address.</span>
     </div>

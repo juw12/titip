@@ -729,3 +729,77 @@ check of the automatic send, which run 9 left unseen.
 - Gmail in another language, or a reply form that names its recipient another way (as in run 9).
 
 stop: run 10 ended after the live result; no judged round was run.
+
+## Run 11 (2026-11-20): more of Outlook (0.9.0)
+
+Asked for: attach a file to a mail written on the phone; change To and Cc of an answer, for Reply,
+Reply all and Forward; see the Outbox and meetings; and look at what else Outlook has and bring it
+in. Not a judged round. Written on a Mac, where there is no Outlook: see Not verified.
+
+### What Outlook has that Titip did not, and what was taken
+
+| Outlook has | 0.9.0 |
+| --- | --- |
+| Attach a file to any mail | Taken. 20 files, 15 MB a mail on your own network, 5 MB through the relay |
+| Change who an answer goes to | Taken, for Reply, Reply all and Forward, with Bcc |
+| Leave a file of the original out of a forward | Taken, also for a draft |
+| Outbox, Deleted Items, Junk | Taken, under the folder's name in the bar |
+| Calendar | Taken, to read: two weeks at a time, half a year at most |
+| Accept, Tentative, Decline | Taken, from the calendar and from the invitation mail |
+| Delete a message | Taken: to Deleted Items, behind Undo. Never for good |
+| Folders of your own, archive, flags, categories | Not taken |
+| Mark as read or unread in Outlook | Not taken: a mail that asks for a read receipt can open a window on the PC |
+| New meeting, change a meeting | Not taken |
+| Search in the text of mail | Not taken |
+| Signature, importance, read receipts | Not taken |
+
+### Changes kept
+
+- Files: the phone hands a file to the PC in pieces (384 KB on your own network, 96 KB through the
+  relay, three at a time), each a request of its own. They rest in memory (`titip/uploads.py`),
+  the mail names them, and they are on disk only while Outlook reads them into the mail. Nothing
+  of the relay changed: a sealed piece is 170,922 characters, under its 200,000.
+- Who an answer goes to: the PC works out Reply and Reply all the way Outlook addresses them
+  (`answer_plans`) and sends that with the message. The phone shows it as labels. What the phone
+  hands back is the whole list; the PC keeps whoever Outlook had put there, takes out the others
+  and adds who is new. A page from before 0.9.0 does not say `recipients: exact` and gets what it
+  got before.
+- Calendar: sorted by start, repeating entries taken apart, asked for in Windows' own short date
+  with a day more on each side, then every entry checked against the real days. At most 400
+  entries are looked at for a page.
+- The phone page can be newer than the PC for a while (the public page updates first). What is new
+  then says "Titip on your PC is version 0.8.3 and this needs 0.9.0" instead of waiting for an
+  answer that does not come.
+- A request on your own network over 60,000 characters is no longer marked to outlive its page: a
+  browser refuses that above 64 KB, and a piece of a file is larger.
+
+### Hard gates (code-checked)
+
+- 290 unit and server tests (229 before), run on macOS with Python 3.14: 286 pass. The 4 that do
+  not are the ones that need Windows' `pythoncom`, as before this run; 10 relay tests need Node.
+- 158 browser steps (128 before), all pass, no console error: Reply all with somebody taken out
+  and somebody added, Bcc, two files in three pieces, a file too large refused, a forward that
+  leaves a file behind, the folder list, a mail stopped in the Outbox with Undo first, the
+  calendar, an invitation accepted, a file of 250 KB through the stand-in relay with the worker's
+  size rule, and the older-PC message.
+
+### Found while checking, and fixed
+
+- The browser run failed two times in three at "the switch shows at once", on a page this run did
+  not touch. The stand-in relay gave the state a newer time on every read, so a read that fell
+  between the tap and the check looked like news from the PC. It now keeps one time, as a PC that
+  has not written again does.
+
+### Not verified
+
+- Nothing of this has run against a real Outlook. The fake Outlook in the tests does what the
+  documentation says Outlook does; where Outlook differs, the tests do not see it. Most at risk:
+  the calendar (how Outlook reads the dates in the filter on a PC that is not set to English),
+  `Recipients.Remove` on an answer, an answer to an invitation without a window opening, and
+  whether a forward numbers its attachments as the original does (checked by name before one is
+  taken out, so a difference stops the send and does not take out the wrong file).
+- A reply from a new page goes through new code. If that code fails on the real Outlook, an
+  answer is refused with a reason and nothing leaves; it does not go to the wrong people.
+- A real phone: the file picker of iOS and Android, a photo of several MB on mobile data.
+
+stop: run 11 ended with the branch pushed for review; it is not on `main`, so no PC has it yet.

@@ -17,6 +17,7 @@ Assumed: a single direction, no four-direction bracket. The app has one job and 
 | Folders at the thumb, a New mail button above them | One signal colour, trail orange, and nothing else that shouts |
 | Unread marked on the left edge, in bold | Counts and dates set small, in mono, in capitals where they are labels |
 | Recipients as labels, names suggested under To and Cc | The eight soft colours of Cairn's note types for the initials |
+| Every folder under the folder's name; a calendar by day | The hours of a meeting in mono, where a mail has its initials |
 
 No Microsoft mark, name or icon is used anywhere.
 
@@ -83,7 +84,15 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
 - Unread: orange edge, bold sender and subject, orange time. Read mail steps back to regular weight.
 - The open row (wide screens) is washed blue; its small text steps up to ink-2.
 - Notices sit above the New mail button, never on it.
-- Send waits 3 seconds behind Undo. A failed send reopens the message with the text and the reason.
+- Send waits 3 seconds behind Undo. A failed send reopens the message with the text, the files and the reason.
+  Delete and an answer to an invitation wait the same 3 seconds. Delete is a word in stamp red at
+  the top of the letter, never an icon alone.
+- The folders used most stay at the thumb: Inbox, Sent, Drafts, Calendar, Autopilot. The folder's
+  name in the bar opens the list of all of them; the one you are in has the orange edge.
+- An invitation nobody answered yet is new: orange edge, bold, the word Invited in orange. Answered,
+  it steps back. The answer you gave is the pressed one of three plain buttons.
+- A file that goes along is a label with a paper clip, its size in mono, and a cross: a tap takes it out.
+- A mail in the Outbox has not left: one line says so over every list, with the way there.
 - PC out of reach: the list from memory if there is one, and one sentence that names the cause (see
   "When the phone cannot reach your PC" in the README). Otherwise "Can't show your mail", the reason,
   and Try again.

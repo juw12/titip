@@ -49,7 +49,8 @@ KEEP_IDLE_S = 30  # a connection to the relay that was silent this long is not u
 KEEP_CONNECTIONS = 6  # open ones kept for each way out
 MAX_REPLY = 8_000_000
 ALLOWED_ORDERS = ("switch", "mode", "check", "send", "drop")
-ASK_ROUTES = ("state", "mail", "item", "attachment", "send", "people")
+ASK_ROUTES = ("state", "mail", "item", "attachment", "send", "people", "upload", "calendar", "event", "act")
+ONCE_ROUTES = ("send", "act")  # what changes something: never carried out for an ask from before this start
 ASK_MAX_AGE_S = 120
 ASK_IDLE_S = 3  # how often the PC looks for a question while nobody is reading mail
 ASK_BUSY_S = 0.7  # ... and while somebody is
@@ -483,8 +484,10 @@ class Remote:
             return ""
         if abs(self.clock() - at) > ASK_MAX_AGE_S:
             return "The clocks of your phone and your PC are more than two minutes apart. Set both to automatic time."
-        if ask["route"] == "send" and at < self.started:
-            return "Titip on your PC had just restarted, so nothing was sent. Send it again."
+        if ask["route"] in ONCE_ROUTES and at < self.started:
+            if ask["route"] == "send":
+                return "Titip on your PC had just restarted, so nothing was sent. Send it again."
+            return "Titip on your PC had just restarted, so nothing was changed. Try it again."
         return None
 
     def answer(self, identity: str, ask: dict | None) -> bool:

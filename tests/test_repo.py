@@ -35,7 +35,7 @@ class Hygiene(unittest.TestCase):
         self.assertTrue(demo["me"]["address"].endswith(".example"))
         for mail in demo["mail"]:
             self.assertTrue(mail["fromAddress"].endswith(".example"), mail["subject"])
-            self.assertIn(mail["folder"], ("inbox", "sent", "drafts"))
+            self.assertIn(mail["folder"], ("inbox", "sent", "drafts", "outbox"))
 
     def test_public_demo_is_the_same_web_app(self):
         for name in ("index.html", "app.js", "far.js", "auto.html", "auto.js", "home.html", "home.js", "styles.css", "demo.json", "icon.svg", "icon-192.png", "manifest.webmanifest",

@@ -208,6 +208,101 @@
    "to": "Jonas Weber",
    "subject": "RE: Drop test slot on Thursday?",
    "body": "Thursday works. Yes please to the high-speed camera, and"
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 5200,
+   "from": "Jonas Weber",
+   "fromAddress": "jonas.weber@lumenworks.example",
+   "to": "Rin Aoki",
+   "cc": "Priya Nair",
+   "subject": "Drop test, corner drops",
+   "body": "Corner drops from 1.2 m, both units. I book the high-speed camera if you confirm.\n\nJonas",
+   "invite": 2
+  },
+  {
+   "folder": "outbox",
+   "minutesAgo": 3,
+   "from": "Rin Aoki",
+   "fromAddress": "rin.aoki@lumenworks.example",
+   "to": "Okafor Supplies",
+   "subject": "RE: Quote Q-2291: silicone gasket, 500 pcs",
+   "body": "Dear Ada,\n\nThank you. 18 working days is fine. Please confirm that a first lot of 100 can ship earlier.\n\nRin"
+  }
+ ],
+ "events": [
+  {
+   "subject": "Stand-up, hinge team",
+   "inDays": 0,
+   "at": "09:30",
+   "minutes": 20,
+   "location": "Lab 2",
+   "recurring": true,
+   "required": "Priya Nair; Mateo Silva",
+   "body": "What moved since yesterday, what is stuck, who needs the torque rig."
+  },
+  {
+   "subject": "Call with Okafor Supplies: gasket lead time",
+   "inDays": 0,
+   "at": "15:00",
+   "minutes": 45,
+   "location": "Online",
+   "required": "Okafor Supplies; Marek Novak",
+   "body": "Agree the lead time for 500 pieces and whether a first lot of 100 can ship early."
+  },
+  {
+   "subject": "Drop test, corner drops",
+   "inDays": 1,
+   "at": "14:00",
+   "minutes": 120,
+   "location": "Drop tower",
+   "organizer": "Jonas Weber",
+   "response": "none",
+   "required": "Rin Aoki",
+   "optional": "Priya Nair",
+   "body": "Corner drops from 1.2 m, both units. I book the high-speed camera if you confirm.\n\nJonas"
+  },
+  {
+   "subject": "Design review",
+   "inDays": 2,
+   "at": "10:00",
+   "minutes": 90,
+   "location": "Meeting room 3",
+   "organizer": "Priya Nair",
+   "response": "accepted",
+   "required": "Rin Aoki; Mateo Silva",
+   "body": "1. Hinge sample B results\n2. Gasket supplier and lead time\n3. Lens holder tolerance stack"
+  },
+  {
+   "subject": "Lab 2 closed: air conditioning service",
+   "inDays": 3,
+   "allDay": true,
+   "busy": "free",
+   "organizer": "Facilities",
+   "response": "accepted",
+   "required": "All staff",
+   "body": "Lab 2 is closed from 08:00 to 13:00. Take what you need out on Friday."
+  },
+  {
+   "subject": "One to one with Mateo",
+   "inDays": 6,
+   "at": "11:00",
+   "minutes": 30,
+   "location": "Mateo's desk",
+   "organizer": "Mateo Silva",
+   "response": "accepted",
+   "recurring": true,
+   "required": "Rin Aoki",
+   "body": ""
+  },
+  {
+   "subject": "Tooling review: lens holder",
+   "inDays": 9,
+   "at": "13:30",
+   "minutes": 60,
+   "location": "Meeting room 1",
+   "required": "Priya Nair; Priscilla Tan",
+   "body": "Go through the tolerance stack with tooling before the mould is ordered."
   }
  ]
 }

@@ -231,6 +231,112 @@ class Mail(ServerCase):
         self.assertEqual(reply.getheader("X-Content-Type-Options"), "nosniff")
 
 
+class MoreOfOutlook(ServerCase):
+    """0.9.0: files that go along, the calendar, invitations, delete. All of it through mail_call, so the relay gets it too."""
+
+    def setUp(self):
+        self.token = self.pair()[0]
+
+    def get(self, path):
+        reply, data = self.phone("GET", path, cookie=self.token)
+        return reply, json.loads(data)
+
+    def post(self, path, body, cookie=True, headers=X):
+        reply, data = self.phone("POST", path, body, headers, self.token if cookie else None)
+        return reply.status, json.loads(data)
+
+    def piece(self, identity, index, data, last=False, name="notes.txt"):
+        import base64
+
+        return {"upload": identity, "index": index, "last": last, "name": name, "data": base64.b64encode(data).decode("ascii")}
+
+    def test_a_file_handed_over_in_pieces_leaves_with_the_mail(self):
+        self.assertEqual(self.post("/api/upload", self.piece("file-from-the-phone", 1, b" world", last=True))[0], 200)
+        self.assertTrue(self.app.busy(), "no restart for an update while a file is on its way")
+        status, got = self.post("/api/upload", self.piece("file-from-the-phone", 0, b"hello"))
+        self.assertEqual((status, got["whole"]), (200, True))
+        status, sent = self.post("/api/send", {"mode": "new", "to": ["a@mail.example"], "subject": "With a file", "body": "See attached.",
+                                               "files": ["file-from-the-phone"]})
+        self.assertEqual((status, sent), (200, {"ok": True, "sent": True}))
+        _, page = self.get("/api/mail?folder=sent&q=With%20a%20file")
+        _, item = self.get("/api/item?id=" + page["mail"][0]["id"])
+        self.assertEqual((item["subject"], item["attachments"]), ("With a file", [{"index": 1, "name": "notes.txt", "size": 11}]))
+        self.assertFalse(self.app.busy(), "the file is gone from memory once the mail took it")
+
+    def test_a_mail_whose_file_never_arrived_is_not_sent_without_it(self):
+        _, before = self.get("/api/state")
+        status, answer = self.post("/api/send", {"mode": "new", "to": ["a@mail.example"], "body": "See attached.", "files": ["never-handed-over"]})
+        self.assertEqual((status, answer["filesGone"]), (400, True))
+        self.assertIn("nothing was sent", answer["error"])
+        self.assertEqual(self.get("/api/state")[1]["counts"]["sent"], before["counts"]["sent"])
+        status, answer = self.app.mail_call("send", {"mode": "new", "to": ["a@mail.example"], "body": "x", "files": [{"name": "C:/secret", "data": "x"}]})
+        self.assertEqual(status, 400, "a phone names uploads; it cannot hand a path or bytes of its own to the mailbox")
+
+    def test_only_a_paired_phone_with_the_header_can_hand_over_a_piece(self):
+        piece = self.piece("file-of-a-stranger", 0, b"x", last=True)
+        self.assertEqual(self.post("/api/upload", piece, cookie=False)[0], 401)
+        self.assertEqual(self.post("/api/upload", piece, headers={"Content-Type": "application/json"})[0], 403)
+        self.assertEqual(self.post("/api/upload", {**piece, "data": "not base64 !!"})[0], 400)
+        self.assertEqual(self.post("/api/upload", {**piece, "upload": "x"})[0], 400)
+
+    def test_a_piece_fits_in_one_request_on_your_own_network(self):
+        import os
+
+        from titip import uploads
+
+        self.assertLess(uploads.MAX_PIECE * 4 / 3 + 400, server.MAX_POST)
+        script = (Path(server.WEB) / "app.js").read_text(encoding="utf-8")
+        own, far = (int(number) for number in re.findall(r"PIECE: (\d+), LANES: \d, FILES_BYTES: \d+   //", script))
+        self.assertLessEqual(own, uploads.MAX_PIECE)
+        # through the relay a question holds 200,000 characters after it was sealed (worker/titip-relay.js: MAX_ASK)
+        from titip.remote import seal
+
+        sealed = seal(os.urandom(32), {"id": "x" * 16, "at": 1_800_000_000, "route": "upload", "params": self.piece("u" * 24, 399, os.urandom(far), True, "n" * 120)})
+        self.assertLess(len(sealed), 200_000)
+        status, got = self.post("/api/upload", self.piece("a-large-piece-of-file", 0, os.urandom(own), last=True))
+        self.assertEqual((status, got["whole"]), (200, True))
+        self.assertEqual(len(self.app.uploads.take(["a-large-piece-of-file"])[0]["data"]), own)
+
+    def test_the_calendar_and_one_entry(self):
+        reply, page = self.get("/api/calendar?offset=0&days=14")
+        self.assertEqual((reply.status, reply.getheader("Cache-Control")), (200, "no-store"))
+        self.assertGreaterEqual(len(page["events"]), 6)
+        reply, event = self.get("/api/event?id=" + page["events"][0]["id"])
+        self.assertEqual((reply.status, event["subject"]), (200, page["events"][0]["subject"]))
+        self.assertEqual(self.app.mail_call("calendar", {"offset": 0, "days": 14}), (200, page))  # what the relay is answered with
+        self.assertEqual(self.get("/api/calendar?offset=abc")[0].status, 400)
+        self.assertEqual(self.get("/api/event?id=demo.FFFF")[0].status, 502)
+        self.assertEqual(self.phone("GET", "/api/calendar")[0].status, 401, "not to a phone that is not paired")
+
+    def test_an_invitation_is_answered_and_a_message_deleted(self):
+        _, page = self.get("/api/mail?folder=inbox&limit=100")
+        invitation = next(mail for mail in page["mail"] if mail["kind"] == "meeting")
+        self.assertEqual(self.post("/api/act", {"what": "respond", "id": invitation["id"], "answer": "accept"}),
+                         (200, {"ok": True, "responded": "accept", "told": True}))
+        self.assertEqual(self.get("/api/item?id=" + invitation["id"])[1]["invite"]["response"], "accepted")
+        _, outbox = self.get("/api/mail?folder=outbox")
+        self.assertEqual(self.post("/api/act", {"what": "delete", "id": outbox["mail"][0]["id"]}), (200, {"ok": True, "deleted": True}))
+        self.assertEqual(self.get("/api/mail?folder=outbox")[1]["mail"], [])
+        self.assertEqual(self.get("/api/mail?folder=deleted")[1]["mail"][0]["id"], outbox["mail"][0]["id"])
+        status, answer = self.post("/api/act", {"what": "delete", "id": outbox["mail"][0]["id"]})
+        self.assertEqual(status, 400)
+        self.assertIn("for good", answer["error"])
+        self.assertEqual(self.post("/api/act", {"what": "empty-the-mailbox", "id": "x"})[0], 400)
+        self.assertEqual(self.post("/api/act", {"what": "delete", "id": invitation["id"]}, cookie=False)[0], 401)
+
+    def test_who_an_answer_goes_to_is_shown_and_then_exactly_that_is_sent(self):
+        _, page = self.get("/api/mail?folder=inbox&q=hinge")
+        _, item = self.get("/api/item?id=" + page["mail"][0]["id"])
+        plan = item["answer"]["replyAll"]
+        self.assertEqual(([one["name"] for one in plan["to"]], [one["name"] for one in plan["cc"]]), (["Mateo Silva"], ["Priya Nair"]))
+        status, _ = self.post("/api/send", {"mode": "replyAll", "id": item["id"], "recipients": "exact", "body": "Only to you.",
+                                            "to": [plan["to"][0]["address"]], "cc": []})
+        self.assertEqual(status, 200)
+        _, sent = self.get("/api/mail?folder=sent&q=hinge")
+        _, answer = self.get("/api/item?id=" + sent["mail"][0]["id"])
+        self.assertEqual((answer["to"], answer["cc"]), ("mateo.silva@lumenworks.example", ""))
+
+
 class Desk(ServerCase):
     def test_desk_answers_only_this_pc_and_never_serves_mail(self):
         reply, data = self.desk("GET", "/desk/status")

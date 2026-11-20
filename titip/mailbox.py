@@ -4,7 +4,7 @@ OutlookMailbox drives the classic Outlook desktop app on this PC through COM, so
 Outlook is already signed in to: no password, token or mail server setting is stored by Titip.
 DemoMailbox serves the invented mail in web/demo.json (tests, screenshots, the public demo).
 
-Both expose the same seven calls: state, list, get, attachment, send, people, lookup.
+Both expose the same calls: state, list, get, attachment, send, people, lookup, calendar, event, act.
 """
 
 from __future__ import annotations
@@ -17,14 +17,19 @@ import json
 import queue
 import itertools
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 WEB = Path(__file__).parent / "web"
-FOLDERS = ("inbox", "sent", "drafts")
+FOLDERS = ("inbox", "sent", "drafts")  # read ahead and counted
+MORE_FOLDERS = ("outbox", "deleted", "junk")  # asked for only when the phone opens them
+ALL_FOLDERS = FOLDERS + MORE_FOLDERS
+TO_FOLDERS = ("sent", "drafts", "outbox")  # listed by who the mail goes to, not who it is from
 MAX_LIST = 500  # how far back the phone can page in one folder
 MAX_BODY = 200_000
 MAX_HTML = 1_500_000
@@ -67,6 +72,22 @@ LOOKUP_ROWS = 8
 LOOKUP_SECONDS = 8  # typing does not wait longer than this for Outlook
 LOOKUP_SHORTEST, LOOKUP_LONGEST = 2, 60  # characters of the typed name that are looked up
 
+# Files attached to a mail written on the phone. They arrive in pieces (see titip/uploads.py) and
+# rest in memory; they touch the disk only for the moment Outlook reads them into the mail.
+MAX_FILES = 20
+MAX_FILES_BYTES = 15_000_000  # of one mail; mail servers refuse much more than this anyway
+MAX_FILE_NAME = 120
+RECIPIENTS_READ = 300  # people of one message that are read, for Reply all
+
+# The calendar: asked for when the phone opens it, never read ahead.
+CALENDAR_DAYS = 14
+CALENDAR_LOOK = 400  # entries looked at for one page; a series that repeats daily has no end
+CALENDAR_FRESH_SECONDS = 60
+CALENDAR_KEPT = 12
+RESPONSES = {0: "", 1: "organizer", 2: "tentative", 3: "accepted", 4: "declined", 5: "none"}
+ANSWERS = {"accept": 3, "tentative": 2, "decline": 4}  # olMeetingAccepted, olMeetingTentative, olMeetingDeclined
+BUSY = {0: "free", 1: "tentative", 2: "busy", 3: "away", 4: "elsewhere"}
+
 PROP = "http://schemas.microsoft.com/mapi/proptag/"
 P_DELIVERED = PROP + "0x0E060040"  # PR_MESSAGE_DELIVERY_TIME (UTC)
 P_SUBMITTED = PROP + "0x00390040"  # PR_CLIENT_SUBMIT_TIME (UTC)
@@ -79,6 +100,13 @@ P_SENDER_SMTP = PROP + "0x5D01001F"
 P_ATTACH_HIDDEN = PROP + "0x7FFE000B"
 
 OL_INBOX, OL_SENT, OL_DRAFTS = 6, 5, 16
+OL_OUTBOX, OL_DELETED, OL_JUNK, OL_CALENDAR = 4, 3, 23, 9
+OL_FOLDER = {"inbox": OL_INBOX, "sent": OL_SENT, "drafts": OL_DRAFTS, "outbox": OL_OUTBOX, "deleted": OL_DELETED, "junk": OL_JUNK}
+# what a folder is sorted by (a built-in name: Table.Sort rejects property tags)
+ORDER = {
+    "inbox": "[ReceivedTime]", "sent": "[SentOn]", "drafts": "[LastModificationTime]",
+    "outbox": "[LastModificationTime]", "deleted": "[ReceivedTime]", "junk": "[ReceivedTime]",
+}
 OL_DISCARD = 1
 RPC_BUSY = (-2147418111, -2147417846)  # RPC_E_CALL_REJECTED, RPC_E_SERVERCALL_RETRYLATER
 
@@ -139,6 +167,33 @@ def outlook_running() -> bool:
     return "outlook.exe" in listed.lower()
 
 
+def file_name(name) -> str:
+    """A name a file can have on this PC for the moment Outlook reads it: no folders, no reserved characters."""
+    name = re.sub(r'[\x00-\x1f<>:"/\\|?*]', "_", str(name or "").replace("\\", "/").rsplit("/", 1)[-1])
+    name = name.strip(" .")
+    if len(name) > MAX_FILE_NAME:  # keep the ending: Outlook and the reader tell the kind of file by it
+        stem, dot, ending = name.rpartition(".")
+        ending = dot + ending if dot and len(ending) <= 12 else ""
+        name = name[: MAX_FILE_NAME - len(ending)].rstrip(" .") + ending
+    if not name or re.fullmatch(r"(con|prn|aux|nul|com\d|lpt\d)(\..*)?", name, flags=re.IGNORECASE):
+        name = "_" + name if name else "file"
+    return name
+
+
+def clean_files(value) -> list[dict]:
+    """The files that go along, as [{"name", "data"}]. The server puts them in; a phone cannot name a path."""
+    files = []
+    for entry in value or []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("data"), (bytes, bytearray)):
+            raise MailError("The attached files did not reach your PC. Send it again.")
+        files.append({"name": file_name(entry.get("name")), "data": bytes(entry["data"])})
+    if len(files) > MAX_FILES:
+        raise MailError(f"A mail from the phone can carry {MAX_FILES} files at most.")
+    if sum(len(file["data"]) for file in files) > MAX_FILES_BYTES:
+        raise MailError(f"The attached files are larger than {MAX_FILES_BYTES // 1_000_000} MB together.")
+    return files
+
+
 def clean_send_request(payload: dict) -> dict:
     """Validate what the phone posted; raises MailError with a message for the composer."""
     mode = payload.get("mode", "new")
@@ -147,23 +202,123 @@ def clean_send_request(payload: dict) -> dict:
         raise MailError("Unknown kind of message.")
     if action not in ("send", "draft"):
         raise MailError("Unknown action.")
+    drop = []
+    for entry in payload.get("drop") or []:  # attachments of the original that do not go along
+        if not isinstance(entry, dict):
+            raise MailError("Bad request.")
+        try:
+            drop.append((int(entry.get("index")), str(entry.get("name") or "")))
+        except (TypeError, ValueError):
+            raise MailError("Bad request.")
     request = {
         "mode": mode,
         "action": action,
         "id": str(payload.get("id") or ""),
         "to": split_addresses(payload.get("to")),
         "cc": split_addresses(payload.get("cc")),
+        "bcc": split_addresses(payload.get("bcc")),
+        # "exact": the phone showed who an answer goes to and what it hands over is the whole list.
+        # A page from before 0.9.0 does not say so: Outlook's own recipients stay and are only added to.
+        "exact": payload.get("recipients") == "exact",
         "subject": str(payload.get("subject") or "").strip()[:255],
         "body": str(payload.get("body") or "")[:MAX_BODY],
+        "files": clean_files(payload.get("files")),
+        "drop": sorted(set(drop), reverse=True) if mode in ("forward", "draft") else [],
     }
     if mode != "new" and not request["id"]:
         raise MailError("The original message is missing.")
     if action == "send":
-        if not request["to"] and mode not in ("reply", "replyAll"):
+        anyone = request["to"] or request["cc"] or request["bcc"]
+        if not anyone and (request["exact"] or mode not in ("reply", "replyAll")):
             raise MailError("Add at least one recipient.")
         if not request["body"].strip() and mode != "forward":
             raise MailError("Write a message first.")
     return request
+
+
+def clean_act_request(payload: dict) -> dict:
+    """Delete a message, or answer an invitation: checked before Outlook is asked for anything."""
+    what = payload.get("what")
+    request = {"what": what, "id": str(payload.get("id") or ""), "answer": str(payload.get("answer") or "")}
+    if what not in ("delete", "respond"):
+        raise MailError("Unknown action.")
+    if not request["id"]:
+        raise MailError("The message is missing.")
+    if what == "respond" and request["answer"] not in ANSWERS:
+        raise MailError("Unknown answer.")
+    return request
+
+
+def as_person(name, address) -> dict:
+    """{name, address} for the phone. The address only when it is an internet one; a colleague Outlook
+    knows only by an internal name keeps the name, and Outlook finds him again by it."""
+    address = str(address or "").strip()
+    if not re.fullmatch(r"[^@\s<>;,]+@[^@\s<>;,]+", address):
+        address = ""
+    name = " ".join(str(name or "").strip("'\" ").split())
+    return {"name": name or address, "address": address}
+
+
+def answer_plans(sender: dict, to: list, cc: list, reply_to: list, mine) -> dict:
+    """Who Reply and Reply all go to, the way Outlook addresses them, for the phone to show and change.
+
+    Reply: whoever the mail asks to be answered (Reply-To), or else the sender. Reply all: the same,
+    and everyone else it went to, without yourself. An answer to a mail of your own goes to the
+    people it went to.
+    """
+    mine = {str(address).lower() for address in mine if address}
+
+    def key(one: dict) -> str:
+        return (one["address"] or one["name"]).lower()
+
+    def others(people: list, taken: set) -> list:
+        kept = []
+        for one in people:
+            if not key(one) or key(one) in taken or one["address"].lower() in mine:
+                continue
+            taken.add(key(one))
+            kept.append(one)
+        return kept
+
+    from_me = bool(sender["address"]) and sender["address"].lower() in mine
+    first = list(reply_to) or ([] if from_me else [sender])
+    if from_me and not first:
+        first = others(to, set()) or [sender]
+    taken: set = set()
+    reply = []
+    for one in first:  # yourself stays here: an answer to your own note goes to you
+        if key(one) and key(one) not in taken:
+            taken.add(key(one))
+            reply.append(one)
+    everyone = set(taken)
+    all_to = reply + others(to, everyone)
+    return {"reply": {"to": reply, "cc": []}, "replyAll": {"to": all_to, "cc": others(cc, everyone)}}
+
+
+def today() -> dt.datetime:
+    """Midnight that began today, on this PC's clock."""
+    return dt.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def short_date(moment: dt.datetime) -> str:
+    """A date the way this PC writes dates, which is how Outlook reads one in a filter."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class SystemTime(ctypes.Structure):
+                _fields_ = [(name, wintypes.WORD) for name in (
+                    "year", "month", "weekday", "day", "hour", "minute", "second", "milliseconds")]
+
+            stamp = SystemTime(moment.year, moment.month, 0, moment.day, 12, 0, 0, 0)
+            written = ctypes.create_unicode_buffer(80)
+            # the signed-in user's own format, short date
+            if ctypes.windll.kernel32.GetDateFormatW(0x0400, 0x0001, ctypes.byref(stamp), None, written, 80):
+                return written.value
+        except (AttributeError, OSError, ValueError):
+            pass
+    return moment.strftime("%m/%d/%Y")
 
 
 # ============================================================ Outlook (COM)
@@ -266,6 +421,8 @@ class OutlookMailbox:
         self._folders: dict[str, list] = {}
         self._state_cache: tuple[float, dict] | None = None
         self._who: tuple[str, str] | None = None  # (address, name): asked once per connection to Outlook
+        self._mine: set[str] | None = None  # every address Outlook sends from, in lower case
+        self._calendars: dict[tuple, tuple[float, dict]] = {}  # (offset, days) -> (monotonic, page)
         self._state_problem: MailError | None = None
         self._refresh: threading.Thread | None = None
         self._refresh_lock = threading.Lock()
@@ -318,6 +475,7 @@ class OutlookMailbox:
         self._stores.clear()
         self._folders.clear()
         self._who = None
+        self._mine = None
 
     def _store_key(self, store_id: str) -> str:
         key = hashlib.sha1(store_id.encode("ascii", "replace")).hexdigest()[:10]
@@ -332,10 +490,9 @@ class OutlookMailbox:
         """
         if name in self._folders:
             return self._folders[name]
-        default_id = {"inbox": OL_INBOX, "sent": OL_SENT, "drafts": OL_DRAFTS}[name]
-        default = self._ns.GetDefaultFolder(default_id)
+        default = self._ns.GetDefaultFolder(OL_FOLDER[name])
         found = [default]
-        if name != "drafts":
+        if name in ("inbox", "sent"):
             wanted = default.Name.lower()
             default_store = default.StoreID
             for store in self._ns.Stores:
@@ -348,7 +505,7 @@ class OutlookMailbox:
                             break
                 except Exception:  # a store that is offline or locked: skip it, keep the rest
                     continue
-        order = {"inbox": "[ReceivedTime]", "sent": "[SentOn]", "drafts": "[LastModificationTime]"}[name]
+        order = ORDER[name]
 
         def newest(folder) -> str:
             try:
@@ -622,12 +779,17 @@ class OutlookMailbox:
 
     def _state(self) -> dict:
         who = self._account()
+        counts = {name: sum(f.Items.Count for f in self._mail_folders(name)) for name in FOLDERS}
+        try:  # one small folder: a mail that waits there has not left yet, and the phone says so
+            counts["outbox"] = self._ns.GetDefaultFolder(OL_OUTBOX).Items.Count
+        except Exception:
+            counts["outbox"] = 0
         return {
             "ok": True,
             "demo": False,
             "account": who[0],
             "name": who[1],
-            "counts": {name: sum(f.Items.Count for f in self._mail_folders(name)) for name in FOLDERS},
+            "counts": counts,
         }
 
     # -------------------------------------------------- list
@@ -638,7 +800,7 @@ class OutlookMailbox:
         does not answer within QUICK_SECONDS the copy is returned marked `saved`, with its time.
         Searches and older pages always wait for Outlook.
         """
-        if folder not in FOLDERS:
+        if folder not in ALL_FOLDERS:
             raise MailError("Unknown folder.")
         limit = max(1, min(int(limit), 100))
         self._phone_asked()
@@ -661,19 +823,18 @@ class OutlookMailbox:
             return {**kept[2], "saved": True, "savedAt": kept[1]}
 
     def _list(self, folder: str, limit: int, offset: int, query: str) -> dict:
-        if folder not in FOLDERS:
+        if folder not in ALL_FOLDERS:
             raise MailError("Unknown folder.")
         limit = max(1, min(int(limit), 100))
         offset = max(0, min(int(offset), MAX_LIST))
         want = offset + limit
-        when = {"inbox": P_DELIVERED, "sent": P_SUBMITTED, "drafts": P_MODIFIED}[folder]  # read as UTC
-        # Table.Sort rejects property tags ("The parameter is incorrect"), so sort by the built-in name
-        order = {"inbox": "[ReceivedTime]", "sent": "[SentOn]", "drafts": "[LastModificationTime]"}[folder]
+        when = {"sent": P_SUBMITTED, "drafts": P_MODIFIED, "outbox": P_MODIFIED}.get(folder, P_DELIVERED)  # read as UTC
+        order = ORDER[folder]
         table_filter = ""
         words = re.sub(r"[%_\[\]'\"]", " ", query or "").split()
         if words:
             text = " ".join(words)[:80]
-            who = "urn:schemas:httpmail:displayto" if folder != "inbox" else "urn:schemas:httpmail:fromname"
+            who = "urn:schemas:httpmail:displayto" if folder in TO_FOLDERS else "urn:schemas:httpmail:fromname"
             table_filter = (
                 f'@SQL=("urn:schemas:httpmail:subject" like \'%{text}%\' OR "{who}" like \'%{text}%\')'
             )
@@ -684,8 +845,11 @@ class OutlookMailbox:
             columns = table.Columns
             columns.RemoveAll()
             names = ["EntryID", "Subject", "SenderName", "MessageClass", "UnRead", when, P_HAS_ATTACH, P_DISPLAY_TO]
+            if folder == "deleted":  # a deleted draft was never delivered: it is placed by when it last changed
+                names.append(P_MODIFIED)
             for column in names:
                 columns.Add(column)
+            preview_at = len(names)
             has_preview = True
             try:
                 columns.Add(P_PREVIEW)
@@ -701,10 +865,10 @@ class OutlookMailbox:
                     "from": row[2] or "",
                     "kind": "meeting" if str(row[3] or "").startswith("IPM.Schedule") else "mail",
                     "unread": bool(row[4]),
-                    "time": _utc_iso(row[5]),
+                    "time": _utc_iso(row[5]) or (_utc_iso(row[8]) if folder == "deleted" else ""),
                     "attachments": bool(row[6]),
                     "to": row[7] or "",
-                    "preview": " ".join(str(row[8] or "").split())[:180] if has_preview else "",
+                    "preview": " ".join(str(row[preview_at] or "").split())[:180] if has_preview else "",
                 })
             if table_filter and len(rows) >= want:
                 break  # a search scans every message of a data file: stop once the page is full
@@ -792,7 +956,27 @@ class OutlookMailbox:
                 return default
 
         sender_address = self._sender_address(item, access)
-        self._count_people(mail_id, item, getattr(item, "SenderName", "") or "", sender_address)
+        sender_name = getattr(item, "SenderName", "") or ""
+        went_to, cut = [], False
+        try:
+            went_to, cut = self._recipients(item.Recipients, RECIPIENTS_READ)
+        except Exception:  # a kind of item without recipients, or one Outlook cannot list them of
+            pass
+        self._count_people(mail_id, item, sender_name, sender_address, went_to[:PEOPLE_RECIPIENTS])
+        people = {kind: [as_person(name, address) for name, address, type_ in went_to if type_ == number]
+                  for kind, number in (("to", 1), ("cc", 2), ("bcc", 3))}
+        reply_to = []
+        try:
+            reply_to = [as_person(name, address) for name, address, _ in self._recipients(item.ReplyRecipients, 20)[0]]
+        except Exception:
+            pass
+        message_class = str(getattr(item, "MessageClass", "") or "")
+        invite = None
+        if message_class.startswith("IPM.Schedule.Meeting.Request"):
+            try:  # what the invitation is for; False: looking at it does not put it in the calendar
+                invite = self._event_row(item.GetAssociatedAppointment(False))
+            except Exception:
+                invite = None
         attachments = []
         try:
             for index in range(1, item.Attachments.Count + 1):
@@ -810,10 +994,16 @@ class OutlookMailbox:
         return {
             "id": mail_id,
             "subject": getattr(item, "Subject", "") or "(no subject)",
-            "from": getattr(item, "SenderName", "") or "",
+            "from": sender_name,
             "fromAddress": sender_address,
             "to": getattr(item, "To", "") or "",
             "cc": getattr(item, "CC", "") or "",
+            "bcc": getattr(item, "BCC", "") or "",
+            "people": people,
+            "peopleCut": cut,
+            "answer": answer_plans(as_person(sender_name, sender_address), people["to"], people["cc"], reply_to, self._my_addresses()),
+            "kind": "meeting" if message_class.startswith("IPM.Schedule") else "mail",
+            "invite": invite,
             "time": _utc_iso(prop(P_DELIVERED, None)) or sent or _utc_iso(prop(P_MODIFIED, None)),
             "draft": not getattr(item, "Sent", True),
             "body": (getattr(item, "Body", "") or "")[:MAX_BODY],
@@ -840,6 +1030,46 @@ class OutlookMailbox:
         except Exception:
             return ""
 
+    @staticmethod
+    def _recipients(recipients, limit: int) -> tuple[list[tuple[str, str, int]], bool]:
+        """(name, address, kind) of the people a message went to, and whether there are more than `limit`.
+
+        Kind is Outlook's: 1 To, 2 Cc, 3 Bcc. The address is the internet one when the message
+        carries it; for a colleague it may be Outlook's internal name instead.
+        """
+        count = recipients.Count
+        found = []
+        for index in range(1, min(count, limit) + 1):
+            recipient = recipients.Item(index)
+            try:
+                address = recipient.PropertyAccessor.GetProperty(P_SMTP)
+            except Exception:
+                address = getattr(recipient, "Address", "")
+            found.append((getattr(recipient, "Name", "") or "", address or "", int(getattr(recipient, "Type", 1) or 1)))
+        return found, count > limit
+
+    def _my_addresses(self) -> set[str]:
+        """Every address Outlook on this PC sends from: none of them is somebody else to answer."""
+        if self._mine is not None:
+            return self._mine
+        found = set()
+        try:
+            for account in self._ns.Accounts:
+                address = str(account.SmtpAddress or "").strip().lower()
+                if address:
+                    found.add(address)
+        except Exception:
+            pass
+        try:
+            first = self._account()[0].lower()
+            if first:
+                found.add(first)
+        except Exception:
+            pass
+        if found:  # asked again next time when Outlook could not say
+            self._mine = found
+        return found
+
     def _note_people(self, mail_id: str) -> None:
         """One message read only for who wrote it and who it went to."""
         with self._lock:
@@ -850,24 +1080,21 @@ class OutlookMailbox:
         sender = self._sender_address(item, item.PropertyAccessor)
         self._count_people(mail_id, item, getattr(item, "SenderName", "") or "", sender)
 
-    def _count_people(self, mail_id: str, item, sender_name: str, sender_address: str) -> None:
-        """Remember the people on this message. Each message counts once; never fails the read it is part of."""
+    def _count_people(self, mail_id: str, item, sender_name: str, sender_address: str, went_to=None) -> None:
+        """Remember the people on this message. Each message counts once; never fails the read it is part of.
+
+        `went_to`: the recipients when the caller has read them already, as _recipients gives them.
+        """
         with self._lock:
             if mail_id in self._people_counted:
                 return
             self._people_counted[mail_id] = None
             while len(self._people_counted) > KEEP_ROWS:
                 self._people_counted.popitem(last=False)
-        found = []
         try:
-            recipients = item.Recipients
-            for index in range(1, min(recipients.Count, PEOPLE_RECIPIENTS) + 1):
-                recipient = recipients.Item(index)
-                try:
-                    address = recipient.PropertyAccessor.GetProperty(P_SMTP)
-                except Exception:
-                    address = getattr(recipient, "Address", "")
-                found.append((getattr(recipient, "Name", "") or "", address or ""))
+            if went_to is None:
+                went_to = self._recipients(item.Recipients, PEOPLE_RECIPIENTS)[0]
+            found = [(name, address) for name, address, _ in went_to]
             mine = self._account()[0].lower()
         except Exception:
             return
@@ -1009,14 +1236,19 @@ class OutlookMailbox:
                     mail = {"reply": source.Reply, "replyAll": source.ReplyAll, "forward": source.Forward}[mode]()
                 except AttributeError:
                     raise MailError("This kind of item cannot be answered from Titip. Use Outlook for it.")
+        folder = None  # where the attached files rest for the moment Outlook reads them
         try:
-            if mode in ("reply", "replyAll"):  # Outlook already addressed it: only add to that
-                for kind, addresses in ((1, request["to"]), (2, request["cc"])):
+            if request["exact"] and mode in ("reply", "replyAll", "forward"):
+                self._address(mail, request)  # the phone showed who it goes to: exactly those
+            elif mode in ("reply", "replyAll"):  # a page from before 0.9.0: Outlook addressed it, only add to that
+                for kind, addresses in ((1, request["to"]), (2, request["cc"]), (3, request["bcc"])):
                     for address in addresses:
                         mail.Recipients.Add(address).Type = kind
             else:
                 mail.To = "; ".join(request["to"])
                 mail.CC = "; ".join(request["cc"])
+                if request["bcc"] or mode == "draft":
+                    mail.BCC = "; ".join(request["bcc"])
             if request["subject"]:
                 mail.Subject = request["subject"]
             block = text_to_html(request["body"])
@@ -1028,6 +1260,15 @@ class OutlookMailbox:
                 # No GetInspector here to pull in a signature: it would leave a hidden editor window
                 # inside Outlook for every mail. Whatever Outlook put in the body stays below the text.
                 mail.HTMLBody = insert_into_html(mail.HTMLBody, block)
+            for index, name in request["drop"]:  # highest number first, so the others keep theirs
+                self._take_out(mail, index, name)
+            if request["files"]:
+                folder = Path(tempfile.mkdtemp(prefix="titip-"))
+                for number, file in enumerate(request["files"]):
+                    place = folder / str(number)  # a folder each: two files may have the same name
+                    place.mkdir()
+                    (place / file["name"]).write_bytes(file["data"])
+                    mail.Attachments.Add(str(place / file["name"]))  # Outlook copies it into the mail
             if mail.Recipients.Count and not mail.Recipients.ResolveAll():
                 unknown = [r.Name for r in mail.Recipients if not r.Resolved]
                 raise MailError("Outlook does not know: " + ", ".join(unknown) + ". Use a full e-mail address.")
@@ -1045,12 +1286,201 @@ class OutlookMailbox:
                 except Exception:
                     pass
             raise
+        finally:
+            if folder is not None:
+                shutil.rmtree(folder, ignore_errors=True)
+
+    def _address(self, mail, request: dict) -> None:
+        """Make the recipients of an answer exactly the ones the phone showed.
+
+        Outlook has addressed the answer already. Whoever is on both lists stays as Outlook put him
+        (so a colleague it knows by an internal name is not looked up again), the others are taken
+        out, and who is new is added.
+        """
+        wanted = [(kind, entry) for kind, entries in ((1, request["to"]), (2, request["cc"]), (3, request["bcc"])) for entry in entries]
+        recipients = mail.Recipients
+        for index in range(recipients.Count, 0, -1):  # from the end: taking one out renumbers those after it
+            recipient = recipients.Item(index)
+            names = {str(getattr(recipient, "Name", "") or "").lower(), str(getattr(recipient, "Address", "") or "").lower()}
+            try:
+                names.add(str(recipient.PropertyAccessor.GetProperty(P_SMTP) or "").lower())
+            except Exception:
+                pass
+            kind = int(getattr(recipient, "Type", 1) or 1)
+            same = next((entry for entry in wanted if entry[0] == kind and entry[1].lower() in names), None)
+            if same is None:
+                recipients.Remove(index)
+            else:
+                wanted.remove(same)
+        for kind, entry in wanted:
+            recipients.Add(entry).Type = kind
+
+    @staticmethod
+    def _take_out(mail, index: int, name: str) -> None:
+        """Remove one attachment of the original from a forward or a draft, and only the one the phone named."""
+        attachments = mail.Attachments
+        if not 1 <= index <= attachments.Count or (attachments.Item(index).FileName or "") != name:
+            raise MailError(f"\u201c{name}\u201d could not be taken out of this message, so nothing was done. Open it again and try once more.")
+        attachments.Remove(index)
+
+    # -------------------------------------------------- the calendar
+    @staticmethod
+    def _event_row(appointment) -> dict:
+        """What the phone lists of one appointment or meeting. Times are UTC; `day` is the date on this PC."""
+        def whole(value) -> dt.datetime:  # pywin32 hands local times over marked as UTC: only the numbers count
+            return dt.datetime(value.year, value.month, value.day, value.hour, value.minute, value.second)
+
+        begins, ends = whole(appointment.Start), whole(appointment.End)
+        all_day = bool(appointment.AllDayEvent)
+        last = ends - dt.timedelta(minutes=1) if all_day and ends > begins else ends  # an all-day entry ends at midnight
+        status = int(getattr(appointment, "MeetingStatus", 0) or 0)
+        return {
+            "subject": getattr(appointment, "Subject", "") or "(no subject)",
+            "start": _utc_iso(appointment.StartUTC),
+            "end": _utc_iso(appointment.EndUTC),
+            "day": begins.date().isoformat(),
+            "lastDay": last.date().isoformat(),
+            "allDay": all_day,
+            "location": str(getattr(appointment, "Location", "") or ""),
+            "organizer": str(getattr(appointment, "Organizer", "") or ""),
+            "meeting": status != 0,
+            "canceled": status in (5, 7),
+            "invited": status == 3,  # somebody else's meeting: it can be accepted or declined
+            "response": RESPONSES.get(int(getattr(appointment, "ResponseStatus", 0) or 0), ""),
+            "recurring": bool(getattr(appointment, "IsRecurring", False)),
+            "busy": BUSY.get(int(getattr(appointment, "BusyStatus", 2) or 0), "busy"),
+        }
+
+    def calendar(self, offset: int = 0, days: int = CALENDAR_DAYS) -> dict:
+        """The appointments and meetings of `days` days, starting `offset` days from today.
+
+        Asked for when the phone opens the calendar and kept for a minute. When Outlook is busy the
+        page from before is returned marked `saved`.
+        """
+        offset = max(0, min(int(offset), 730))
+        days = max(1, min(int(days), 62))
+        self._phone_asked()
+        kept = self._calendars.get((offset, days))
+        if kept and time.monotonic() - kept[0] < CALENDAR_FRESH_SECONDS:
+            return kept[1]
+        try:
+            page = self._do(self._calendar, offset, days)
+        except OutlookBusy:
+            if not kept:
+                raise
+            return {**kept[1], "saved": True}
+        with self._lock:
+            if len(self._calendars) >= CALENDAR_KEPT:
+                self._calendars.clear()
+            self._calendars[(offset, days)] = (time.monotonic(), page)
+        return page
+
+    def _calendar(self, offset: int, days: int) -> dict:
+        first = today() + dt.timedelta(days=offset)
+        after = first + dt.timedelta(days=days)
+        folder = self._ns.GetDefaultFolder(OL_CALENDAR)
+        store_key = self._store_key(folder.StoreID)
+        items = folder.Items
+        items.Sort("[Start]")
+        items.IncludeRecurrences = True  # each time a repeating meeting takes place is an entry of its own
+        # Outlook reads the dates the way this PC writes them. A day more on each side, then every
+        # entry is checked here against the real days, so a date read differently loses nothing.
+        found = items.Restrict(
+            f"[Start] <= '{short_date(after + dt.timedelta(days=1))}' AND [End] >= '{short_date(first - dt.timedelta(days=1))}'"
+        )
+        events, more, looked = [], False, 0
+        for item in found:  # never its Count: with repeating entries it has no end
+            looked += 1
+            if looked > CALENDAR_LOOK:
+                more = True
+                break
+            try:
+                row = self._event_row(item)
+                begins = dt.datetime(item.Start.year, item.Start.month, item.Start.day, item.Start.hour, item.Start.minute)
+                ends = dt.datetime(item.End.year, item.End.month, item.End.day, item.End.hour, item.End.minute)
+                entry_id = item.EntryID
+            except Exception:  # not an appointment, or one Outlook cannot read
+                continue
+            if begins >= after:
+                break  # sorted by start: nothing later belongs to these days
+            if ends <= first and not (ends == begins and begins >= first):
+                continue
+            row["id"] = f"{store_key}.{entry_id}"
+            events.append(row)
+        return {"from": first.date().isoformat(), "days": days, "offset": offset, "events": events, "more": more}
+
+    def event(self, event_id: str) -> dict:
+        """One appointment in full: its text and who is invited. Of a repeating one, the series."""
+        self._phone_asked()
+        return self._do(self._event, event_id)
+
+    def _event(self, event_id: str) -> dict:
+        item = self._item(event_id)
+        if not str(getattr(item, "MessageClass", "") or "").startswith("IPM.Appointment"):
+            raise MailError("That is not a calendar entry.")
+        return {
+            **self._event_row(item),
+            "id": event_id,
+            "required": str(getattr(item, "RequiredAttendees", "") or ""),
+            "optional": str(getattr(item, "OptionalAttendees", "") or ""),
+            "body": (getattr(item, "Body", "") or "")[:MAX_BODY],
+        }
+
+    # -------------------------------------------------- delete a message, answer an invitation
+    def act(self, payload: dict) -> dict:
+        request = clean_act_request(payload)
+        self._state_cache = None
+        try:
+            return self._do(self._act, request, timeout=SEND_SECONDS, first=True)
+        except OutlookBusy as error:
+            if error.started:  # Outlook is in the middle of it: we cannot know yet whether it happened
+                raise MailError("Outlook is taking a long time with this. Look in Outlook before you try it again.")
+            raise MailError("Outlook on your PC is busy, so nothing was changed. Try again in a moment.")
+        finally:
+            with self._lock:  # the folders and the calendar have changed (or may have)
+                self._lists.clear()
+                self._calendars.clear()
+                self._drop_message(self._moved.get(request["id"], request["id"]))
+
+    def _act(self, request: dict) -> dict:
+        item = self._item(request["id"])
+        message_class = str(getattr(item, "MessageClass", "") or "")
+        if request["what"] == "delete":
+            if message_class.startswith("IPM.Appointment"):
+                raise MailError("A calendar entry cannot be deleted from Titip. Use Outlook for it.")
+            if self._in_the_bin(item):
+                raise MailError("That message is in Deleted Items already. Deleting it again would remove it for good: do that in Outlook.")
+            item.Delete()  # to Deleted Items; from the Outbox this also stops the mail from leaving
+            return {"ok": True, "deleted": True}
+        if message_class.startswith("IPM.Schedule.Meeting.Request"):
+            appointment = item.GetAssociatedAppointment(True)  # answering it puts it in the calendar, as in Outlook
+        elif message_class.startswith("IPM.Appointment"):
+            appointment = item
+        else:
+            raise MailError("That is not an invitation.")
+        if appointment is None:
+            raise MailError("Outlook cannot find the meeting this invitation is for.")
+        if int(getattr(appointment, "MeetingStatus", 0) or 0) in (0, 1):
+            raise MailError("This is your own entry: there is nobody to answer.")
+        answer = appointment.Respond(ANSWERS[request["answer"]], True)  # True: no window opens on the PC
+        if answer is None:  # the organizer asked for no answers: Outlook only notes yours
+            return {"ok": True, "responded": request["answer"], "told": False}
+        answer.Send()
+        return {"ok": True, "responded": request["answer"], "told": True}
+
+    def _in_the_bin(self, item) -> bool:
+        try:
+            parent = item.Parent
+            deleted = parent.Store.GetDefaultFolder(OL_DELETED)
+            return bool(self._ns.CompareEntryIDs(parent.EntryID, deleted.EntryID))
+        except Exception:
+            return False
 
 
 # ============================================================ demo (invented mail)
 
 class DemoMailbox:
-    """The mail in web/demo.json, held in memory. Sending moves a message into Sent, nothing leaves."""
+    """The mail and the calendar in web/demo.json, held in memory. Sending moves a message into Sent, nothing leaves."""
 
     demo = True
 
@@ -1059,7 +1489,36 @@ class DemoMailbox:
         self.me = data["me"]
         self.people_known = data.get("people", [])
         self.book = data.get("book", [])  # the invented company directory
+        self.addresses = {one["name"]: one["address"] for one in self.people_known + self.book + [self.me]}
         now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        today = dt.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+        self.events: list[dict] = []
+        for index, event in enumerate(data.get("events", [])):
+            hour, minute = (int(part) for part in event.get("at", "00:00").split(":"))
+            begins = today + dt.timedelta(days=event["inDays"], hours=hour, minutes=minute)
+            all_day = bool(event.get("allDay"))
+            ends = begins + (dt.timedelta(days=event.get("days", 1)) if all_day else dt.timedelta(minutes=event.get("minutes", 60)))
+            last = ends - dt.timedelta(minutes=1) if all_day else ends
+            self.events.append({
+                "id": f"demo.{index + 0xE000:016X}",
+                "subject": event["subject"],
+                "start": begins.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "end": ends.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "day": begins.date().isoformat(),
+                "lastDay": last.date().isoformat(),
+                "allDay": all_day,
+                "location": event.get("location", ""),
+                "organizer": event.get("organizer", self.me["name"]),
+                "meeting": bool(event.get("required")),
+                "canceled": False,
+                "invited": event.get("organizer", self.me["name"]) != self.me["name"],
+                "response": event.get("response", "organizer" if event.get("required") else ""),
+                "recurring": bool(event.get("recurring")),
+                "busy": event.get("busy", "busy"),
+                "required": event.get("required", ""),
+                "optional": event.get("optional", ""),
+                "body": event.get("body", ""),
+            })
         self.mail: list[dict] = []
         for index, mail in enumerate(data["mail"]):
             when = now - dt.timedelta(minutes=mail.pop("minutesAgo"))
@@ -1067,6 +1526,7 @@ class DemoMailbox:
                 "id": f"demo.{index:016X}",
                 "time": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "cc": "",
+                "bcc": "",
                 "attachments": [],
                 "unread": False,
                 **mail,
@@ -1074,13 +1534,13 @@ class DemoMailbox:
         self.lock = threading.Lock()
 
     def state(self) -> dict:
-        counts = {name: sum(1 for mail in self.mail if mail["folder"] == name) for name in FOLDERS}
+        counts = {name: sum(1 for mail in self.mail if mail["folder"] == name) for name in (*FOLDERS, "outbox")}
         return {"ok": True, "demo": True, "account": self.me["address"], "name": self.me["name"], "counts": counts}
 
     quick_state = state
 
     def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "") -> dict:
-        if folder not in FOLDERS:
+        if folder not in ALL_FOLDERS:
             raise MailError("Unknown folder.")
         needle = (query or "").lower().strip()
         rows = [
@@ -1097,7 +1557,7 @@ class DemoMailbox:
                 "id": mail["id"],
                 "subject": mail["subject"],
                 "from": mail["from"],
-                "kind": "mail",
+                "kind": "meeting" if "invite" in mail else "mail",
                 "unread": mail["unread"],
                 "time": mail["time"],
                 "attachments": bool(mail["attachments"]),
@@ -1112,8 +1572,25 @@ class DemoMailbox:
                 return mail
         raise MailError("That message was moved or deleted. Refresh the list.")
 
+    def _people(self, names: str) -> list[dict]:
+        """"Priya Nair; a@mail.example" as people: a name with its invented address, an address with its name."""
+        names_of = {address.lower(): name for name, address in self.addresses.items()}
+        found = []
+        for entry in filter(None, (part.strip() for part in names.split(";"))):
+            if "@" in entry:
+                found.append(as_person(names_of.get(entry.lower(), entry), entry))
+            else:
+                found.append(as_person(entry, self.addresses.get(entry, "")))
+        return found
+
+    def _event_summary(self, event: dict) -> dict:
+        return {name: value for name, value in event.items() if name not in ("required", "optional", "body")}
+
     def get(self, mail_id: str) -> dict:
         mail = self._find(mail_id)
+        people = {kind: self._people(mail[kind]) for kind in ("to", "cc", "bcc")}
+        sender = as_person(mail["from"], mail.get("fromAddress", ""))
+        invite = self._event_summary(self.events[mail["invite"]]) if "invite" in mail else None
         return {
             "id": mail["id"],
             "subject": mail["subject"],
@@ -1121,8 +1598,14 @@ class DemoMailbox:
             "fromAddress": mail.get("fromAddress", ""),
             "to": mail["to"],
             "cc": mail["cc"],
+            "bcc": mail["bcc"],
+            "people": people,
+            "peopleCut": False,
+            "answer": answer_plans(sender, people["to"], people["cc"], [], {self.me["address"]}),
+            "kind": "meeting" if invite else "mail",
+            "invite": invite,
             "time": mail["time"],
-            "draft": mail["folder"] == "drafts",
+            "draft": mail["folder"] in ("drafts", "outbox"),
             "body": mail["body"],
             "html": mail.get("html", ""),
             "attachments": [
@@ -1161,14 +1644,23 @@ class DemoMailbox:
             to = request["to"]
             subject = request["subject"]
             body = request["body"]
+            attachments = []
             if request["mode"] in ("reply", "replyAll"):
-                to = to or [source["from"]]
+                if not request["exact"]:
+                    to = to or [source["from"]]
                 subject = subject or "RE: " + source["subject"]
                 body += f"\n\nFrom: {source['from']}\nSubject: {source['subject']}\n\n{source['body']}"
             if request["mode"] == "forward":
                 subject = subject or "FW: " + source["subject"]
                 body += f"\n\nFrom: {source['from']}\nSubject: {source['subject']}\n\n{source['body']}"
-            for address in to:
+            if request["mode"] in ("forward", "draft"):  # the files of the original go along, but for the ones taken out
+                attachments = [dict(file) for file in source["attachments"]]
+                for index, name in request["drop"]:
+                    if not 1 <= index <= len(attachments) or attachments[index - 1]["name"] != name:
+                        raise MailError(f"\u201c{name}\u201d could not be taken out of this message, so nothing was done. Open it again and try once more.")
+                    del attachments[index - 1]
+            attachments += [{"name": file["name"], "size": len(file["data"])} for file in request["files"]]
+            for address in to + request["cc"] + request["bcc"]:
                 if "@" not in address and " " not in address and len(address) < 3:
                     raise MailError(f"Outlook does not know: {address}. Use a full e-mail address.")
             if request["mode"] == "draft":
@@ -1181,10 +1673,50 @@ class DemoMailbox:
                 "fromAddress": self.me["address"],
                 "to": "; ".join(to),
                 "cc": "; ".join(request["cc"]),
+                "bcc": "; ".join(request["bcc"]),
                 "subject": subject or "(no subject)",
                 "body": body,
                 "time": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "attachments": [],
+                "attachments": attachments,
                 "unread": False,
             })
         return {"ok": True, "saved": True} if folder == "drafts" else {"ok": True, "sent": True}
+
+    def calendar(self, offset: int = 0, days: int = CALENDAR_DAYS) -> dict:
+        offset = max(0, min(int(offset), 730))
+        days = max(1, min(int(days), 62))
+        first = dt.date.today() + dt.timedelta(days=offset)
+        after = first + dt.timedelta(days=days)
+        with self.lock:
+            events = [
+                self._event_summary(event) for event in self.events
+                if event["day"] < after.isoformat() and event["lastDay"] >= first.isoformat()
+            ]
+        events.sort(key=lambda event: event["start"])
+        return {"from": first.isoformat(), "days": days, "offset": offset, "events": events, "more": False}
+
+    def event(self, event_id: str) -> dict:
+        for event in self.events:
+            if event["id"] == event_id:
+                return dict(event)
+        raise MailError("That calendar entry was moved or deleted. Refresh the calendar.")
+
+    def act(self, payload: dict) -> dict:
+        request = clean_act_request(payload)
+        with self.lock:
+            if request["what"] == "delete":
+                mail = self._find(request["id"])
+                if mail["folder"] == "deleted":
+                    raise MailError("That message is in Deleted Items already. Deleting it again would remove it for good: do that in Outlook.")
+                mail["folder"] = "deleted"
+                return {"ok": True, "deleted": True}
+            event = next((one for one in self.events if one["id"] == request["id"]), None)
+            if event is None:
+                mail = self._find(request["id"])
+                if "invite" not in mail:
+                    raise MailError("That is not an invitation.")
+                event = self.events[mail["invite"]]
+            if not event["invited"]:
+                raise MailError("This is your own entry: there is nobody to answer.")
+            event["response"] = {"accept": "accepted", "tentative": "tentative", "decline": "declined"}[request["answer"]]
+        return {"ok": True, "responded": request["answer"], "told": True}
