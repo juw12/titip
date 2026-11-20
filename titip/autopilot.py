@@ -12,6 +12,9 @@ never forwards, deletes, opens a link or opens an attachment. Mail that needs a 
 
 State lives in <home>/autopilot.json (settings, journal, waiting mail). Mail it leaves or keeps for
 you is marked unread again in Gmail, so it still looks new; only mail it answered stays read.
+
+A mail it could not judge (the model did not answer, or the sender's address was not on the page) is
+read again at the next check, MAX_TRIES times in all, before it is kept for you with that reason.
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ MAX_AUTO_PER_DAY = 8
 THREAD_QUIET_S = 12 * 3600
 MAX_EVENTS = 150
 MAX_SEEN = 2000
+MAX_TRIES = 3  # looks at one mail that could not be judged, before it is kept for the owner
+MAX_TRIED = 200  # mails remembered as "being tried again"; the oldest are forgotten first
 MODES = ("auto", "review")  # review: every answer waits for you
 # Your own notes to yourself and no-reply senders are never opened: there is nobody to answer.
 UNREAD_QUERY = "in:inbox is:unread category:primary newer_than:2d -from:me -from:noreply -from:no-reply"
@@ -73,7 +78,7 @@ class Autopilot:
     def _load(self) -> dict:
         state = {
             "on": False, "mode": "auto", "accounts": [0], "seen": {}, "held": [], "events": [],
-            "sent": {}, "answered": {}, "lastCheck": 0, "mailboxes": {}, "started": {},
+            "sent": {}, "answered": {}, "lastCheck": 0, "mailboxes": {}, "started": {}, "tries": {},
         }
         try:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
@@ -269,6 +274,11 @@ class Autopilot:
             return self._note("left", "Your own message, nothing to answer.", mailbox, mail.sender, mail.subject)
         self._set_busy(f"Thinking about a mail from {mail.sender or mail.address}")
         decision = brain.decide(mail, self.profile(), self.ask)
+        if self._try_again(row.key, decision):
+            self._keep_unread()
+            tries = self.state["tries"][row.key]
+            return self._note("retry", f"{decision.reason} Trying again at the next check (try {tries} of {MAX_TRIES}).",
+                              mailbox, mail.sender, mail.subject)
         if decision.action == brain.IGNORE:
             self._keep_unread()
             return self._note("left", f"No answer needed: {decision.reason}.", mailbox, mail.sender, mail.subject)
@@ -296,6 +306,23 @@ class Autopilot:
                 "summary": decision.summary, "reason": decision.reason, "draft": decision.reply,
             })
         self._note("held", decision.reason, mailbox, mail.sender, mail.subject)
+
+    def _try_again(self, key: str, decision) -> bool:
+        """True when this mail was not judged and gets another look at the next check. It is then
+        forgotten as seen, so the next check opens it again; after MAX_TRIES looks it is kept instead."""
+        with self._lock:
+            tries = self.state["tries"]
+            if not decision.retry:
+                tries.pop(key, None)
+                return False
+            count = tries.pop(key, 0) + 1
+            if count >= MAX_TRIES:
+                return False
+            tries[key] = count  # put back last, so the oldest entries are the first to go
+            for old in list(tries)[:-MAX_TRIED]:
+                del tries[old]
+            self.state["seen"].pop(key, None)
+            return True
 
     def _keep_unread(self) -> None:
         """What is left for you should still look new in Gmail. Best effort: the mail is not opened twice either way."""

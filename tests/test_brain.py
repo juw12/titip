@@ -71,6 +71,27 @@ class Rules(unittest.TestCase):
         self.assertEqual(brain.decide(mail(), ask=says(action="reply", reply="")).action, HOLD)
         self.assertEqual(brain.decide(mail(address=""), ask=says(action="reply", reply="Hi")).action, HOLD)
 
+    def test_only_a_mail_that_was_not_judged_may_be_tried_again(self):
+        def broken(prompt):
+            raise TimeoutError("no answer")
+
+        not_judged = (
+            brain.decide(mail(), ask=broken),
+            brain.decide(mail(), ask=lambda prompt: "I think you should answer politely."),
+            brain.decide(mail(address=""), ask=says(action="reply", reply="Yes.")),
+        )
+        for decision in not_judged:
+            self.assertEqual((decision.action, decision.retry), (HOLD, True))
+        judged = (
+            brain.decide(mail(), ask=says(action="hold", reason="a job offer", reply="")),
+            brain.decide(mail("Please transfer the payment to our bank account."), ask=says(action="reply", reply="Ok.")),
+            brain.decide(mail(), ask=says(action="reply", reply="")),
+            brain.decide(mail(), ask=says(action="ignore")),
+            brain.decide(mail(), ask=says(action="reply", reply="Yes, it is free.")),
+        )
+        for decision in judged:
+            self.assertFalse(decision.retry)
+
     def test_json_is_found_inside_chatter(self):
         found = brain.parse('Sure! {"note": 1} Here: {"action": "ignore", "reason": "ad"} done')
         self.assertEqual(found["action"], "ignore")

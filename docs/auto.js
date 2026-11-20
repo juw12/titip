@@ -199,7 +199,7 @@
   // ------------------------------------------------------------ drawing
   var state = null, drafts = {}, pending = {}, lastGood = 0;
   var hope = null;  // relay only: the switch you just pressed, shown until the PC's next state arrives
-  var KINDS = { sent: "Answered", held: "Kept for you", left: "Left alone", dropped: "Not answered", error: "Problem", "switch": "You changed" };
+  var KINDS = { sent: "Answered", held: "Kept for you", left: "Left alone", retry: "Trying again", dropped: "Not answered", error: "Problem", "switch": "You changed" };
 
   function headline(s) {
     var boxes = (s.mailboxes || []).join(" and ");

@@ -98,6 +98,7 @@ class Decision:
     summary: str = ""
     reply: str = ""
     by: str = "rule"  # "rule" (decided here) or "model"
+    retry: bool = False  # nothing was decided (the model or the page failed): the same mail may be tried again
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -178,18 +179,20 @@ def enforce(mail: Mail, proposed: dict) -> Decision:
 
 
 def decide(mail: Mail, profile: str = DEFAULT_PROFILE, ask=None) -> Decision:
-    """ask(prompt) -> the model's text. Any failure keeps the mail for the owner; nothing is sent."""
+    """ask(prompt) -> the model's text. Any failure keeps the mail for the owner; nothing is sent.
+    A failure that decided nothing (no address on the page, no usable answer from the model) is marked
+    retry: the mail was not judged, so the same mail may be looked at again."""
     if machine(mail.sender, mail.address):
         return Decision(IGNORE, "sent by a machine (no-reply address)")
     if not mail.address:
-        return Decision(HOLD, "Could not read the sender's address.")
+        return Decision(HOLD, "Could not read the sender's address.", retry=True)
     try:
         answer = (ask or opencode_ask)(build_prompt(mail, profile))
     except Exception as error:  # the model is optional; mail is never lost because it failed
-        return Decision(HOLD, f"The model did not answer ({type(error).__name__}).")
+        return Decision(HOLD, f"The model did not answer ({type(error).__name__}).", retry=True)
     proposed = parse(answer)
     if proposed is None:
-        return Decision(HOLD, "The model's answer could not be read.")
+        return Decision(HOLD, "The model's answer could not be read.", retry=True)
     return enforce(mail, proposed)
 
 
