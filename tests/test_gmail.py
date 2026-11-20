@@ -40,6 +40,59 @@ class Helpers(unittest.TestCase):
         self.assertEqual(gmail.last_sender(cells), ("Tomas Lind", "tomas@lind.example"))
         self.assertEqual(gmail.last_sender(cells[:2]), ("Nadia", "nadia@mail.example"))  # you wrote last
         self.assertEqual(gmail.last_sender(["to me"]), ("", ""))
+        ticked = ["Harbor HR Verified sender jobs@harbor.example"]  # the tick is not part of the name
+        self.assertEqual(gmail.last_sender(ticked), ("Harbor HR", "jobs@harbor.example"))
+
+    def test_the_last_message_gives_the_sender_not_the_last_address_on_the_page(self):
+        # Gmail leaves the address out for somebody you have written to. The thread: you, then Mira.
+        cells = ["Nadia nadia@mail.example", "Thu 19 Nov, 15:49 (17 hours ago)", "Mira Okafor", "Thu 19 Nov, 16:51 (16 hours ago)"]
+        messages = [
+            "Nadia nadia@mail.exampleThu 19 Nov, 15:49 (17 hours ago)to miraDear Mira, a gentle check-in.",
+            "Mira OkaforThu 19 Nov, 16:51 (16 hours ago)to meDear Nadia, your profile is under review.",
+        ]
+        self.assertEqual(gmail.last_header(messages, cells), "Mira Okafor")
+        self.assertEqual(gmail.last_sender([gmail.last_header(messages, cells)]), ("", ""))  # details must say
+        self.assertEqual(gmail.last_header(messages[:1], cells), "Nadia nadia@mail.example")  # you wrote last
+        # A bullet point in a mail is a list item too, and so is a recipient in opened details.
+        bullets = messages + ["three years of experience", "Nadia <nadia@mail.example>"]
+        self.assertEqual(gmail.last_header(bullets, cells), "Mira Okafor")
+        # Spacing differs between a cell and the message that starts with it.
+        spaced = ["Mira  Okafor Thu 19 Nov, 16:51 (16 hours ago) to me Dear Nadia"]
+        self.assertEqual(gmail.last_header(spaced, cells), "Mira Okafor")
+        self.assertEqual(gmail.last_header(["something else entirely"], cells), "")
+        # A message can carry words its cells do not, and the other way round.
+        verified = ["jobs@harbor.example Verified sender", "08:23 (1 hour ago)"]
+        letter = ["jobs@harbor.exampleUnsubscribe08:23 (1 hour ago)to me\n\nDear Nadia, thank you for applying."]
+        self.assertEqual(gmail.last_header(letter, verified), "jobs@harbor.example Verified sender")
+        self.assertEqual(gmail.last_sender([gmail.last_header(letter, verified)]), ("", "jobs@harbor.example"))
+        # The date must stand at the start of the message, not somewhere in its text.
+        late = ["Mira Okafor wrote a long letter. " * 5 + "Thu 19 Nov, 16:51 (16 hours ago)"]
+        self.assertEqual(gmail.last_header(late, cells), "")
+        self.assertEqual(gmail.last_header(messages, []), "")
+
+    def test_show_details_names_the_sender_gmail_left_out(self):
+        details = [
+            ("gridcell", "Nadia nadia@mail.example"), ("gridcell", "Thu 19 Nov, 15:49 (17 hours ago)"),
+            ("gridcell", "Mira Okafor"), ("gridcell", "Thu 19 Nov, 16:51 (16 hours ago)"),
+            ("row", ""), ("rowheader", "from:"), ("gridcell", "Mira Okafor mira@harbor.example "),
+            ("gridcell", "Mira Okafor mira@harbor.example"),
+            ("row", ""), ("rowheader", "to:"), ("gridcell", ""),
+            ("row", ""), ("rowheader", "subject:"), ("gridcell", "Re: a check-in"),
+        ]
+        self.assertEqual(gmail.from_details(details, "Mira Okafor"), ("Mira Okafor", "mira@harbor.example"))
+        self.assertEqual(gmail.from_details(details, "mira  okafor"), ("Mira Okafor", "mira@harbor.example"))
+        # Details that belong to another message are not believed.
+        self.assertEqual(gmail.from_details(details, "Tomas Lind"), ("", ""))
+        # Not opened yet, or a 'from:' row without an address.
+        self.assertEqual(gmail.from_details(details[:4], "Mira Okafor"), ("", ""))
+        self.assertEqual(gmail.from_details(details[:6] + [("row", ""), ("rowheader", "to:"), ("gridcell", "x@y.example")], "Mira Okafor"), ("", ""))
+        # Two messages with open details: the last one counts.
+        earlier = [("row", ""), ("rowheader", "from:"), ("gridcell", "Nadia nadia@mail.example")]
+        self.assertEqual(gmail.from_details(earlier + details, "Mira Okafor"), ("Mira Okafor", "mira@harbor.example"))
+        self.assertEqual(gmail.from_details(details + earlier, "Mira Okafor"), ("", ""))
+        self.assertEqual(gmail.from_details(details, "Mira Okafor Verified sender"), ("Mira Okafor", "mira@harbor.example"))
+        self.assertTrue(gmail.DETAILS_BUTTON.match("Show details"))
+        self.assertFalse(gmail.DETAILS_BUTTON.match("Hide details"))
 
     def test_the_reply_form_must_name_the_one_sender(self):
         groups = ["to me Show details", "Tomas Lind tomas@lind.example", "to Tomas Show details"]
@@ -68,6 +121,83 @@ class Helpers(unittest.TestCase):
         self.assertTrue(gmail.REPLY_BUTTON.match("Reply"))
         self.assertFalse(gmail.REPLY_BUTTON.match("Reply all"))
         self.assertTrue(gmail.DISCARD_BUTTON.match("Discard draft \u202a(Ctrl-Shift-D)\u202c"))
+
+
+class Page(gmail._Window):
+    """A thread as UI Automation shows it: (control type, role, name). 'Show details' adds the details rows."""
+
+    def __init__(self, elements, details=()):  # no browser, no UI Automation
+        self.elements, self.details = list(elements), list(details)
+        self.opened, self.unfolded, self.steps = False, False, []
+
+    def title(self):
+        return "Re: a check-in - nadia@mail.example - Gmail - Google Chrome" if self.opened else "Search results - Gmail"
+
+    def find(self, control_type, inside=None):
+        shown = self.elements + (self.details if self.unfolded else [])
+        return [(name, (role, name)) for kind, role, name in shown if kind == control_type]
+
+    def role(self, element):
+        return element[0]
+
+    def press(self, element):
+        self.opened = True
+        return True
+
+    def expand(self, element, opened=True):
+        self.unfolded = opened
+        self.steps.append("open details" if opened else "close details")
+        return True
+
+    def wait(self, ready, seconds, pause=0.5):
+        ready()
+        return ready()
+
+
+YOU = [(gmail.ROW, "gridcell", "Nadia nadia@mail.example"), (gmail.ROW, "gridcell", "Thu 19 Nov, 15:49 (17 hours ago)"),
+       (gmail.LISTITEM, "listitem", "Nadia nadia@mail.exampleThu 19 Nov, 15:49 (17 hours ago)to miraDear Mira, a gentle check-in.")]
+MIRA = [(gmail.ROW, "gridcell", "Mira Okafor"), (gmail.ROW, "gridcell", "Thu 19 Nov, 16:51 (16 hours ago)"),
+        (gmail.LISTITEM, "listitem", "Mira OkaforThu 19 Nov, 16:51 (16 hours ago)to meDear Nadia, your profile is under review."),
+        (gmail.BUTTON, "button", "Show details")]
+
+
+def details_of(name, address):
+    return [(gmail.ROW, "row", ""), (gmail.ROW, "rowheader", "from:"), (gmail.ROW, "gridcell", f"{name} {address}"),
+            (gmail.ROW, "row", ""), (gmail.ROW, "rowheader", "to:"), (gmail.ROW, "gridcell", ""),
+            (gmail.LISTITEM, "listitem", "Nadia <nadia@mail.example>")]
+
+
+class Reading(unittest.TestCase):
+    """Who a mail is from. An answer to your own mail shows a name only; you wrote the message above it."""
+
+    def read(self, elements, details=()):
+        source = gmail.ChromeGmail()
+        source.window = Page(elements, details)
+        mail = source.read(gmail.Row("key", "Mira Okafor , Re: a check-in", "opener"), "nadia@mail.example")
+        return mail, source.window
+
+    def test_an_answer_to_your_own_mail_is_from_whoever_answered(self):
+        mail, page = self.read(YOU + MIRA, details_of("Mira Okafor", "mira@harbor.example"))
+        self.assertEqual((mail.sender, mail.address), ("Mira Okafor", "mira@harbor.example"))
+        self.assertEqual(mail.subject, "Re: a check-in")
+        self.assertTrue(mail.text.endswith("your profile is under review."))  # read before the details opened
+        self.assertEqual(page.steps, ["open details", "close details"])
+
+    def test_details_of_somebody_else_leave_the_sender_unknown(self):
+        mail, page = self.read(YOU + MIRA, details_of("Nadia", "nadia@mail.example"))
+        self.assertEqual((mail.sender, mail.address), ("", ""))  # never "your own message"
+        self.assertEqual(page.steps[-1], "close details")
+        mail, page = self.read(YOU + MIRA[:3])  # no details to open
+        self.assertEqual((mail.sender, mail.address, page.steps), ("", "", []))
+
+    def test_a_sender_the_page_names_needs_no_details(self):
+        mail, page = self.read(YOU)
+        self.assertEqual((mail.sender, mail.address, page.steps), ("Nadia", "nadia@mail.example", []))
+        stranger = [(gmail.ROW, "gridcell", "Tomas Lind Verified sender tomas@lind.example"), (gmail.ROW, "gridcell", "08:23 (1 hour ago)"),
+                    (gmail.LISTITEM, "listitem", "Tomas Lind tomas@lind.exampleUnsubscribe08:23 (1 hour ago)to meHi, is it free to use?"),
+                    (gmail.LISTITEM, "listitem", "a bullet point in the mail"), (gmail.BUTTON, "button", "Show details")]
+        mail, page = self.read(stranger)
+        self.assertEqual((mail.sender, mail.address, page.steps), ("Tomas Lind", "tomas@lind.example", []))
 
 
 class FakeScreen:
