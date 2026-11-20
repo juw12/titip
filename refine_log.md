@@ -697,7 +697,7 @@ check of the automatic send, which run 9 left unseen.
 
 ### How it was done
 
-- No second mailbox was at hand, so the mail was sent to juwpegatron@gmail.com by itself, through
+- No second mailbox was at hand, so the mail was sent to the personal Gmail mailbox by itself, through
   the Gmail relay the job digest uses. The app never opens such a mail: its search leaves out
   `from:me`, and a mail from the mailbox's own address is kept as "Your own message".
 - So the check ran in a harness outside the app (a script, not in this repository), around the same
