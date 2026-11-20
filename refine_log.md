@@ -775,8 +775,9 @@ in. Not a judged round. Written on a Mac, where there is no Outlook: see Not ver
 
 ### Hard gates (code-checked)
 
-- 290 unit and server tests (229 before), run on macOS with Python 3.14: 286 pass. The 4 that do
-  not are the ones that need Windows' `pythoncom`, as before this run; 10 relay tests need Node.
+- 290 unit and server tests (229 before). All pass on Windows with Python 3.12 (the `tests`
+  workflow, started by hand on the branch). On the Mac it was written on, 286 pass with Python
+  3.14: the 4 that do not need Windows' `pythoncom`, as before this run.
 - 158 browser steps (128 before), all pass, no console error: Reply all with somebody taken out
   and somebody added, Bcc, two files in three pieces, a file too large refused, a forward that
   leaves a file behind, the folder list, a mail stopped in the Outbox with Undo first, the
