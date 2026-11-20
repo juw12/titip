@@ -12,7 +12,7 @@ What that means in practice:
 * Opening a mail marks it as read. Nothing is deleted, moved, forwarded or downloaded, no link in a
   mail is followed, and no cookie or profile file is touched.
 * An answer goes to whoever wrote the last message of the thread that was just read, and only when
-  Gmail's reply form names that one person.
+  Gmail's reply form names that one address and no other.
 * Gmail shows only the name of somebody you have written to before. Their address is then read from
   the message's own "Show details", which is opened and closed again. An earlier message of the
   thread never stands in for the last one.
@@ -74,7 +74,8 @@ CLOSE_WAIT_S = 3
 SAVE_WAIT_S = 3  # Gmail saves "unread" and a sent answer in the background; closing earlier asks "Leave site?"
 WHEN = re.compile(
     r"^(\d{1,2}[:.]\d{2}(\s?[ap]m)?|[a-z]{3,9}\.? \d{1,2}|\d{1,2} [a-z]{3,9}\.?|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})$", re.I)
-TO_LINE = re.compile(r"^to (.+?) show details$", re.I)
+FORM_RECIPIENT = "description"  # the reply form reads its recipient out as 'Name (address)'
+RECIPIENT_WAIT_S = 8
 REPLY_BOX = "Message Body"
 
 
@@ -172,19 +173,20 @@ def from_details(cells, shown: str) -> tuple[str, str]:
     return "", ""
 
 
-def reply_names(group_names) -> list[str]:
-    """Who Gmail's reply form says it will write to: 'to Mateo Show details' -> ['mateo']."""
-    found = [TO_LINE.match(name or "") for name in group_names]
-    return [match.group(1).strip().lower() for match in found if match]
+def form_recipients(before, after) -> list[str]:
+    """The addresses a reply form writes to: what opening it added to the page's recipient lines.
 
-
-def names_match(shown: str, sender: str, address: str) -> bool:
-    """Gmail shows a first name, or the address when the sender gave no name."""
-    shown = (shown or "").strip().lower()
-    if not shown or "," in shown or " and " in shown:  # more than one recipient is never ours
-        return False
-    known = f"{sender} {address} {address.split('@')[0]}".lower()
-    return shown in known.split() or shown == sender.lower() or shown == address.lower()
+    The form names its recipient as 'Name (address)'. Lines that were on the page before Reply was
+    pressed belong to something else and are left out.
+    """
+    left = list(before)
+    added = []
+    for name in after:
+        if name in left:
+            left.remove(name)
+        else:
+            added.append(name)
+    return [address.lower() for name in added for address in ADDRESS.findall(name or "")]
 
 
 def thread_text(message_names, limit: int = brain.MAX_MAIL_CHARS) -> str:
@@ -608,6 +610,7 @@ class ChromeGmail:
         window = self.window
         if window is None or not mail.address:
             raise SourceError("No mail is open to answer.")
+        before = self._recipient_lines()
         buttons = [element for name, element in window.find(BUTTON) if REPLY_BUTTON.match(name)]
         if not buttons or not window.press(buttons[-1]):
             raise SourceError("Gmail showed no Reply button.")
@@ -619,8 +622,8 @@ class ChromeGmail:
         if not window.wait(box, MAIL_WAIT_S):
             raise SourceError("Gmail's reply box did not open.")
         try:
-            if not self._addressed_to(mail):
-                raise SourceError(f"The reply box is not addressed to {mail.address}. Nothing was sent.")
+            if not window.wait(lambda: self._addressed_to(mail, before), RECIPIENT_WAIT_S):
+                raise SourceError(f"The reply box is not addressed to {mail.address} alone. Nothing was sent.")
             if window.text_of(box()).strip():
                 raise SourceError("The reply box already holds a draft. Nothing was sent.")
             if not window.set_text(box(), text) or not window.wait(lambda: same_text(text, window.text_of(box())), 10):
@@ -639,17 +642,17 @@ class ChromeGmail:
         if not window.wait(sent, SENT_WAIT_S):
             raise SourceError("Gmail did not confirm the answer as sent. Look in Drafts and Sent.")
 
-    def _addressed_to(self, mail: brain.Mail) -> bool:
-        """True when the reply form writes to the person who wrote the last message, and only to them.
-
-        Gmail's form shows 'to <first name>'; the newest such line on the page is the form's own.
-        Together with read(), which takes the sender from the last message of the thread, an answer
-        cannot go to a thread the mail was not read from.
-        """
+    def _recipient_lines(self) -> list[str]:
         window = self.window
-        groups = [name for control_type in (50025, 50026) for name, _ in window.find(control_type)]
-        shown = reply_names(groups)
-        return bool(shown) and names_match(shown[-1], mail.sender, mail.address)
+        return [name for name, element in window.find(TEXT) if ADDRESS.search(name) and window.role(element) == FORM_RECIPIENT]
+
+    def _addressed_to(self, mail: brain.Mail, before) -> bool:
+        """True when the reply form writes to the address the last message came from, and to no other.
+
+        Together with read(), which takes the sender from the last message of the thread, an answer
+        cannot go to a thread the mail was not read from, nor to a Reply-To address nobody saw.
+        """
+        return set(form_recipients(before, self._recipient_lines())) == {mail.address.lower()}
 
     def _discard(self) -> None:
         for name, element in self.window.find(BUTTON):
