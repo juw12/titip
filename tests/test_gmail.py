@@ -95,13 +95,16 @@ class Helpers(unittest.TestCase):
         self.assertFalse(gmail.DETAILS_BUTTON.match("Hide details"))
 
     def test_the_reply_form_must_name_the_one_sender(self):
-        groups = ["to me Show details", "Tomas Lind tomas@lind.example", "to Tomas Show details"]
-        self.assertEqual(gmail.reply_names(groups), ["me", "tomas"])
-        self.assertTrue(gmail.names_match("tomas", "Tomas Lind", "tomas@lind.example"))
-        self.assertTrue(gmail.names_match("billing", "", "billing@harbor.example"))
-        self.assertFalse(gmail.names_match("mallory", "Tomas Lind", "tomas@lind.example"))
-        self.assertFalse(gmail.names_match("tomas, mallory", "Tomas Lind", "tomas@lind.example"))
-        self.assertFalse(gmail.names_match("", "Tomas Lind", "tomas@lind.example"))
+        form = ["Tomas Lind \n(tomas@lind.example)"]
+        self.assertEqual(gmail.form_recipients([], form), ["tomas@lind.example"])
+        self.assertEqual(gmail.form_recipients([], ["Billing@Harbor.example"]), ["billing@harbor.example"])
+        two = ["Tomas Lind (tomas@lind.example), Mallory (mallory@elsewhere.example)"]
+        self.assertEqual(gmail.form_recipients([], two), ["tomas@lind.example", "mallory@elsewhere.example"])
+        # A line that was on the page before Reply was pressed is not the form's.
+        there = ["Mallory (mallory@elsewhere.example)"]
+        self.assertEqual(gmail.form_recipients(there, there + form), ["tomas@lind.example"])
+        self.assertEqual(gmail.form_recipients(there, there), [])
+        self.assertEqual(gmail.form_recipients(form, form + form), ["tomas@lind.example"])  # the same line, new
 
     def test_a_long_thread_keeps_its_newest_message(self):
         text = gmail.thread_text(["old " * 3000, "", "the newest message"], limit=500)
@@ -198,6 +201,71 @@ class Reading(unittest.TestCase):
                     (gmail.LISTITEM, "listitem", "a bullet point in the mail"), (gmail.BUTTON, "button", "Show details")]
         mail, page = self.read(stranger)
         self.assertEqual((mail.sender, mail.address, page.steps), ("Tomas Lind", "tomas@lind.example", []))
+
+
+class Form(Page):
+    """An open mail whose Reply button opens a form for the given recipient lines."""
+
+    def __init__(self, recipients, lines_before=()):
+        super().__init__([(gmail.BUTTON, "button", "Reply")] + [(gmail.TEXT, "description", line) for line in lines_before])
+        self.recipients, self.written, self.sent = list(recipients), "", False
+
+    def press(self, element):
+        name = element[1]
+        if name == "Reply":
+            self.elements += [(gmail.TEXT, "description", line) for line in self.recipients]
+            self.elements += [(gmail.EDIT, "textbox", gmail.REPLY_BOX), (gmail.BUTTON, "button", "Send"),
+                              (gmail.BUTTON, "button", "Discard draft")]
+        elif name == "Send":
+            self.sent = True
+            self.elements = [entry for entry in self.elements if entry[0] not in (gmail.EDIT,) and entry[2] != "Send"]
+        elif name == "Discard draft":
+            self.steps.append("discarded")
+            self.elements = [entry for entry in self.elements if entry[0] != gmail.EDIT and entry[2] != "Send"]
+        return True
+
+    def text_of(self, element):
+        return self.written
+
+    def set_text(self, element, text):
+        self.written = text
+        return True
+
+
+class Answering(unittest.TestCase):
+    """An answer leaves only when Gmail's own form names the address the mail came from, and no other."""
+
+    def answer(self, recipients, lines_before=()):
+        source = gmail.ChromeGmail()
+        source.window = page = Form(recipients, lines_before)
+        mail = gmail.brain.Mail("nadia@mail.example", "Tomas Lind", "Tomas@lind.example", "Your template", "Hi")
+        try:
+            source.reply(mail, "Thank you, Tomas.\n\nNadia")
+        except gmail.SourceError as error:
+            return page, str(error)
+        return page, ""
+
+    def test_the_answer_goes_to_the_sender(self):
+        page, error = self.answer(["Tomas Lind \n(tomas@lind.example)"])
+        self.assertEqual((error, page.sent, page.written), ("", True, "Thank you, Tomas.\n\nNadia"))
+
+    def test_nothing_is_sent_to_another_or_a_second_address(self):
+        for recipients in (
+            ["Mallory (mallory@elsewhere.example)"],
+            ["Tomas Lind (tomas@lind.example)", "Mallory (mallory@elsewhere.example)"],
+            [],  # the form names nobody
+        ):
+            page, error = self.answer(recipients)
+            self.assertIn("not addressed to Tomas@lind.example alone", error, recipients)
+            self.assertEqual((page.sent, page.written, page.steps), (False, "", ["discarded"]), recipients)
+
+    def test_a_line_from_before_the_form_does_not_count(self):
+        line = "Tomas Lind (tomas@lind.example)"
+        page, error = self.answer([], lines_before=[line])  # on the page already, the form itself names nobody
+        self.assertTrue(error)
+        self.assertFalse(page.sent)
+        page, error = self.answer(["Tomas Lind \n(tomas@lind.example)"], lines_before=["Mallory (mallory@elsewhere.example)"])
+        self.assertEqual((error, page.sent), ("", True))
 
 
 class FakeScreen:
