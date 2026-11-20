@@ -13,6 +13,9 @@ What that means in practice:
   mail is followed, and no cookie or profile file is touched.
 * An answer goes to whoever wrote the last message of the thread that was just read, and only when
   Gmail's reply form names that one person.
+* Gmail shows only the name of somebody you have written to before. Their address is then read from
+  the message's own "Show details", which is opened and closed again. An earlier message of the
+  thread never stands in for the last one.
 
 Check what this PC can read:  python -m titip.gmail          (mailboxes and how many unread, no text)
 """
@@ -46,7 +49,7 @@ MUTEX = "ReachPilotChromeMail"  # shared with ReachPilot: one hidden Gmail windo
 
 # UI Automation control types and patterns
 BUTTON, EDIT, LINK, LISTITEM, TEXT, ROW, DOCUMENT = 50000, 50004, 50005, 50007, 50020, 50029, 50030
-INVOKE_PATTERN, VALUE_PATTERN, TEXT_PATTERN = 10000, 10002, 10014
+INVOKE_PATTERN, VALUE_PATTERN, TEXT_PATTERN, EXPAND_PATTERN = 10000, 10002, 10014, 10005
 
 OUR_TITLE = re.compile(r"untitled|gmail|mail\.google\.com|sign in|google accounts", re.I)
 SIGN_IN_TITLE = re.compile(r"sign in|google accounts", re.I)
@@ -58,6 +61,12 @@ SEND_BUTTON = re.compile(r"^send(\s*\W*\(.*\)\W*)?$", re.I)
 DISCARD_BUTTON = re.compile(r"^discard draft", re.I)
 SENT_NOTICE = re.compile(r"^message sent", re.I)
 UNREAD_BUTTON = re.compile(r"^mark as unread", re.I)
+DETAILS_BUTTON = re.compile(r"^show details$", re.I)
+FROM_HEADER = re.compile(r"^from:?$", re.I)
+DETAILS_WAIT_S = 10
+TIME_OF_DAY = re.compile(r"\b\d{1,2}[:.]\d{2}\b")  # every date cell of an open thread carries one
+HEADER_SLACK = 80  # characters a message may put between its sender and its date
+VERIFIED = re.compile(r"\bverified sender\b", re.I)  # the tick Gmail puts next to some senders, read out as words
 LEAVE_BUTTON = re.compile(r"^leave", re.I)
 STAY_BUTTON = re.compile(r"^(cancel|stay)", re.I)
 CLOSE_TRIES = 3
@@ -116,8 +125,50 @@ def last_sender(cell_names) -> tuple[str, str]:
     for name in reversed(list(cell_names)):
         found = ADDRESS.search(name or "")
         if found:
-            shown = re.sub(r"[<>()]", " ", name[:found.start()])
+            shown = VERIFIED.sub(" ", re.sub(r"[<>()]", " ", name[:found.start()]))
             return re.sub(r"\s+", " ", shown).strip(), found.group(0)
+    return "", ""
+
+
+def _bare(text: str) -> str:
+    return re.sub(r"\s+", "", text or "").lower()
+
+
+def last_header(message_names, cell_names) -> str:
+    """The header cell ('Name address', or only 'Name') of the last message of a thread.
+
+    Header cells and date cells come in pairs, one pair per message, and a message's text starts with
+    its sender and its date. Gmail leaves the address out for people you have written to, so "the
+    last cell with an address" can belong to an earlier message (often your own). A bullet point
+    inside a mail is a list item too and starts with neither. Between the two a message can carry
+    words the cells do not ('Unsubscribe'), and a cell words the message does not ('Verified sender').
+    """
+    cells = [name for name in cell_names if name and name.strip()]
+    pairs = [(header, when) for header, when in zip(cells, cells[1:]) if TIME_OF_DAY.search(when) and not ADDRESS.search(when)]
+    for message in reversed([_bare(name) for name in message_names if name and name.strip()]):
+        for header, when in reversed(pairs):
+            if message.startswith(_bare(header.split()[0])) and _bare(when) in message[:len(_bare(header)) + HEADER_SLACK]:
+                return header
+    return ""
+
+
+def from_details(cells, shown: str) -> tuple[str, str]:
+    """(name, address) from the rows 'Show details' adds; cells are (role, name) in page order.
+
+    Only the last 'from:' row counts, and only when it carries the name the message itself shows:
+    details of another message are never believed.
+    """
+    cells = [(role, (name or "").strip()) for role, name in cells]
+    starts = [index for index, (role, name) in enumerate(cells) if role == "rowheader" and FROM_HEADER.match(name)]
+    if not starts:
+        return "", ""
+    for role, name in cells[starts[-1] + 1:]:
+        if role != "gridcell":
+            break
+        sender, address = last_sender([name])
+        if address:
+            same = not shown.strip() or _bare(sender) == _bare(VERIFIED.sub(" ", shown))
+            return (sender, address) if same else ("", "")
     return "", ""
 
 
@@ -400,6 +451,17 @@ class _Window:
         finally:
             self.park()  # pressing focuses the page, which brings the window forward
 
+    def expand(self, element, opened: bool = True) -> bool:
+        """Opens (or closes) something that unfolds in place, like a message's 'Show details'."""
+        try:
+            pattern = element.GetCurrentPattern(EXPAND_PATTERN).QueryInterface(self.api.IUIAutomationExpandCollapsePattern)
+            pattern.Expand() if opened else pattern.Collapse()
+            return True
+        except Exception:
+            return False
+        finally:
+            self.park()
+
     def text_of(self, element) -> str:
         try:
             pattern = element.GetCurrentPattern(TEXT_PATTERN).QueryInterface(self.api.IUIAutomationTextPattern)
@@ -515,10 +577,31 @@ class ChromeGmail:
             return done
 
         window.wait(settled, MAIL_WAIT_S, pause=1.0)
-        cells = [name for name, element in window.find(ROW) if ADDRESS.search(name) and window.role(element) != "row"]
-        sender, address = last_sender(cells)
         subject = subject_from_title(window.title(), mailbox)
+        cells = [name for name, element in window.find(ROW) if window.role(element) == "gridcell"]
+        header = last_header(messages, cells)
+        sender, address = last_sender([header])
+        if header and not address:  # somebody you have written to: Gmail shows the name only
+            sender, address = self._sender_from_details(header)
         return brain.Mail(mailbox, sender, address, subject, thread_text(messages))
+
+    def _sender_from_details(self, shown: str) -> tuple[str, str]:
+        """Who wrote the last message, from its 'Show details'. ('', '') when the page does not say."""
+        window = self.window
+        buttons = [element for name, element in window.find(BUTTON) if DETAILS_BUTTON.match(name)]
+        if not buttons:
+            return "", ""
+        button = buttons[-1]  # the last message's; from_details checks the name, so a wrong one is not believed
+        if not window.expand(button) and not window.press(button):
+            return "", ""
+
+        def rows():
+            return [(window.role(element), name) for name, element in window.find(ROW)]
+
+        window.wait(lambda: from_details(rows(), shown)[1], DETAILS_WAIT_S)
+        found = from_details(rows(), shown)
+        window.expand(button, opened=False)
+        return found
 
     def reply(self, mail: brain.Mail, text: str) -> None:
         """Presses Reply on the open mail, writes the text and presses Send. Raises SourceError otherwise."""

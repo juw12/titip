@@ -64,6 +64,10 @@ A mail it could not judge, because the model did not answer or Gmail's page did 
 address, is read again at the next look, three times in all, before it is kept for you with that
 reason. The Autopilot page shows each of those looks as *Trying again*.
 
+The sender is always whoever wrote the last message of the thread. Gmail shows only the name of
+somebody you have written to before, a recruiter answering your application for one. Autopilot then
+opens that message's own *Show details*, reads the address from its *from:* line and closes it again.
+
 What it can never do is fixed in code, not in a prompt:
 
 - answer anyone but the sender of the mail it just read
