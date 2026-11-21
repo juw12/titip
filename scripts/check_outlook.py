@@ -377,8 +377,10 @@ def main() -> int:
                 job = box._do(box._thing, "contacts", made["id"], timeout=120)["job"]
             finally:
                 box.keep({"kind": "contacts", "what": "remove", "id": made["id"]})
-            if full["emails"] != ["titip-check@example.com"] or full["mobile"] != "+00 000 0100" or job != "Changed":
-                raise MailError(f"the contact holds {len(full['emails'])} addresses, its number {bool(full['mobile'])}, changed {job == 'Changed'}")
+            # Outlook writes a number its own way ("+00 000 0100" comes back as "+00 (000) 0100"): the digits count
+            number = "".join(sign for sign in full["mobile"] if sign.isdigit() or sign == "+") == "+000000100"
+            if full["emails"] != ["titip-check@example.com"] or not number or job != "Changed":
+                raise MailError(f"the contact holds {len(full['emails'])} addresses, its number as given {number}, changed {job == 'Changed'}")
             return "made, found by its name, read back with address and number, changed, moved to Deleted Items"
 
         attempt("a contact", contact)
