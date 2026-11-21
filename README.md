@@ -240,7 +240,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.11.0`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.11.1`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page.
 
@@ -401,6 +401,14 @@ Titip opens a door from your network to your mailbox. Read this first.
   month first, and the way that worked is remembered.
 - Files that wait to be attached hold back a restart for an update for two minutes, and are
   dropped after fifteen when no mail came for them.
+- A reply you started in Outlook's reading pane on the PC, or a draft that is clicked there, is
+  being written in that pane, and Outlook then refuses to send, delete or move it for anyone else
+  ("This method can't be used with an inline response mail item"). Before Titip sends, deletes or
+  moves a draft it looks whether an Outlook window has it open like that, and makes the window let
+  go: first by selecting nothing, then by showing Sent for a moment (the folder it showed comes
+  back), last by opening the draft in a window of its own. Leaving the pane, Outlook saves what
+  was typed there; text you did not change on the phone leaves as Outlook saved it. If Outlook
+  still holds on, the phone says so: click another mail on the PC, then send again.
 - A mail sent for later is handed to Outlook at once, with the time before which it is not to be
   delivered. Outlook must be open on the PC at that time for it to leave; if it is not, the mail
   leaves the next time Outlook runs. It can wait 60 days at most. The time is set, read back, and

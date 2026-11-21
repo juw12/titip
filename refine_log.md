@@ -1068,3 +1068,50 @@ delayed send. Not a judged round. Written on the Mac, which has no Outlook.
 - Run 14's fix on the real PC, still: nobody has reported a forward going through since.
 
 stop: run 15 ended with 0.11.0 merged to `main`; the PC moves to it by itself.
+
+## Run 16 (2026-11-21): a draft Outlook has open in its reading pane (0.11.1)
+
+Asked for: "my draft still says this methd cant be used with an inline respons mail item when i
+want it send, fix it". Not a judged round. Written on the Mac, which has no Outlook.
+
+### What was wrong
+
+- A reply started in Outlook's reading pane, or a draft clicked in the list, is written in that
+  pane. Outlook calls it an inline response, and while one is open it refuses Send, Delete and
+  Move on that item from any other program. Titip passed Outlook's sentence on as it came.
+- The object model has no call that sends such a draft all the same (the author of Redemption
+  says so in the answers this was checked against). What people report as working is what a
+  person does: click something else first.
+
+### Changes kept
+
+- Before a draft is sent, saved, deleted or moved, Titip asks every Outlook window whether it has
+  that draft open in its pane (`Explorer.ActiveInlineResponse`, by the draft's id). A window that
+  has is made to let go, the gentlest way first: select nothing; show Sent (the folder it showed
+  comes back afterwards); open the draft in a window of its own. After each way Outlook is asked
+  again, for up to two seconds.
+- Leaving the pane makes Outlook save what was typed there. The phone was shown the draft as it
+  was saved before that, so text the phone did not change no longer counts as a change: the
+  draft leaves as Outlook saved it, formatting and all.
+- If Outlook holds on, or refuses in these words for any other reason, the phone gets what to do
+  instead of Outlook's sentence: "click another mail on the PC, then try again".
+- `scripts/check_outlook.py` says how many Outlook windows there are and how many are writing in
+  their reading pane.
+
+### Hard gates (code-checked)
+
+- 434 unit and server tests (416 before). New, against a stand-in window that refuses exactly as
+  Outlook does: each of the three ways alone is enough; the folder is put back; another draft in
+  the pane is left alone; two windows; text typed on the PC since the phone read the draft is
+  what leaves; a failed put-back never turns a sent mail into an error; a busy Outlook is busy.
+- 258 browser steps, all pass. The phone's page did not change but for its version.
+
+### Not verified
+
+- All of it on a real Outlook. Which of the three ways is the one that works there is not known:
+  the first is the least disturbing and is an inference, the second and third are what people
+  report. The order costs at most a few seconds if the first does nothing.
+- A draft held like this in an Outlook that is not English: the look at the windows does not
+  depend on the language, the last-resort rewording of Outlook's sentence does.
+
+stop: run 16 ended with 0.11.1 merged to `main`; the PC moves to it by itself.
