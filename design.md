@@ -98,6 +98,11 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
   list, importance a red exclamation mark: the two marks Outlook has, in the two colours Titip has.
 - A list to pick from (folders to move to, categories to tick) rises from the bottom over a dimmed page.
 - A calendar entry is written on the same sheet as a mail, with the same labels for people.
+- Formatting is four small keys over the text (B, I, U, List) that write marks; the text field stays
+  a text field. No toolbar of colours and fonts.
+- What changes the mailbox itself (a folder made, renamed, taken out; rules) sits under the list of
+  folders, as words in link blue. A name is typed into the same sheet a list is picked from.
+- The calendar says whose it is in one line over the days, with the way to another one.
 - PC out of reach: the list from memory if there is one, and one sentence that names the cause (see
   "When the phone cannot reach your PC" in the README). Otherwise "Can't show your mail", the reason,
   and Try again.

@@ -366,5 +366,50 @@
  "signature": {
   "new": "Rin Aoki\nHardware, Lumenworks\nrin.aoki@lumenworks.example",
   "reply": "Rin"
- }
+ },
+ "calendars": [
+  {
+   "id": "f.de30000000.00000000000000C1",
+   "name": "Priya Nair",
+   "group": "Shared calendars",
+   "events": [
+    {
+     "subject": "Customer call: hinge torque window",
+     "inDays": 0,
+     "at": "11:00",
+     "minutes": 60,
+     "location": "Online",
+     "organizer": "Priya Nair",
+     "required": "Customer"
+    },
+    {
+     "subject": "Design review",
+     "inDays": 2,
+     "at": "10:00",
+     "minutes": 90,
+     "location": "Meeting room 3",
+     "organizer": "Priya Nair",
+     "required": "Rin Aoki; Mateo Silva"
+    },
+    {
+     "subject": "Away: supplier visit",
+     "inDays": 4,
+     "allDay": true,
+     "days": 2,
+     "organizer": "Priya Nair",
+     "busy": "away"
+    }
+   ]
+  }
+ ],
+ "rules": [
+  {
+   "name": "Okafor Supplies → Suppliers",
+   "on": true
+  },
+  {
+   "name": "Newsletters → Junk",
+   "on": false
+  }
+ ]
 }

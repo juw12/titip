@@ -24,7 +24,10 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   or as plain text. Attachments download to the phone.
 - Reply, Reply all, Forward and new mail. Outlook adds the earlier thread. A new mail starts with
   the **signature** Outlook has for new mail, an answer with the one for answers, as text under the
-  cursor: change it or take it out. **High importance** is a button under the text.
+  cursor: change it or take it out. **High importance** and **Read receipt** are buttons under the text.
+- **B**, **I**, **U** and **List** over the text put marks around what you selected (`**bold**`,
+  `*italic*`, `__underlined__`, `- ` in front of a line). In the mail that leaves they are bold,
+  italic, underlined and a real list. Typed without those keys, every sign stays as you typed it.
 - An answer lists who it goes to, To and Cc, the way Outlook addressed it, and you can change that:
   take somebody out, put somebody in, move somebody to Cc. It works the same for Reply, Reply all
   and Forward. **Bcc** opens a third line. The mail goes to the people listed and to nobody else.
@@ -36,12 +39,21 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   answered with **Accept**, **Tentative** or **Decline**, from the calendar or from the mail that
   brought it, and the organizer is told as if you had answered in Outlook.
 - **New entry** on the calendar makes an appointment, or with people in it a meeting, and Outlook
-  invites them. An entry of your own opens with **Change** and **Delete** (**Cancel the meeting**
-  when people are invited, and they are told).
+  invites them. It can **repeat** every day, week, month or year, a number of times or without an
+  end, and **remind** you from a week before down to the minute it starts. An entry of your own
+  opens with **Change** and **Delete** (**Cancel the meeting** when people are invited, and they
+  are told). Change lists **who is invited**: take somebody off, put somebody on. Of an entry that
+  repeats you are asked: only this one, or the whole series.
+- **Other calendars** on the calendar page: more of your own and the ones people share with you,
+  as Outlook lists them. They are read; nothing in them is answered or changed from the phone.
 - **Delete** moves a message to Deleted Items. A draft is discarded the same way, and a mail deleted
   from the Outbox does not leave.
 - **More**, next to Delete: **Mark as unread**, **Flag**, **Move to a folder** (any folder of your own,
-  so also Archive), **Categories** (Outlook's own, ticked). A flag and high importance show in the list.
+  so also Archive), **Categories** (Outlook's own, ticked, and **New category**), **Always move mail
+  from this sender** (Outlook makes a rule). A flag and high importance show in the list.
+- Under the list of folders: **New folder** (inside the folder you are in), **Rename this folder**,
+  **Take out this folder** (an empty one of your own only), and **Rules**: Outlook's rules, each
+  switched on or off.
 - A mail you open on the phone is marked read in Outlook too, the way Outlook's own phone app does it.
 - Type a few letters in To or Cc and Titip suggests the people of your own mail, name and address,
   the ones you write to first, and under them people from Outlook's address book (the company
@@ -208,7 +220,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.9.0`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.10.0`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page.
 
@@ -334,6 +346,19 @@ Titip opens a door from your network to your mailbox. Read this first.
   of a signature do not come along. If Outlook keeps its signatures only online, there is none.
 - An entry's time is handed to the PC as one moment, so a phone in another time zone still makes it
   at the hour you meant. The PC sets the time, reads it back, and sets it again if Outlook shifted it.
+- A rule made on the phone is the plainest Outlook has: mail from one sender goes to one folder.
+  It is named "sender → folder", runs after the rules that were there, and is changed or taken out in
+  Outlook. Rules are those of your own mailbox, not of other data files.
+- Who is invited: the people a meeting requires are listed. Yourself, optional guests and rooms stay
+  as they are. Somebody taken off is no longer on the meeting; Outlook's object model does not send
+  a cancellation for one person, so tell them yourself.
+- One time of a series is found by when it starts. If Outlook takes that time as written on
+  another clock, it is asked again shifted by the PC's distance from UTC, and what comes back must
+  start at the right moment or nothing is changed. When a series takes place is changed in Outlook.
+- Other calendars are the ones Outlook lists at the side of its own calendar, which needs an
+  Outlook window open on the PC. One that cannot be reached is left out of the list.
+- Marks become formatting only when the keys over the text were used in that mail and a mark is
+  still in it. A mark needs text right inside it: `2 * 3 * 4` and `snake__case` stay as typed.
 - The Outbox, Deleted, Junk, your own folders and the calendar are not read ahead: they are asked
   for when you open them. The calendar is kept for a minute, and read again after you answered an invitation.
 - Calendar dates are asked of Outlook in the way your PC writes dates (Windows' short date), a day
@@ -366,13 +391,17 @@ Titip opens a door from your network to your mailbox. Read this first.
   edit on the phone goes as plain text.
 - Search looks at subject and sender (recipient in Sent), and at the text only when you tick it.
 - The subject of an answer or a forward is Outlook's (RE:, FW:) and cannot be changed.
-- The calendar is your own; shared calendars are not shown. A repeating entry, an entry over several
-  days with hours, and who is invited to a meeting are changed in Outlook. A repeating meeting is
-  answered as a whole series. Outlook takes a declined meeting out of the calendar.
+- When a series takes place, an entry over several days with hours, optional guests and rooms are
+  changed in Outlook. An entry made to repeat on the phone repeats on the day or date it starts on,
+  every one of them (not every second week, not the last Friday). A repeating meeting is answered
+  as a whole series. Outlook takes a declined meeting out of the calendar.
 - Delete moves to Deleted Items. Nothing is removed for good from the phone, and Deleted Items is not emptied.
-- Folders are opened and moved into, not made, renamed or deleted. Categories are ticked, not made.
-- It is laid out like Outlook's phone app but is not it: no swipe to delete, no reminders, no rules,
-  no read receipts asked for, no formatted text or pictures in what you write, no contacts page.
+- A folder that holds mail or folders is not taken out from the phone, and Outlook's own folders are
+  never renamed or taken out. Categories have no colour chosen for them on the phone.
+- Formatting is bold, italic, underlined and lists. No fonts, colours, tables or pictures in the
+  text; a picture goes along as a file.
+- It is laid out like Outlook's phone app but is not it: no swipe to delete, no reminder that
+  rings on the phone, no tasks, notes or contacts pages, no out-of-office switch, no delayed send.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 
@@ -392,7 +421,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 and 0.10.0 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

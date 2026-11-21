@@ -145,11 +145,13 @@ body.mail { background: var(--paper); }
 .ownName small { color: var(--muted); font-size: 13px; }
 /* what can be done with the message that is open: the same kind of list, at the other edge */
 .doMenu { position: absolute; top: auto; left: auto; right: var(--s4); margin-top: calc(-1 * var(--s1)); }
-.doMenu button {
+.doMenu button, .menuDo button {
   display: flex; align-items: center; width: 100%; min-height: var(--tap); padding: 0 var(--s4);
   background: none; border: 0; text-align: left;
 }
-.doMenu button:hover { background: var(--wash); }
+.doMenu button:hover, .menuDo button:hover { background: var(--wash); }
+.menuDo { margin-top: var(--s1); border-top: 1px solid var(--line); }
+.menuDo button { color: var(--link); font-weight: 600; }
 .tick { display: flex; align-items: center; gap: var(--s2); min-height: 44px; color: var(--ink-2); font-size: 14px; }
 .tick input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
 .folderMenu a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; background: var(--signal); }
@@ -198,8 +200,10 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   background: var(--ground); border-bottom: 1px solid var(--line);
 }
 .demo a { color: var(--link); font-weight: 600; white-space: nowrap; }
-#outboxNote { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding-top: 0; padding-bottom: 0; }
-#outboxNote a { flex: none; display: inline-flex; align-items: center; min-height: 44px; }
+#outboxNote, #calBar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding-top: 0; padding-bottom: 0; }
+#outboxNote a, #calBar .link { flex: none; display: inline-flex; align-items: center; min-height: 44px; }
+#calBar .link { padding: 0; font-size: 13px; text-decoration: underline; }
+#calName { font-weight: 600; color: var(--ink); }
 
 /* ---------- list */
 .panes { display: block; }
@@ -373,7 +377,22 @@ button:disabled { opacity: 0.55; cursor: default; }
 .composeFoot { display: flex; align-items: center; gap: var(--s2) var(--s3); flex-wrap: wrap; padding-top: var(--s2); }
 .composeFoot button { display: inline-flex; align-items: center; gap: 6px; }
 .composeFoot button svg { width: 18px; height: 18px; }
-.composeFoot button[aria-pressed="true"] { background: var(--pick); border-color: var(--line-strong); color: var(--stamp); }
+/* the marks for bold, italic, underlined and a list: small keys over the text */
+.formatBar { display: flex; align-items: center; gap: var(--s1); padding-top: var(--s1); }
+.formatBar button {
+  flex: none; min-width: 44px; min-height: 44px; padding: 0 var(--s3); white-space: nowrap;
+  background: none; border: 1px solid transparent; border-radius: var(--radius); color: var(--ink-2); font-size: 16px;
+}
+.formatBar button:hover, .formatBar button:active { background: var(--wash); border-color: var(--line); }
+.formatBar .footNote { margin-left: var(--s2); min-width: 0; }
+.field select {
+  width: 100%; min-height: var(--tap); padding: var(--s2) 0; background: none; border: 0; color: inherit; font: inherit;
+}
+.hours2 .pair select { width: auto; flex: 1 1 auto; }
+.hours2 .pair input[type="number"] { width: 84px; flex: none; }
+.field :disabled { color: var(--muted); }
+.composeFoot button[aria-pressed="true"] { background: var(--pick); border-color: var(--line-strong); }
+#important[aria-pressed="true"] { color: var(--stamp); }
 /* a calendar entry is written on the same sheet as a mail */
 .hours2 .pair { display: flex; align-items: center; gap: var(--s3); color: var(--muted); }
 .hours2 .pair input { width: auto; flex: 0 1 auto; }
@@ -389,6 +408,13 @@ button:disabled { opacity: 0.55; cursor: default; }
   display: flex; align-items: center; justify-content: space-between; gap: var(--s3); width: 100%; min-height: 52px; padding: 6px 0;
   background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left;
 }
+.pickerForm { display: flex; gap: var(--s2); padding: var(--s2) 0; }
+.pickerForm input {
+  flex: 1; min-width: 0; min-height: var(--tap); padding: var(--s2) var(--s3);
+  background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius);
+}
+.pickerForm .primary { min-height: var(--tap); padding: 0 var(--s5); border: 0; border-radius: var(--radius); font-weight: 600; }
+#pickerExtra { margin-top: var(--s1); }
 .tickBox { flex: none; width: 22px; height: 22px; border: 1.5px solid var(--line-strong); border-radius: 4px; }
 .pickOne[aria-checked="true"] .tickBox { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--paper); }
 .footNote { color: var(--muted); font-size: 13px; }

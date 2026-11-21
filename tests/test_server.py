@@ -377,6 +377,29 @@ class MoreOfOutlook(ServerCase):
         self.assertEqual((status, answer["error"]), (400, "Give it a title first."))
         self.assertEqual(self.post("/api/plan", order, cookie=False)[0], 401)
 
+    def test_other_calendars_rules_and_what_is_made_or_renamed(self):
+        reply, got = self.get("/api/calendars")
+        shared = got["calendars"][0]
+        self.assertEqual((reply.status, shared["name"]), (200, "Priya Nair"))
+        _, page = self.get("/api/calendar?which=" + shared["id"])
+        self.assertEqual((len(page["events"]), page["events"][0]["mine"]), (3, False))
+        self.assertEqual(self.app.mail_call("calendar", {"which": shared["id"]}), (200, page))  # what the relay is answered with
+        self.assertEqual(self.get("/api/calendar?which=nothing")[0].status, 502)
+        _, rules = self.get("/api/rules")
+        self.assertEqual([rule["on"] for rule in rules["rules"]][:2], [True, False])
+        self.assertEqual(self.post("/api/arrange", {"what": "rule", "name": rules["rules"][1]["name"], "on": True}), (200, {"ok": True, "on": True}))
+        status, made = self.post("/api/arrange", {"what": "folder", "name": "Made over the wire"})
+        self.assertEqual((status, made["name"]), (200, "Made over the wire"))
+        self.assertEqual(self.post("/api/arrange", {"what": "rename", "id": made["id"], "name": "Renamed"})[0], 200)
+        self.assertEqual(self.post("/api/arrange", {"what": "unfolder", "id": made["id"]}), (200, {"ok": True, "removed": True}))
+        status, answer = self.post("/api/arrange", {"what": "folder", "name": "a/b"})
+        self.assertEqual(status, 400)
+        self.assertIn("without", answer["error"])
+        self.assertEqual(self.post("/api/arrange", {"what": "category", "name": "Wired"}), (200, {"ok": True, "name": "Wired"}))
+        for path in ("/api/calendars", "/api/rules"):
+            self.assertEqual(self.phone("GET", path)[0].status, 401, path)
+        self.assertEqual(self.post("/api/arrange", {"what": "category", "name": "Stranger"}, cookie=False)[0], 401)
+
     def test_who_an_answer_goes_to_is_shown_and_then_exactly_that_is_sent(self):
         _, page = self.get("/api/mail?folder=inbox&q=hinge")
         _, item = self.get("/api/item?id=" + page["mail"][0]["id"])
