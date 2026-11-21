@@ -11,7 +11,9 @@ never forwards, deletes, opens a link or opens an attachment. Mail that needs a 
 "Waiting for you" with a draft; Send there sends your wording.
 
 State lives in <home>/autopilot.json (settings, journal, waiting mail). Mail it leaves or keeps for
-you is marked unread again in Gmail, so it still looks new; only mail it answered stays read.
+you is marked unread again in Gmail, so it still looks new; only mail it answered stays read. With
+the setting "leftRead" (command left, read=True) the mail it leaves alone stays read as well: then
+only what waits for you, or is looked at again, is unread.
 
 A mail it could not judge (the model did not answer, or the sender's address was not on the page) is
 read again at the next check, MAX_TRIES times in all, before it is kept for you with that reason.
@@ -79,6 +81,7 @@ class Autopilot:
         state = {
             "on": False, "mode": "auto", "accounts": [0], "seen": {}, "held": [], "events": [],
             "sent": {}, "answered": {}, "lastCheck": 0, "mailboxes": {}, "started": {}, "tries": {},
+            "leftRead": False,
         }
         try:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
@@ -88,6 +91,10 @@ class Autopilot:
             pass
         if state["mode"] not in MODES:
             state["mode"] = "auto"
+        from .gmail import row_key  # here, because gmail imports this module
+
+        for name in ("seen", "tries"):  # keys saved before 0.10.2 kept the time of a mail with an attachment
+            state[name] = {row_key(key): value for key, value in state[name].items()}
         return state
 
     def _save(self) -> None:
@@ -139,6 +146,7 @@ class Autopilot:
                 "available": self.source is not None,
                 "on": state["on"],
                 "mode": state["mode"],
+                "leftRead": bool(state["leftRead"]),
                 "busy": self.busy,
                 "lastCheck": state["lastCheck"],
                 "nextCheck": state["lastCheck"] + self.interval if state["on"] else 0,
@@ -152,7 +160,7 @@ class Autopilot:
 
     # ------------------------------------------------------------ commands (any thread)
     def command(self, name: str, **details) -> dict:
-        """switch(on), mode(mode), check, send(id, text), drop(id). Slow ones run on the worker thread."""
+        """switch(on), mode(mode), left(read), check, send(id, text), drop(id). Slow ones run on the worker thread."""
         if name == "switch":
             with self._lock:
                 self.state["on"] = bool(details.get("on"))
@@ -163,6 +171,11 @@ class Autopilot:
             with self._lock:
                 self.state["mode"] = details["mode"]
             self._note("switch", "Answers go out on their own." if details["mode"] == "auto" else "Every answer waits for you.")
+        elif name == "left" and isinstance(details.get("read"), bool):
+            with self._lock:
+                self.state["leftRead"] = details["read"]
+            self._note("switch", "Mail that needs no answer stays read." if details["read"]
+                       else "Mail that needs no answer is marked unread again.")
         elif name == "drop":
             item = self._take(str(details.get("id", "")))
             if item:
@@ -270,7 +283,7 @@ class Autopilot:
             for key in sorted(self.state["seen"], key=self.state["seen"].get)[:-MAX_SEEN]:
                 del self.state["seen"][key]
         if mail.address.lower() == mailbox.lower():
-            self._keep_unread()
+            self._leave()
             return self._note("left", "Your own message, nothing to answer.", mailbox, mail.sender, mail.subject)
         self._set_busy(f"Thinking about a mail from {mail.sender or mail.address}")
         decision = brain.decide(mail, self.profile(), self.ask)
@@ -280,7 +293,7 @@ class Autopilot:
             return self._note("retry", f"{decision.reason} Trying again at the next check (try {tries} of {MAX_TRIES}).",
                               mailbox, mail.sender, mail.subject)
         if decision.action == brain.IGNORE:
-            self._keep_unread()
+            self._leave()
             return self._note("left", f"No answer needed: {decision.reason}.", mailbox, mail.sender, mail.subject)
         if decision.action == brain.REPLY:
             blocked = self._blocked(index, mail)
@@ -323,6 +336,11 @@ class Autopilot:
                 del tries[old]
             self.state["seen"].pop(key, None)
             return True
+
+    def _leave(self) -> None:
+        """A mail that needs no answer: unread again, unless you chose that it stays read ("leftRead")."""
+        if not self.state["leftRead"]:
+            self._keep_unread()
 
     def _keep_unread(self) -> None:
         """What is left for you should still look new in Gmail. Best effort: the mail is not opened twice either way."""

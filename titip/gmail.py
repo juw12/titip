@@ -72,8 +72,10 @@ STAY_BUTTON = re.compile(r"^(cancel|stay)", re.I)
 CLOSE_TRIES = 3
 CLOSE_WAIT_S = 3
 SAVE_WAIT_S = 3  # Gmail saves "unread" and a sent answer in the background; closing earlier asks "Leave site?"
-WHEN = re.compile(
-    r"^(\d{1,2}[:.]\d{2}(\s?[ap]m)?|[a-z]{3,9}\.? \d{1,2}|\d{1,2} [a-z]{3,9}\.?|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})$", re.I)
+A_WHEN = r"(\d{1,2}[:.]\d{2}(\s?[ap]m)?|[a-z]{3,9}\.? \d{1,2}|\d{1,2} [a-z]{3,9}\.?|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})"
+WHEN = re.compile("^" + A_WHEN + "$", re.I)
+WHEN_AFTER_COMMA = re.compile(r",\s*" + A_WHEN + r"(?= , |$)", re.I)  # 'has attachment, 14:31'
+KEY_LENGTH = 280
 FORM_RECIPIENT = "description"  # the reply form reads its recipient out as 'Name (address)'
 RECIPIENT_WAIT_S = 8
 REPLY_BOX = "Message Body"
@@ -89,11 +91,16 @@ def row_key(text: str) -> str:
     """The same mail before and after it was opened, and today and tomorrow.
 
     Gmail starts unread rows with 'unread' and shows '14:31' today but 'Nov 17' tomorrow, so both are
-    left out. A new message in the thread changes the count and the snippet, and so the key.
+    left out, also where the time follows a note ('has attachment, 14:31'). A new message in the thread
+    changes the count and the snippet, and so the key.
+
+    row_key(key) of a key saved before 0.10.2 (300 characters, the time after a note still in it) gives
+    the key the same row has now: that is why a key is a little shorter than 300.
     """
     parts = [part.strip() for part in re.sub(r"\s+", " ", text or "").split(" , ")]
     kept = [part for part in parts if part and not WHEN.match(part)]
-    return re.sub(r"^unread,?\s*", "", " , ".join(kept), flags=re.I)[:300]
+    key = re.sub(r"^unread,?\s*", "", " , ".join(kept), flags=re.I)
+    return WHEN_AFTER_COMMA.sub("", key)[:KEY_LENGTH]
 
 
 def is_unread(text: str) -> bool:

@@ -1,4 +1,5 @@
 """The parts of the Gmail reader that need no browser."""
+import re
 import unittest
 from unittest import mock
 
@@ -23,6 +24,25 @@ class Helpers(unittest.TestCase):
             self.assertEqual(gmail.row_key(today), gmail.row_key(later), later)
         answer = "unread, Tomas Lind , me 2 , Your template , 15:02 , And for companies?"
         self.assertNotEqual(gmail.row_key(today), gmail.row_key(answer))
+
+    def test_a_mail_with_an_attachment_keeps_its_key_over_midnight(self):
+        today = "unread, Mira Voss , The drawing , has attachment, 08:28 , Dear Juwen, see the file"
+        tomorrow = "Mira Voss , The drawing , has attachment, 18 Nov , Dear Juwen, see the file"
+        self.assertEqual(gmail.row_key(today), "Mira Voss , The drawing , has attachment , Dear Juwen, see the file")
+        self.assertEqual(gmail.row_key(tomorrow), gmail.row_key(today))
+        # a key saved by an older Titip still held the day: the same function brings it to the key of today
+        saved_before = "Mira Voss , The drawing , has attachment, 18 Nov , Dear Juwen, see the file"
+        self.assertEqual(gmail.row_key(saved_before), gmail.row_key(today))
+        self.assertEqual(gmail.row_key(gmail.row_key(today)), gmail.row_key(today))
+        for when in ("18 Nov", "November 18", "18/11/2026", "8:28 PM"):  # also where the row is longer than a key
+            long_row = "unread, Mira Voss , The drawing , has attachment, 08:28 , " + "many words " * 40
+            later = long_row.replace("08:28", when)
+            self.assertEqual(gmail.row_key(later), gmail.row_key(long_row), when)
+            saved_before = re.sub(r"^unread,?\s*", "", " ".join(later.split()))[:300]
+            self.assertEqual(gmail.row_key(saved_before), gmail.row_key(long_row), when)
+        plain = "unread, Tomas Lind , Your template , 14:31 , " + "many words " * 40
+        saved_before = "Tomas Lind , Your template , " + ("many words " * 40).strip()
+        self.assertEqual(gmail.row_key(saved_before[:300]), gmail.row_key(plain))
 
     def test_no_mail_is_believed_only_when_gmail_says_so(self):
         self.assertEqual(gmail.results_state(2, []), "rows")

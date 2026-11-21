@@ -161,7 +161,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _auto_order(self, body: dict) -> None:
         """Pause, mode, look now, send a waiting answer, or leave it unanswered."""
-        details = {name: body[name] for name in ("on", "mode", "id", "text") if name in body}
+        details = {name: body[name] for name in ("on", "mode", "id", "text", "read") if name in body}
         try:
             self._json(200, self.app.auto_state(self.app.autopilot.command(str(body.get("command", "")), **details)))
         except ValueError as error:

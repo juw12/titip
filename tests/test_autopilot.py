@@ -185,6 +185,23 @@ class Loop(unittest.TestCase):
         self.assertEqual(self.kinds()[-2:], ["left", "left"])
         self.assertEqual(self.box.unread_again, ["m1", "m2"])
 
+    def test_left_mail_stays_read_when_you_chose_so_and_what_waits_for_you_does_not(self):
+        self.assertFalse(self.pilot.snapshot()["leftRead"])
+        self.assertTrue(self.pilot.command("left", read=True)["leftRead"])
+        self.box.put("m1", "Nadia", "nadia@mail.example", "Note to self", "Buy stamps")
+        self.box.put("m2", "Shop", "no-reply@shop.example", "Receipt", "Thanks for your order")
+        self.box.put("m3", "Harbor Print", "billing@harbor.example", "Invoice", "Please transfer the payment to our bank account.")
+        self.pilot.check()
+        self.assertEqual(self.kinds()[-3:], ["left", "left", "held"])
+        self.assertEqual(self.box.unread_again, ["m3"])  # only what waits for you still looks new
+        self.assertTrue(self.make(answer()).state["leftRead"])  # the choice outlives a restart
+        with self.assertRaises(ValueError):
+            self.pilot.command("left", read="yes")
+        self.pilot.command("left", read=False)
+        self.box.put("m4", "Shop", "no-reply@shop.example", "Another receipt", "Thanks again")
+        self.pilot.check()
+        self.assertEqual(self.box.unread_again, ["m3", "m4"])
+
     def test_your_own_mail_and_no_reply_senders_are_not_even_listed(self):
         for wanted in ("is:unread", "category:primary", "-from:me", "-from:noreply", "-from:no-reply"):
             self.assertIn(wanted, autopilot.UNREAD_QUERY.split())
@@ -292,6 +309,16 @@ class Loop(unittest.TestCase):
         self.assertEqual(len(again.snapshot()["held"]), 1)
         again.check()
         self.assertEqual(len(again.snapshot()["held"]), 1)  # not read a second time
+
+    def test_a_mail_seen_by_an_older_titip_is_not_opened_again(self):
+        before = "Mira Voss , The drawing , has attachment, 18 Nov , Dear Juwen, see the file"
+        state_file = Path(self.folder.name) / "autopilot.json"
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        state["seen"][before] = int(self.now)
+        state_file.write_text(json.dumps(state), encoding="utf-8")
+        again = self.make(answer())
+        self.assertIn("Mira Voss , The drawing , has attachment , Dear Juwen, see the file", again.state["seen"])
+        self.assertNotIn(before, again.state["seen"])
 
     def test_bad_requests_are_refused(self):
         with self.assertRaises(ValueError):

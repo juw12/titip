@@ -100,6 +100,14 @@ for each mail does one of three things. All three are written down on the **Auto
   a draft. You edit it and press Send, or press Don't answer.
 - **Leaves it alone.** Newsletters, receipts, machines.
 
+What it keeps for you or leaves alone is marked unread again in Gmail, so it still looks new; only a
+mail it answered stays read. If something else on your PC reads through the mail it leaves alone,
+you can have that mail stay read, so that only what waits for you is unread. Ask Titip once, on the PC:
+
+```
+curl -X POST http://127.0.0.1:47780/api/auto -H "X-Titip: 1" -H "Content-Type: application/json" -d "{\"command\": \"left\", \"read\": true}"
+```
+
 A mail it could not judge, because the model did not answer or Gmail's page did not show the sender's
 address, is read again at the next look, three times in all, before it is kept for you with that
 reason. The Autopilot page shows each of those looks as *Trying again*.
@@ -220,7 +228,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.10.1`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.10.2`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page.
 
