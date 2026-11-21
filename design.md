@@ -103,6 +103,14 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
 - What changes the mailbox itself (a folder made, renamed, taken out; rules) sits under the list of
   folders, as words in link blue. A name is typed into the same sheet a list is picked from.
 - The calendar says whose it is in one line over the days, with the way to another one.
+- Tasks, notes and contacts are lists like the mail: a task and a note without initials, the name
+  and one line under it; a contact with its initials. A task that is overdue has the orange edge,
+  one that is done is struck through. They open in the letter, and are written on the same sheet
+  as a mail. The button at the thumb says what it makes: New task, New note, New contact.
+- What is switched (automatic replies, reminders on this phone, open or done tasks) is one line
+  over the list: the fact on the left, the way to change it on the right, as words in link blue.
+- Send later is a button under the text like High importance; pressed, it shows a day and a time
+  over the buttons, and the button at the top says Send later.
 - PC out of reach: the list from memory if there is one, and one sentence that names the cause (see
   "When the phone cannot reach your PC" in the README). Otherwise "Can't show your mail", the reason,
   and Try again.

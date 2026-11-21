@@ -10,7 +10,9 @@ invitation. Opens a folder of your own, flags, labels, moves and marks a mail, s
 writes with the signature and high importance, and makes, changes and cancels a meeting. Formats a
 mail and asks for a read receipt, makes, renames and takes out a folder, switches a rule on and makes
 one, makes a category, reads a shared calendar, and makes an entry that repeats, changes one time of it,
-deletes the series and changes who is invited to a meeting. Then Autopilot: on the paired phone, on the public page (demo), and
+deletes the series and changes who is invited to a meeting. Makes, changes, ticks off and deletes a
+task, a note and a contact, writes to a contact, sends a mail for later and stops it in the Outbox,
+switches the automatic replies, and lets a reminder ring on the phone. Then Autopilot: on the paired phone, on the public page (demo), and
 through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
 trip: the code for any network opens the public mail app, a stand-in relay with the worker's rules
 passes sealed text, this Titip answers. Then the iPhone Home Screen: a browser with an iPhone's name
@@ -811,7 +813,8 @@ def main() -> None:
             page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
             page.click("#folderPick")
             expect(page.locator("#ownFolders a")).to_have_count(3, timeout=10000)
-            check(page.locator("#folderDo button:visible").all_inner_texts() == ["New folder", "Rules"], "under the folders: New folder and Rules")
+            check(page.locator("#folderDo button:visible").all_inner_texts() == ["New folder", "Rules", "Automatic replies: off"],
+                  "under the folders: New folder, Rules and the automatic replies")
             page.click("#folderNew")
             expect(page.locator("#pickerForm")).to_be_visible()
             page.fill("#pickerText", "Tool/ing")
@@ -828,7 +831,7 @@ def main() -> None:
             made.click()
             page.wait_for_selector("#state strong:has-text('Nothing here yet')")
             page.click("#folderPick")
-            check(page.locator("#folderDo button:visible").all_inner_texts() == ["New folder", "Rename this folder", "Take out this folder", "Rules"],
+            check(page.locator("#folderDo button:visible").all_inner_texts() == ["New folder", "Rename this folder", "Take out this folder", "Rules", "Automatic replies: off"],
                   "a folder of your own can be renamed and taken out")
             page.click("#folderRename")
             check(page.input_value("#pickerText") == "Tooling", "Rename starts from the name it has")
@@ -952,6 +955,258 @@ def main() -> None:
             check("priya.nair@lumenworks.example" in page.inner_text("#to") and "Marek" not in page.inner_text("#to"), "the meeting holds the people it was changed to")
             page.click("#back")
 
+            # ---- 0.11.0: tasks, notes and contacts; a mail that leaves later; automatic replies; reminders on this phone
+            tomorrow = time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400))
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            page.click("#folderPick")
+            check([name.split()[0] for name in page.locator("#folderMenu a").all_inner_texts()[6:10]] == ["Calendar", "Tasks", "Notes", "Contacts"],
+                  "under the mail folders and the calendar: Tasks, Notes and Contacts")
+            page.click("#folderMenu a[data-folder=tasks]")
+            things = page.locator("#rows .row")
+            expect(things).to_have_count(4, timeout=15000)
+            check(page.inner_text("#folderName") == "Tasks" and "Due today" in things.first.inner_text() and things.first.locator(".bang").count() == 1
+                  and page.inner_text("#thingSay") == "Open tasks" and page.inner_text("#write").strip() == "New task"
+                  and page.locator("#remindBar").is_hidden() and overflow(page) <= 0,
+                  "the tasks that are open, the one due first on top, and the button makes a new task")
+            page.screenshot(path=SHOTS / "phone-tasks.png")
+            page.click("#write")
+            check(page.inner_text("#thingTitleBar") == "New task" and page.locator("#thingDue").is_visible() and page.locator("#thingCompany").is_hidden(),
+                  "a new task asks for what a task has, not for a company")
+            page.click("#thingSave")
+            check("Say what is to be done first" in page.inner_text("#thingError"), "a task without a name is refused before the PC is asked")
+            page.fill("#thingName", "Check the tool quote")
+            page.fill("#thingDue", tomorrow)
+            page.check("#thingImportant")
+            page.screenshot(path=SHOTS / "phone-new-task.png")
+            posted.clear()
+            page.click("#thingSave")
+            expect(page.locator("#toastText")).to_have_text("Saved", timeout=30000)
+            kept = next(body for name, body in posted if name == "keep")
+            check((kept["kind"], kept["what"], kept["id"], kept["due"], kept["important"]) == ("tasks", "save", "", tomorrow, True),
+                  "the PC is handed the task with its day and that it matters")
+            quote = page.locator("#rows .row:has-text('Check the tool quote')")
+            expect(quote).to_have_count(1, timeout=15000)
+            check("Due tomorrow" in quote.inner_text() and things.count() == 5, "the new task is in the list with the day it is due")
+            quote.click()
+            page.wait_for_selector("#actions button:text-is('Done')")
+            check(page.inner_text("#subject") == "Check the tool quote" and page.inner_text("#tags") == "Due tomorrow \u00b7 High importance"
+                  and page.locator("#actions button").all_inner_texts() == ["Done", "Change", "Delete"] and overflow(page) <= 0,
+                  "a task opens with its day, and can be ticked off, changed or deleted")
+            task_id = page.url.split("#/tasks/")[1]
+            page.click("#actions button:has-text('Change')")
+            check(page.inner_text("#thingTitleBar") == "Change the task" and page.input_value("#thingName") == "Check the tool quote"
+                  and page.input_value("#thingDue") == tomorrow and page.is_checked("#thingImportant"), "Change opens the task as it is")
+            page.fill("#thingBody", "Ask for 100 pieces first.")
+            posted.clear()
+            page.click("#thingSave")
+            expect(page.locator("#toastText")).to_have_text("Saved", timeout=30000)
+            check(next(body for name, body in posted if name == "keep")["id"] == task_id != "", "the change names the task that is there, and no second one is made")
+            expect(quote).to_have_count(1, timeout=15000)
+            quote.click()
+            page.wait_for_selector("#body pre:has-text('Ask for 100 pieces first.')")
+            page.click("#actions button:text-is('Done')")
+            expect(page.locator("#toastText")).to_have_text("Done", timeout=30000)
+            expect(quote).to_have_count(0, timeout=15000)
+            page.click("#thingFlip")
+            expect(page.locator("#rows .row.off")).to_have_count(2, timeout=15000)
+            check(page.inner_text("#thingSay") == "Done tasks" and quote.count() == 1, "ticked off, it leaves the open tasks and is among the done ones")
+            quote.click()
+            page.wait_for_selector("#actions button:text-is('Not done')")
+            page.click("#actions button:text-is('Not done')")
+            expect(page.locator("#toastText")).to_have_text("Open again", timeout=30000)
+            expect(page.locator("#rows .row.off")).to_have_count(1, timeout=15000)
+            page.click("#thingFlip")
+            expect(quote).to_have_count(1, timeout=15000)
+            quote.click()
+            page.wait_for_selector("#actions button:has-text('Delete')")
+            page.click("#actions button:has-text('Delete')")
+            expect(page.locator("#toastText")).to_contain_text("Deleting in")
+            page.click("#toastAction")
+            page.wait_for_timeout(3600)
+            check(page.inner_text("#subject") == "Check the tool quote" and page.locator("#toast").is_hidden(), "Undo within three seconds and the task stays")
+            page.click("#actions button:has-text('Delete')")
+            expect(page.locator("#toastText")).to_have_text("Moved to Deleted", timeout=30000)
+            expect(things).to_have_count(4, timeout=15000)
+            check(quote.count() == 0, "deleted, the task is gone from the list")
+
+            page.click("#folderPick")
+            page.click("#folderMenu a[data-folder=notes]")
+            expect(things).to_have_count(3, timeout=15000)
+            check(page.inner_text("#folderName") == "Notes" and "Hinge torque window" in things.first.inner_text() and "0.40" in things.first.inner_text()
+                  and page.inner_text("#write").strip() == "New note" and page.locator("#thingBar").is_hidden(),
+                  "the notes, newest first, each with its first line as its name")
+            page.click("#write")
+            check(page.locator("#thingName").is_hidden() and page.locator("#thingBody").is_visible(), "a note is its text and nothing else")
+            page.click("#thingSave")
+            check("Write the note first" in page.inner_text("#thingError"), "an empty note is not saved")
+            page.fill("#thingBody", "Tool quote\nAsk Okafor for 100 pieces first.")
+            page.click("#thingSave")
+            expect(page.locator("#toastText")).to_have_text("Saved", timeout=30000)
+            expect(things).to_have_count(4, timeout=15000)
+            check("Tool quote" in things.first.inner_text(), "the new note is on top")
+            page.screenshot(path=SHOTS / "phone-notes.png")
+            things.first.click()
+            page.wait_for_selector("#body pre")
+            check(page.inner_text("#subject") == "Tool quote" and page.inner_text("#body pre") == "Ask Okafor for 100 pieces first."
+                  and page.locator("#actions button").all_inner_texts() == ["Change", "Delete"], "a note opens with its first line as the title and the rest under it")
+            page.click("#actions button:has-text('Change')")
+            check(page.input_value("#thingBody") == "Tool quote\nAsk Okafor for 100 pieces first.", "Change opens the whole text of the note")
+            page.fill("#thingBody", "Tool quote\nAsk Okafor for 100 pieces first.\nAnd the lead time.")
+            page.click("#thingSave")
+            expect(page.locator("#toastText")).to_have_text("Saved", timeout=30000)
+            expect(page.locator("#rows .row:has-text('And the lead time.')")).to_have_count(1, timeout=15000)
+            things.first.click()
+            page.wait_for_selector("#actions button:has-text('Delete')")
+            page.click("#actions button:has-text('Delete')")
+            expect(page.locator("#toastText")).to_have_text("Moved to Deleted", timeout=30000)
+            expect(things).to_have_count(3, timeout=15000)
+            check(True, "a note is changed and deleted")
+
+            page.click("#folderPick")
+            page.click("#folderMenu a[data-folder=contacts]")
+            expect(things).to_have_count(5, timeout=15000)
+            names = [text.split("\n")[1] if len(text.split("\n")[0]) <= 2 else text.split("\n")[0] for text in things.all_inner_texts()]
+            check(names == sorted(names) and names[0] == "Ada Okafor" and "Okafor Supplies" in things.first.inner_text()
+                  and page.inner_text("#write").strip() == "New contact" and overflow(page) <= 0, f"the contacts by name, each with its company ({names})")
+            page.screenshot(path=SHOTS / "phone-contacts.png")
+            page.click("#searchToggle")
+            check(page.locator("#deep").is_hidden(), "a search in the contacts does not offer to look in the text of the mail")
+            page.fill("#q", "okafor")
+            expect(things).to_have_count(2, timeout=15000)
+            check(True, "a search finds contacts by name or company")
+            page.click("#searchToggle")
+            expect(things).to_have_count(5, timeout=15000)
+            things.first.click()
+            page.wait_for_selector("#actions button:has-text('Write a mail')")
+            ways = page.locator("#files a")
+            check(page.inner_text("#subject") == "Ada Okafor" and page.inner_text("#tags") == "Sales \u00b7 Okafor Supplies"
+                  and ways.first.inner_text() == "orders@okafor-supplies.example" and ways.nth(1).get_attribute("href") == "tel:+000000142"
+                  and "Quotes come back within two days." in page.inner_text("#body") and overflow(page) <= 0,
+                  "a contact opens with the address to write to and the numbers to call")
+            page.screenshot(path=SHOTS / "phone-contact.png")
+            page.click("#actions button:has-text('Write a mail')")
+            expect(page.locator("#composer")).to_be_visible()
+            check(page.locator("#toField .chipName").all_inner_texts() == ["Ada Okafor"], "Write a mail opens a new mail to that contact")
+
+            # a mail that leaves later
+            page.fill("#subjectInput", "Quote for tomorrow")
+            page.fill("#bodyInput", "Dear Ada,\nplease send the quote for 100 pieces.")
+            check(page.locator("#laterField").is_hidden() and page.inner_text("#send") == "Send", "a mail leaves at once unless you say otherwise")
+            page.click("#laterFlip")
+            check(page.locator("#laterField").is_visible() and page.input_value("#laterDay") == tomorrow and page.input_value("#laterTime") == "08:00"
+                  and page.inner_text("#send") == "Send later" and page.get_attribute("#laterFlip", "aria-pressed") == "true" and overflow(page) <= 0,
+                  "Send later asks when, and starts from tomorrow morning")
+            page.screenshot(path=SHOTS / "phone-send-later.png")
+            page.fill("#laterDay", time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400)))
+            page.click("#send")
+            check("still to come" in page.inner_text("#composeError") and page.locator("#composer").is_visible(), "a time that has passed is refused, and nothing is sent")
+            page.fill("#laterDay", tomorrow)
+            posted.clear()
+            page.click("#send")
+            expect(page.locator("#toastText")).to_contain_text("It waits in the Outbox until then.", timeout=30000)
+            leaves = time.mktime(time.strptime(tomorrow + " 08:00", "%Y-%m-%d %H:%M"))
+            waiting = next(body for name, body in posted if name == "send")
+            check(waiting["later"].startswith(time.strftime("%Y-%m-%dT%H:%M", time.gmtime(leaves))) and page.inner_text("#toastText").startswith("Leaves "),
+                  f"the PC is told the moment it is to leave ({waiting['later']}), and the phone says when that is")
+            page.click("#back")
+            page.click("#folderPick")
+            page.click("#folderMenu a[data-folder=outbox]")
+            page.wait_for_selector(".row .subject:has-text('Quote for tomorrow')")
+            check(page.locator(".row").count() == 1, "until then the mail waits in the Outbox")
+            page.locator(".row").first.click()
+            page.wait_for_selector("#body pre")
+            page.click("#remove")
+            expect(page.locator("#toastText")).to_have_text("Deleted. It will not be sent.", timeout=30000)
+            check(True, "and there it can still be stopped")
+
+            # a new contact
+            page.click("#folderPick")
+            page.click("#folderMenu a[data-folder=contacts]")
+            expect(things).to_have_count(5, timeout=15000)
+            page.click("#write")
+            check(page.inner_text("#thingTitleBar") == "New contact" and page.locator("#thingDue").is_hidden() and page.locator("#thingEmail").is_visible(),
+                  "a new contact asks for a name, a company, an address and numbers")
+            page.fill("#thingName", "Lena Fischer")
+            page.fill("#thingCompany", "Fischer Tooling")
+            page.fill("#thingEmail", "lena@")
+            page.click("#thingSave")
+            check("not complete" in page.inner_text("#thingError"), "half an address is refused")
+            page.fill("#thingEmail", "lena@fischer-tooling.example")
+            page.fill("#thingMobile", "+00 000 0177")
+            page.click("#thingSave")
+            expect(page.locator("#toastText")).to_have_text("Saved", timeout=30000)
+            expect(things).to_have_count(6, timeout=15000)
+            lena = page.locator("#rows .row:has-text('Lena Fischer')")
+            check("Fischer Tooling" in lena.inner_text(), "the new contact is in the list")
+            lena.click()
+            page.wait_for_selector("#actions button:has-text('Delete')")
+            page.click("#actions button:has-text('Delete')")
+            expect(page.locator("#toastText")).to_have_text("Moved to Deleted", timeout=30000)
+            expect(things).to_have_count(5, timeout=15000)
+
+            # automatic replies: the switch
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            check(page.locator("#awayNote").is_hidden(), "nothing is said over the list while automatic replies are off")
+            page.click("#folderPick")
+            page.click("#awayOpen")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(1)
+            check("Switch on" in page.inner_text("#pickerList") and "set in Outlook" in page.inner_text("#picker"), "the automatic replies can be switched on; their text is Outlook's")
+            page.screenshot(path=SHOTS / "phone-away.png")
+            posted.clear()
+            page.locator("#pickerList .pickOne").first.click()
+            expect(page.locator("#toastText")).to_have_text("Automatic replies are on", timeout=30000)
+            check(next(body for name, body in posted if name == "arrange") == {"what": "away", "on": True} and page.locator("#awayNote").is_visible()
+                  and overflow(page) <= 0, "switched on, the list says so until they are off again")
+            page.click("#folderPick")
+            check(page.inner_text("#awayOpen") == "Automatic replies: on", "and so does the list of folders")
+            page.keyboard.press("Escape")
+            page.click("#awayOff")
+            expect(page.locator("#toastText")).to_have_text("Automatic replies are off", timeout=30000)
+            check(page.locator("#awayNote").is_hidden(), "Switch off, right there, puts them off")
+
+            # reminders that ring on this phone
+            page.click(".tabs a[data-folder=calendar]")
+            page.wait_for_selector(".row.event")
+            check(page.locator("#remindBar").is_visible() and page.inner_text("#remindSay") == "Reminders do not ring on this phone."
+                  and page.inner_text("#remindFlip") == "Switch on", "on the calendar: reminders can ring on this phone, and do not until asked")
+            soon = time.time() + 180
+            page.click("#write")
+            page.fill("#planSubject", "Call the tool shop")
+            page.fill("#planDay", time.strftime("%Y-%m-%d", time.localtime(soon)))
+            page.fill("#planFrom", time.strftime("%H:%M", time.localtime(soon)))
+            page.fill("#planTo", time.strftime("%H:%M", time.localtime(soon + 1800)))
+            page.select_option("#planRemind", "5")
+            page.click("#planSave")
+            expect(page.locator("#toastText")).to_have_text("Saved to the calendar", timeout=30000)
+            expect(page.locator(".row.event:has-text('Call the tool shop')")).to_have_count(1, timeout=15000)
+            page.click("#remindFlip")
+            expect(page.locator("#toastText")).to_contain_text("Call the tool shop, ", timeout=45000)
+            check(page.inner_text("#toastText").startswith("Coming up: ") and page.inner_text("#toastAction") == "Show"
+                  and page.inner_text("#remindSay") == "Reminders ring on this phone while Titip is open." and overflow(page) <= 0,
+                  "switched on, an entry whose reminder is due is said on the phone")
+            page.screenshot(path=SHOTS / "phone-reminder.png")
+            told = page.evaluate("localStorage.getItem('titip.reminded')")
+            page.click("#toastAction")
+            if len(json.loads(told)) == 1:   # at some hours an entry of the demo calendar is due too: Show then opens the calendar, not one entry
+                page.wait_for_selector("#actions button:has-text('Delete')")
+                check(page.inner_text("#subject") == "Call the tool shop" and page.locator("#toast").is_hidden(), "Show opens the entry that is due")
+                page.click("#back")
+            page.click("#remindFlip")
+            check(page.inner_text("#remindSay") == "Reminders do not ring on this phone." and page.evaluate("localStorage.getItem('titip.remind')") == "0",
+                  "Switch off stops them")
+            page.click("#remindFlip")   # on again: the phone looks once more, and what it said already it does not say again
+            page.wait_for_timeout(1500)
+            check(len(json.loads(told)) >= 1 and page.evaluate("localStorage.getItem('titip.reminded')") == told and page.locator("#toast").is_hidden(),
+                  "an entry is said once, not every time the phone looks")
+            page.click("#remindFlip")
+            page.locator(".row.event:has-text('Call the tool shop')").click()
+            page.wait_for_selector("#actions button:has-text('Delete')")
+            page.click("#actions button:has-text('Delete')")
+            expect(page.locator("#toastText")).to_have_text("Deleted from the calendar", timeout=30000)
+            expect(page.locator(".row.event:has-text('Call the tool shop')")).to_have_count(0, timeout=15000)
+
             # ---- search and empty state
             page.click(".tabs a[data-folder=inbox]")
             page.click("#searchToggle")
@@ -1027,6 +1282,20 @@ def main() -> None:
                     .filter(pair => pair[1] < 44)"""
             )
             check(not small, f"phone tap targets are at least 44 px {small if small else ''}")
+            for name in ("tasks", "notes", "contacts", "calendar"):   # the pages of 0.11.0, and the calendar with its line about reminders
+                page.set_viewport_size({"width": 320, "height": 700})
+                page.goto(page.url.split("#")[0] + "#/" + name)
+                page.wait_for_selector("#rows .row")
+                low = page.evaluate(
+                    """() => [...document.querySelectorAll('button, a, input, textarea')]
+                        .filter(e => e.offsetParent !== null)
+                        .map(e => [e.id || e.className || e.textContent.trim().slice(0, 20), Math.round(e.getBoundingClientRect().height)])
+                        .filter(pair => pair[1] < 44)"""
+                )
+                check(overflow(page) <= 0 and not low, f"the {name} page fits a 320 px phone, and what is tapped there is 44 px high {low if low else ''}")
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.goto(page.url.split("#")[0] + "#/inbox")
+            page.wait_for_selector(".row")
 
             # ---- dark theme, phone and desktop
             page.click("#theme")

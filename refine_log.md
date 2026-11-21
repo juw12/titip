@@ -996,3 +996,75 @@ reading the code against what Run 13 measured on the PC; written on the Mac.
   entries) cannot be interrupted; a send that arrives during that step still waits for it.
 
 stop: run 14 ended with 0.10.3 merged to `main`; the PC moves to it by itself.
+
+## Run 15 (2026-11-21): the pages Outlook has besides mail (0.11.0)
+
+Asked for: "continue to make the still not items". Those were the last line of the Limits: no
+reminder that rings on the phone, no tasks, notes or contacts pages, no out-of-office switch, no
+delayed send. Not a judged round. Written on the Mac, which has no Outlook.
+
+### Changes kept
+
+- **Tasks, Notes, Contacts** as three more folders under the folder's name. The PC reads Outlook's
+  own three folders (the first 300 of each, asked for once and kept like the calendar), opens one
+  in full, and saves, ticks off and deletes. Each list is a list like the mail, each thing opens in
+  the letter and is written on the sheet a mail is written on.
+- **Send later**: the mail is handed to Outlook now with the time before which it is not delivered,
+  and waits in the Outbox, where 0.9.0 already lets it be stopped.
+- **Automatic replies**: the switch, read from and written to the mailbox (PR_OOF_STATE), read
+  back after it is set.
+- **Reminders on this phone**: a line on the calendar page switches them on for this phone. The
+  page then asks for the calendar every half hour and says an entry whose reminder is due, with a
+  tone and, where allowed, a notification. Two entries due together are said in one line.
+- `scripts/check_outlook.py` reads the three pages, searches the contacts, sets and reads back a
+  time to leave on a mail it throws away, and says whether automatic replies are on. With
+  `--write` it makes, reads back and deletes a task, a note and a contact. With `--away`, and only
+  then, it switches the automatic replies to the other state and back.
+
+### Found on the way
+
+- The browser check failed on a step from 0.9.0 once the sheet for a mail had one more button:
+  after typing in Bcc, a tap on a file's label below it missed. The empty box gave up its line the
+  instant it was left, everything under it moved up 44 px, and the finger came down on something
+  else. The line is now given up a quarter of a second after the box is left.
+- A contact Outlook knows by an internal name and a second, real address: the form showed the
+  second address and would have saved it over the first. It shows the first, or nothing.
+- The note for a thing that is gone said "That message was moved or deleted".
+
+### Not taken
+
+- Reminders while Titip is closed. A web page cannot wake a phone without a push service, and a
+  push service means a server that knows when your meetings are. The README says so.
+- The text and the time span of the automatic replies. Outlook's object model has no call for
+  them; they are set through Exchange itself.
+- A task's start day, repetition and assignment; a note's colour; a contact's picture and the
+  rest of its fields. They stay as they are in Outlook when the phone saves.
+- Tasks, notes and contacts of other data files and of shared folders.
+
+### Hard gates (code-checked)
+
+- 416 unit and server tests (386 before). New: the three lists against a stand-in Outlook, sorted
+  and narrowed the way Outlook is asked to; a contact search where Outlook can search and where
+  it cannot; a mail is never deleted through the tasks page; a due day and a time to leave that
+  Outlook shifts are set again until they are right, and one it does not take stops the save or
+  the send; the switch that Outlook takes without changing anything is not reported as done; all
+  of it through the phone's door and listed for the relay, a change never repeated.
+- 258 browser steps, all pass (211 before): a task made, changed, ticked off, opened again and
+  deleted with Undo; a note; a contact found, opened, written to; a mail sent for tomorrow 08:00,
+  found in the Outbox and stopped; automatic replies on and off; a reminder that rings once; the
+  four pages at 320 px with every tap target 44 px high.
+
+### Not verified
+
+- Nothing of 0.11.0 on a real Outlook. The stand-in does what Microsoft's documentation says
+  Outlook does. `python scripts/check_outlook.py` and `--write` on the PC are the check.
+- Whether this mailbox lets a program switch the automatic replies. Some Exchange set-ups keep
+  that for Outlook itself; Titip then says "Outlook did not let Titip switch the automatic
+  replies", and the phone stops offering it only if the state cannot be read at all.
+- Whether Outlook's contact search (a DASL filter) works on this PC's contacts folder, or the
+  slower look through them is what runs.
+- The tone of a reminder on an iPhone. Safari plays sound only after a tap on the page; the line
+  on the page and the notification do not depend on it.
+- Run 14's fix on the real PC, still: nobody has reported a forward going through since.
+
+stop: run 15 ended with 0.11.0 merged to `main`; the PC moves to it by itself.

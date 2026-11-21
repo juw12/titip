@@ -1,9 +1,12 @@
-"""Check what Titip 0.9.0 and 0.10.0 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0, 0.10.0 and 0.11.0 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
-    python scripts/check_outlook.py --write    also makes a calendar entry, one that repeats, a folder and a draft
-                                               with a file, reads them back and deletes them again (the draft and
-                                               the folder end in Deleted Items)
+    python scripts/check_outlook.py --write    also makes a calendar entry, one that repeats, a folder, a draft
+                                               with a file, a task, a note and a contact, reads them back and
+                                               deletes them again (all but the calendar entries end in Deleted Items)
+    python scripts/check_outlook.py --away     also switches the automatic replies (out of office) to the other
+                                               state and back at once. While they are on, Outlook answers whoever
+                                               writes to you: that is why this is asked for by its own word.
 
 The unit tests run against a stand-in that does what Microsoft's documentation says Outlook does. This
 asks the Outlook that is open here. It prints counts and yes or no, never a subject, a name or a text,
@@ -52,6 +55,7 @@ def main() -> int:
         print("This checks the real Outlook, so it runs on the Windows PC that has it.")
         return 2
     write = "--write" in sys.argv[1:]
+    switch_away = "--away" in sys.argv[1:]
     box = OutlookMailbox(read_ahead=False)
     print(f"Titip {__version__}, {'reading and writing' if write else 'reading only'}", flush=True)
 
@@ -187,6 +191,64 @@ def main() -> int:
 
     attempt("the signature", signature)
 
+    def pages():
+        said = []
+        for kind in ("tasks", "notes", "contacts"):
+            page = box._do(box._things, kind, "", False, timeout=300)
+            said.append("%d %s%s" % (len(page["things"]), "open tasks" if kind == "tasks" else kind, " and more" if page["more"] else ""))
+            if page["things"]:
+                full = box._do(box._thing, kind, page["things"][0]["id"], timeout=120)
+                if full["id"] != page["things"][0]["id"] or "body" not in full:
+                    raise MailError(f"the first of the {kind} did not open in full")
+        done = box._do(box._things, "tasks", "", True, timeout=300)
+        return ", ".join(said) + "; %d tasks done; the first of each page opens" % len(done["things"])
+
+    attempt("tasks, notes and contacts", pages)
+
+    def contact_search():
+        every = box._do(box._things, "contacts", "", False, timeout=300)["things"]
+        named = [one for one in every if len(one["title"]) >= 3 and one["title"] != "(no name)"]
+        if not named:
+            return "no contact with a name to look for"
+        found = box._do(box._things, "contacts", named[0]["title"][:3], False, timeout=300)["things"]
+        if named[0]["id"] not in [one["id"] for one in found]:
+            raise MailError("a contact was not found by the first letters of its name")
+        return "the first contact is found by the first three letters of its name, among %d that match" % len(found)
+
+    attempt("a search in the contacts", contact_search)
+
+    def leaves_later():
+        then = (dt.datetime.now() + dt.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+
+        def make():
+            mail = box._app.CreateItem(0)
+            try:
+                shift = box._set_time(mail, "DeferredDeliveryTime", then)
+                got = mail.DeferredDeliveryTime
+                return shift, dt.datetime(got.year, got.month, got.day, got.hour, got.minute)
+            finally:
+                mail.Close(OL_DISCARD)
+
+        shift, got = box._do(make, timeout=120)
+        if got != then:
+            raise MailError("the time read back is not the time set")
+        return "a new mail takes tomorrow 08:00 as the time it is to leave (Outlook shifted it by %s); it was thrown away unsent" % (shift or "nothing")
+
+    attempt("a mail that leaves later", leaves_later)
+
+    away = attempt("the automatic replies",
+                   lambda: {True: "on", False: "off", None: "this mailbox does not say"}[box._do(box._away, timeout=120)])
+    if switch_away and away in ("on", "off"):
+        def switch():
+            was = away == "on"
+            there = box.arrange({"what": "away", "on": not was})["away"]
+            back = box.arrange({"what": "away", "on": was})["away"]
+            if there is was or back is not was:
+                raise MailError("the switch did not go there and back")
+            return "switched %s and back to %s" % ("off" if was else "on", away)
+
+        attempt("the switch for the automatic replies", switch)
+
     if write:
         def entry_that_repeats():
             begins = (dt.datetime.now() + dt.timedelta(days=2)).replace(hour=3, minute=0, second=0, microsecond=0)
@@ -262,6 +324,64 @@ def main() -> int:
             return "saved with its file and high importance, flagged %s, moved to Deleted Items" % flagged
 
         attempt("a draft with a file", draft_with_a_file)
+
+        stamp = dt.datetime.now().strftime("%H%M%S")
+
+        def one_of(kind, name, done=False):
+            found = [one for one in box._do(box._things, kind, name, done, timeout=300)["things"] if one["title"] == name]
+            if len(found) != 1:
+                raise MailError(f"{len(found)} found after making one")
+            return found[0]
+
+        def task():
+            name = "Titip check task %s (deletes itself)" % stamp
+            due = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+            box.keep({"kind": "tasks", "what": "save", "title": name, "due": due, "important": True, "body": "Made by scripts/check_outlook.py."})
+            made = one_of("tasks", name)
+            try:
+                right = made["due"] == due and made["important"] and not made["done"]
+                box.keep({"kind": "tasks", "what": "done", "id": made["id"]})
+                ticked = one_of("tasks", name, done=True)["done"]
+                box.keep({"kind": "tasks", "what": "undone", "id": made["id"]})
+                again = not one_of("tasks", name)["done"]
+            finally:
+                box.keep({"kind": "tasks", "what": "remove", "id": made["id"]})
+            if not (right and ticked and again):
+                raise MailError(f"due on the day asked for and important {right}, ticked off {ticked}, open again {again}")
+            return "made due in three days, read back on that day, ticked off, opened again, moved to Deleted Items"
+
+        attempt("a task", task)
+
+        def note():
+            name = "Titip check note %s (deletes itself)" % stamp
+            box.keep({"kind": "notes", "what": "save", "body": name + "\nMade by scripts/check_outlook.py."})
+            made = one_of("notes", name)
+            try:
+                text = box._do(box._thing, "notes", made["id"], timeout=120)["body"]
+            finally:
+                box.keep({"kind": "notes", "what": "remove", "id": made["id"]})
+            if text.replace("\r\n", "\n").strip() != name + "\nMade by scripts/check_outlook.py.":
+                raise MailError("the note does not hold the text it was made with")
+            return "made, read back with its text, moved to Deleted Items"
+
+        attempt("a note", note)
+
+        def contact():
+            name = "Titip Check %s" % stamp
+            box.keep({"kind": "contacts", "what": "save", "title": name, "company": "Deletes itself", "email": "titip-check@example.com", "mobile": "+00 000 0100"})
+            made = one_of("contacts", name)
+            try:
+                full = box._do(box._thing, "contacts", made["id"], timeout=120)
+                box.keep({"kind": "contacts", "what": "save", "id": made["id"], "title": name, "company": "Deletes itself", "job": "Changed",
+                          "email": "titip-check@example.com", "mobile": "+00 000 0100"})
+                job = box._do(box._thing, "contacts", made["id"], timeout=120)["job"]
+            finally:
+                box.keep({"kind": "contacts", "what": "remove", "id": made["id"]})
+            if full["emails"] != ["titip-check@example.com"] or full["mobile"] != "+00 000 0100" or job != "Changed":
+                raise MailError(f"the contact holds {len(full['emails'])} addresses, its number {bool(full['mobile'])}, changed {job == 'Changed'}")
+            return "made, found by its name, read back with address and number, changed, moved to Deleted Items"
+
+        attempt("a contact", contact)
 
     print()
     print("FAILED: " + "; ".join(problems) if problems else "PASS")
