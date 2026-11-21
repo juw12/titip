@@ -89,7 +89,8 @@ RECIPIENTS_READ = 300  # people of one message that are read, for Reply all
 # The calendar: asked for when the phone opens it, never read ahead.
 CALENDAR_DAYS = 14
 CALENDAR_LOOK = 400  # entries looked at for one page; a series that repeats daily has no end
-CALENDAR_FRESH_SECONDS = 60
+CALENDAR_FRESH_SECONDS = 600  # reading it can take Outlook a minute or more, and its own window waits meanwhile
+CALENDAR_AGAIN_SECONDS = 30  # the phone's Refresh asks anew, but not more often than this
 CALENDAR_KEPT = 12
 CALENDAR_LONGEST_DAYS = 31  # an entry made on the phone
 RESPONSES = {0: "", 1: "organizer", 2: "tentative", 3: "accepted", 4: "declined", 5: "none"}
@@ -126,11 +127,35 @@ class MailError(Exception):
 
 
 class OutlookBusy(MailError):
-    """Outlook did not get to our call in time. `started` tells whether it had begun working on it."""
+    """Outlook did not get to our call in time. `started` tells whether it had begun working on it.
+    `doing` and `seconds`: what Outlook was kept by instead, and for how long, when Titip knows."""
 
-    def __init__(self, started: bool = False):
+    def __init__(self, started: bool = False, doing: str = "", seconds: float = 0.0):
         super().__init__("Outlook on your PC is busy right now. Try again in a moment.")
         self.started = started
+        self.doing = doing
+        self.seconds = seconds
+
+    def why(self) -> str:
+        """" Outlook has been reading the calendar for 95 seconds." or nothing: added to what the phone is told."""
+        if not self.doing or self.seconds < 5:
+            return ""
+        return f" Outlook has been {self.doing} for {int(self.seconds)} seconds."
+
+
+# What Outlook is asked to do, in words, by the name of the step that asks it.
+DOING = {
+    "_list": "listing a folder", "_get": "opening a message", "_state": "counting the folders", "_calendar": "reading the calendar",
+    "_calendars_now": "looking for other calendars", "_folders_now": "listing your folders", "_rules_now": "reading the rules",
+    "_event": "opening a calendar entry", "_invite_of": "looking up a meeting", "_lookup": "searching the address book",
+    "_note_people": "reading who a mail went to", "_attachment": "saving an attachment", "_send": "sending a mail",
+    "_act": "changing a message", "_plan": "changing the calendar", "_arrange": "changing folders or rules",
+}
+RPC_TRIES = 4  # a call Outlook turns away (a window of its own is in the way) is made again this often
+RPC_PAUSE = 1.5
+SLOW_SECONDS = 900  # how long the answer to a slow question (the calendar, the folders) is waited for and still kept
+SLOW = ("calendar", "folders", "calendars", "rules", "invite")
+ACCESSOR_RECIPIENTS = 60  # of one message: the people whose internet address Outlook is asked for one by one
 
 
 def marked(line: str) -> str:
@@ -586,10 +611,12 @@ DATE_WAYS = (short_date, lambda moment: moment.strftime("%Y-%m-%d"), lambda mome
 # ============================================================ Outlook (COM)
 
 class _Job:
-    __slots__ = ("fn", "args", "done", "state")
+    __slots__ = ("fn", "args", "done", "state", "what", "counted_out")
 
     def __init__(self, fn, args):
         self.fn, self.args = fn, args
+        self.what = ""
+        self.counted_out = False  # a send is counted as waiting until Outlook takes it, or its caller gives up
         self.done: queue.Queue = queue.Queue(maxsize=1)
         self.state = "waiting"  # -> "running" -> finished, or -> "dropped" when the caller gave up first
 
@@ -607,6 +634,9 @@ class _ComThread:
         self._arrival = itertools.count()
         self._lock = threading.Lock()
         self._running_since: float | None = None
+        self._running_what = ""  # in words, for the message a send gets when it could not wait any longer
+        self._running_first = False
+        self._first_waiting = 0  # sends (and the like) that wait for the call Outlook has now
         threading.Thread(target=self._run, daemon=True, name="titip-outlook").start()
 
     def _run(self):
@@ -614,12 +644,17 @@ class _ComThread:
 
         pythoncom.CoInitialize()
         while True:
-            job = self._jobs.get()[2]
+            first, _, job = self._jobs.get()
             with self._lock:
+                if first == 0 and not job.counted_out:
+                    job.counted_out = True
+                    self._first_waiting -= 1
                 if job.state == "dropped":
                     continue
                 job.state = "running"
                 self._running_since = time.monotonic()
+                self._running_what = job.what
+                self._running_first = first == 0
             try:
                 job.done.put((True, job.fn(*job.args)))
             except BaseException as error:  # handed back to the caller's thread
@@ -632,11 +667,20 @@ class _ComThread:
         since = self._running_since
         return time.monotonic() - since if since is not None else 0.0
 
-    def call(self, fn, *args, timeout: float = READ_SECONDS, first: bool = False):
+    def must_give_way(self) -> bool:
+        """Is a send waiting behind the reading that runs now? Long readings ask between two steps, and stop."""
+        return self._first_waiting > 0 and not self._running_first
+
+    def call(self, fn, *args, timeout: float = READ_SECONDS, first: bool = False, what: str = ""):
         """`first` puts the call ahead of everything that waits: a send does not queue behind reading ahead."""
-        if self.stuck_for() >= timeout:  # Outlook has been silent longer than this caller would wait anyway
-            raise OutlookBusy(False)
+        stuck = self.stuck_for()
+        if stuck >= timeout:  # Outlook has been silent longer than this caller would wait anyway
+            raise OutlookBusy(False, self._running_what, stuck)
         job = _Job(fn, args)
+        job.what = what
+        if first:
+            with self._lock:
+                self._first_waiting += 1
         self._jobs.put((0 if first else 1, next(self._arrival), job))
         try:
             ok, value = job.done.get(timeout=timeout)
@@ -644,7 +688,10 @@ class _ComThread:
             with self._lock:
                 started = job.state == "running"
                 job.state = "dropped"
-            raise OutlookBusy(started)
+                if first and not job.counted_out:
+                    job.counted_out = True
+                    self._first_waiting -= 1
+            raise OutlookBusy(started, "" if started else self._running_what, self.stuck_for())
         if ok:
             return value
         raise value
@@ -687,6 +734,7 @@ class OutlookMailbox:
         self._calendars: dict[tuple, tuple[float, dict]] = {}  # (offset, days) -> (monotonic, page)
         self._date_way: int | None = None  # which of DATE_WAYS Outlook on this PC has understood
         self._folder_list: tuple[float, dict] | None = None  # (monotonic, the folders and the categories)
+        self._answers: dict[tuple, tuple[float, object]] = {}  # other slow answers kept: key -> (monotonic, answer)
         self._signatures: dict | None = None
         self._state_problem: MailError | None = None
         self._refresh: threading.Thread | None = None
@@ -713,12 +761,30 @@ class OutlookMailbox:
         import pythoncom
 
         def guarded():
+            return self._attempt(fn, args, pythoncom.com_error)
+
+        if self._thread is None:
+            self._thread = _ComThread()
+        return self._thread.call(guarded, timeout=timeout, first=first, what=DOING.get(getattr(fn, "__name__", ""), ""))
+
+    def _attempt(self, fn, args: tuple, com_error, pause=time.sleep):
+        """Run one step against Outlook. A call Outlook turns away is made again a few times.
+
+        Outlook turns a call away (RPC_E_CALL_REJECTED) while a window of its own is in the way or it
+        serves another program. A call turned away was not carried out, so the whole step can be
+        made again without anything happening twice: a send that got as far as making the mail
+        throws that mail away before it starts over (see _send).
+        """
+        for attempt in range(RPC_TRIES):
             try:
                 self._connect()
                 return fn(*args)
-            except pythoncom.com_error as error:
-                if error.hresult in RPC_BUSY:  # Outlook is showing a dialog or serving another program
-                    raise OutlookBusy()
+            except com_error as error:
+                if error.hresult in RPC_BUSY:
+                    if attempt + 1 < RPC_TRIES:
+                        pause(RPC_PAUSE)
+                        continue
+                    raise OutlookBusy(False, "busy with a window of its own, or with another program", RPC_TRIES * RPC_PAUSE)
                 self._app = None  # Outlook was closed or restarted: reconnect on the next call
                 self._folders.clear()
                 detail = ""
@@ -726,9 +792,11 @@ class OutlookMailbox:
                     detail = str(error.excepinfo[2]).strip()
                 raise MailError(detail or "Outlook on your PC did not answer. Open Outlook and try again.")
 
-        if self._thread is None:
-            self._thread = _ComThread()
-        return self._thread.call(guarded, timeout=timeout, first=first)
+    def _give_way(self) -> None:
+        """Called between two steps of a long reading: when a send waits, the reading stops here.
+        The phone asks for it again by itself; the send does not wait out the whole reading."""
+        if self._thread is not None and self._thread.must_give_way():
+            raise OutlookBusy()
 
     def _connect(self):
         if self._app is not None:
@@ -812,7 +880,10 @@ class OutlookMailbox:
 
     def _answer(self, key: tuple, ask: _Ask, fn, args: tuple) -> None:
         try:
-            ask.value = self._do(fn, *args, timeout=ASK_SECONDS)
+            # A slow question (the calendar of a large mailbox takes minutes) is waited for long after the
+            # phone stopped waiting, so that its answer is there for the phone's next try. Asking again
+            # each time the phone gave up would keep Outlook at it without end, and never have an answer.
+            ask.value = self._do(fn, *args, timeout=SLOW_SECONDS if key[0] in SLOW else ASK_SECONDS)
             self._keep(key, ask.value)
         except MailError as error:
             ask.error = error
@@ -823,11 +894,24 @@ class OutlookMailbox:
                 self._asking.pop(key, None)
             ask.done.set()
 
-    def _keep(self, key: tuple, value: dict) -> None:
+    def _keep(self, key: tuple, value) -> None:
         with self._lock:
             if key[0] == "list":
                 stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 self._lists[key[1:]] = (time.monotonic(), stamp, value)
+                return
+            if key[0] == "calendar":
+                if len(self._calendars) >= CALENDAR_KEPT:
+                    self._calendars.clear()
+                self._calendars[key[1:]] = (time.monotonic(), value)
+                return
+            if key[0] == "folders":
+                self._folder_list = (time.monotonic(), value)
+                return
+            if key[0] != "item":  # the other calendars, the rules, what an invitation is for
+                if len(self._answers) >= 60:
+                    self._answers.clear()
+                self._answers[key] = (time.monotonic(), value)
                 return
             self._drop_message(key[1])
             self._drop_message(value["id"])
@@ -1122,6 +1206,7 @@ class OutlookMailbox:
             )
         rows = []
         for mail_folder in self._mail_folders(folder):
+            self._give_way()  # between two data files
             store_key = self._store_key(mail_folder.StoreID)
             table = None
             if deep and table_filter:
@@ -1212,6 +1297,9 @@ class OutlookMailbox:
         self._rows.pop(mail_id)  # whatever comes out, this id is gone: never search for it twice
         try:
             rows = self._list(folder, FIND_AGAIN_ROWS, 0, "")["mail"]
+        except OutlookBusy:
+            self._rows[mail_id] = known  # not looked for yet: it may be looked for again
+            raise
         except Exception:
             return None
         same = [row["id"] for row in rows if (folder, row["time"], row["subject"], row["from"]) == known and row["id"] != mail_id]
@@ -1266,12 +1354,6 @@ class OutlookMailbox:
         except Exception:
             pass
         message_class = str(getattr(item, "MessageClass", "") or "")
-        invite = None
-        if message_class.startswith("IPM.Schedule.Meeting.Request"):
-            try:  # what the invitation is for; False: looking at it does not put it in the calendar
-                invite = self._event_row(item.GetAssociatedAppointment(False))
-            except Exception:
-                invite = None
         attachments = []
         try:
             for index in range(1, item.Attachments.Count + 1):
@@ -1298,7 +1380,9 @@ class OutlookMailbox:
             "peopleCut": cut,
             "answer": answer_plans(as_person(sender_name, sender_address), people["to"], people["cc"], reply_to, self._my_addresses()),
             "kind": "meeting" if message_class.startswith("IPM.Schedule") else "mail",
-            "invite": invite,
+            # what an invitation is for is asked when it is opened (invite()), not for every mail read ahead
+            "invite": None,
+            "inviteAsk": message_class.startswith("IPM.Schedule.Meeting.Request"),
             "flagged": getattr(item, "FlagStatus", 0) == 2,
             "important": getattr(item, "Importance", 1) == 2,
             "categories": split_categories(getattr(item, "Categories", "")),
@@ -1340,6 +1424,8 @@ class OutlookMailbox:
         for index in range(1, min(count, limit) + 1):
             recipient = recipients.Item(index)
             try:
+                if index > ACCESSOR_RECIPIENTS:  # of a mail to very many, the rest by what the recipient says itself
+                    raise LookupError
                 address = recipient.PropertyAccessor.GetProperty(P_SMTP)
             except Exception:
                 address = getattr(recipient, "Address", "")
@@ -1511,7 +1597,7 @@ class OutlookMailbox:
                     "Outlook is taking a long time with this message. "
                     "Look in Sent and Drafts before you send it again, so it does not go twice."
                 )
-            raise MailError("Outlook on your PC is busy, so nothing was sent. Your text is kept here. Try again in a moment.")
+            raise MailError("Outlook on your PC is busy, so nothing was sent." + error.why() + " Your text is kept here. Try again in a moment.")
         finally:
             with self._lock:  # Sent and Drafts have changed (or may have): no old copy of them is shown
                 self._lists.clear()
@@ -1658,37 +1744,65 @@ class OutlookMailbox:
             "reminder": int(getattr(appointment, "ReminderMinutesBeforeStart", 0) or 0) if getattr(appointment, "ReminderSet", False) else None,
         }
 
-    def calendar(self, offset: int = 0, days: int = CALENDAR_DAYS, which: str = "") -> dict:
+    def calendar(self, offset: int = 0, days: int = CALENDAR_DAYS, which: str = "", fresh: bool = False) -> dict:
         """The appointments and meetings of `days` days, starting `offset` days from today.
 
-        Asked for when the phone opens the calendar and kept for a minute. When Outlook is busy the
-        page from before is returned marked `saved`. `which`: another calendar than your own, as
-        calendars() names it.
+        Asked for when the phone opens the calendar and kept for ten minutes (`fresh`: the phone's
+        Refresh, which asks anew). Outlook is asked once, however long it takes and however often
+        the phone asks meanwhile, and the answer is kept even when nobody waited for it. When
+        Outlook is busy the page from before is returned marked `saved`. `which`: another calendar
+        than your own, as calendars() names it.
         """
         offset = max(0, min(int(offset), 730))
         days = max(1, min(int(days), 62))
         if which and not FOLDER_ID.fullmatch(which):
             raise MailError("Unknown calendar.")
         self._phone_asked()
-        kept = self._calendars.get((offset, days, which) if which else (offset, days))
-        if kept and time.monotonic() - kept[0] < CALENDAR_FRESH_SECONDS:
+        place = (offset, days, which) if which else (offset, days)
+        kept = self._calendars.get(place)
+        if kept and time.monotonic() - kept[0] < (CALENDAR_AGAIN_SECONDS if fresh else CALENDAR_FRESH_SECONDS):
             return kept[1]
         try:
-            page = self._do(self._calendar, offset, days, *((which,) if which else ()))
+            return self._shared(("calendar", *place), self._calendar, *place, wait=QUICK_SECONDS if kept else READ_SECONDS)
         except OutlookBusy:
             if not kept:
                 raise
             return {**kept[1], "saved": True}
-        with self._lock:
-            if len(self._calendars) >= CALENDAR_KEPT:
-                self._calendars.clear()
-            self._calendars[(offset, days, which) if which else (offset, days)] = (time.monotonic(), page)
-        return page
+
+    def _asked(self, key: tuple, fn, *args, fresh: float):
+        """A slow answer that is kept: given from memory while it is new enough, asked for once otherwise,
+        and when Outlook is busy the one from before is given."""
+        kept = self._answers.get(key)
+        if kept and time.monotonic() - kept[0] < fresh:
+            return kept[1]
+        try:
+            return self._shared(key, fn, *args, wait=QUICK_SECONDS if kept else READ_SECONDS)
+        except OutlookBusy:
+            if not kept:
+                raise
+            return kept[1]
 
     def calendars(self) -> dict:
         """The calendars Outlook shows besides your own: more of yours, and those other people share with you."""
         self._phone_asked()
-        return {"calendars": self._do(self._calendars_now, timeout=ASK_SECONDS)}
+        return {"calendars": self._asked(("calendars",), self._calendars_now, fresh=FOLDERS_FRESH_SECONDS)}
+
+    def invite(self, mail_id: str) -> dict:
+        """What an invitation is for: when, where, what you answered. Asked when the mail is opened on the
+        phone, not while reading ahead: finding the meeting can take Outlook a while."""
+        self._phone_asked()
+        return {"invite": self._asked(("invite", mail_id), self._invite_of, mail_id, fresh=CALENDAR_FRESH_SECONDS)}
+
+    def _invite_of(self, mail_id: str) -> dict | None:
+        item = self._item(mail_id)
+        if not str(getattr(item, "MessageClass", "") or "").startswith("IPM.Schedule.Meeting.Request"):
+            return None
+        try:  # False: looking at it does not put it in the calendar
+            return self._event_row(item.GetAssociatedAppointment(False))
+        except Exception as error:
+            if getattr(error, "hresult", None) in RPC_BUSY:
+                raise
+            return None
 
     def _calendars_now(self) -> list[dict]:
         default = self._ns.GetDefaultFolder(OL_CALENDAR)
@@ -1707,12 +1821,13 @@ class OutlookMailbox:
             module = explorer.NavigationPane.Modules.GetNavigationModule(1)  # olModuleCalendar
             for group in module.NavigationGroups:
                 for shown in group.NavigationFolders:
+                    self._give_way()  # reaching somebody else's mailbox can take long: a send does not wait for all of them
                     try:
                         take(shown.Folder, str(shown.DisplayName or ""), str(group.Name or ""))
                     except Exception:
                         continue  # one that cannot be reached right now: the others are still listed
         except Exception as error:
-            if getattr(error, "hresult", None) in RPC_BUSY:
+            if isinstance(error, OutlookBusy) or getattr(error, "hresult", None) in RPC_BUSY:
                 raise
         try:  # calendars kept inside your own
             for child in default.Folders:
@@ -1782,6 +1897,7 @@ class OutlookMailbox:
         events, more, looked, astray = [], False, 0, 0
         near = dt.timedelta(days=3)
         for item in found:  # never its Count: with repeating entries it has no end
+            self._give_way()
             if looked >= CALENDAR_LOOK:
                 more = True
                 break
@@ -1840,7 +1956,7 @@ class OutlookMailbox:
         except OutlookBusy as error:
             if error.started:
                 raise MailError("Outlook is taking a long time with this. Look in its calendar before you try it again, so it is not there twice.")
-            raise MailError("Outlook on your PC is busy, so the calendar was not changed. Try again in a moment.")
+            raise MailError("Outlook on your PC is busy, so the calendar was not changed." + error.why() + " Try again in a moment.")
         finally:
             with self._lock:
                 self._calendars.clear()
@@ -2036,13 +2152,11 @@ class OutlookMailbox:
         if kept and time.monotonic() - kept[0] < FOLDERS_FRESH_SECONDS:
             return kept[1]
         try:
-            found = self._do(self._folders_now, timeout=ASK_SECONDS)
+            return self._shared(("folders",), self._folders_now, wait=QUICK_SECONDS if kept else READ_SECONDS)
         except OutlookBusy:
             if not kept:
                 raise
             return kept[1]
-        self._folder_list = (time.monotonic(), found)
-        return found
 
     def _folders_now(self) -> dict:
         usual = set()  # the folders the phone shows under their own names already
@@ -2056,6 +2170,7 @@ class OutlookMailbox:
 
         def walk(folder, store_key: str, store_name: str, path: str, depth: int) -> None:
             for child in folder.Folders:
+                self._give_way()
                 if len(found) >= FOLDERS_SHOWN:
                     return
                 try:
@@ -2075,6 +2190,8 @@ class OutlookMailbox:
                 if depth < FOLDERS_DEEP:
                     try:
                         walk(child, store_key, store_name, f"{path} / {name}" if path else name, depth + 1)
+                    except OutlookBusy:
+                        raise  # a send is waiting: the walk stops and is asked for again
                     except Exception:
                         pass
 
@@ -2082,6 +2199,8 @@ class OutlookMailbox:
         for store in stores:
             try:
                 walk(store.GetRootFolder(), self._store_key(store.StoreID), "" if store.StoreID == default_store else str(store.DisplayName), "", 1)
+            except OutlookBusy:
+                raise
             except Exception:  # a data file that is offline or locked: the others are still listed
                 continue
         categories = []
@@ -2097,7 +2216,7 @@ class OutlookMailbox:
     def rules(self) -> dict:
         """Outlook's rules for your mailbox, in the order they run, each on or off."""
         self._phone_asked()
-        return {"rules": self._do(self._rules_now, timeout=ASK_SECONDS)}
+        return {"rules": self._asked(("rules",), self._rules_now, fresh=LIST_FRESH_SECONDS)}
 
     def _rules_now(self) -> list[dict]:
         found = []
@@ -2117,7 +2236,7 @@ class OutlookMailbox:
         except OutlookBusy as error:
             if error.started:
                 raise MailError("Outlook is taking a long time with this. Look in Outlook before you try it again.")
-            raise MailError("Outlook on your PC is busy, so nothing was changed. Try again in a moment.")
+            raise MailError("Outlook on your PC is busy, so nothing was changed." + error.why() + " Try again in a moment.")
         finally:
             self._folder_list = None  # the folders or the categories have changed (or may have)
 
@@ -2216,7 +2335,7 @@ class OutlookMailbox:
         except OutlookBusy as error:
             if error.started:  # Outlook is in the middle of it: we cannot know yet whether it happened
                 raise MailError("Outlook is taking a long time with this. Look in Outlook before you try it again.")
-            raise MailError("Outlook on your PC is busy, so nothing was changed. Try again in a moment.")
+            raise MailError("Outlook on your PC is busy, so nothing was changed." + error.why() + " Try again in a moment.")
         finally:
             with self._lock:  # the folders and the calendar have changed (or may have)
                 self._lists.clear()
@@ -2432,6 +2551,7 @@ class DemoMailbox:
             "answer": answer_plans(sender, people["to"], people["cc"], [], {self.me["address"]}),
             "kind": "meeting" if invite else "mail",
             "invite": invite,
+            "inviteAsk": False,  # it is here already
             "flagged": mail["flagged"],
             "important": mail["important"],
             "categories": list(mail["categories"]),
@@ -2638,7 +2758,11 @@ class DemoMailbox:
             self.rule_list.append({"name": name, "on": True})
             return {"ok": True, "name": name}
 
-    def calendar(self, offset: int = 0, days: int = CALENDAR_DAYS, which: str = "") -> dict:
+    def invite(self, mail_id: str) -> dict:
+        mail = self._find(mail_id)
+        return {"invite": self._event_summary(self.events[mail["invite"]]) if "invite" in mail else None}
+
+    def calendar(self, offset: int = 0, days: int = CALENDAR_DAYS, which: str = "", fresh: bool = False) -> dict:
         offset = max(0, min(int(offset), 730))
         days = max(1, min(int(days), 62))
         if which and which not in self.other_calendars:

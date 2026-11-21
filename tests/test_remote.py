@@ -429,7 +429,7 @@ class MailFromAnywhere(unittest.TestCase):
         link = self.make()
         self.now += 5
         self.mailbox.reply = (200, {"ok": True})
-        routes = ("upload", "calendar", "event", "act", "plan", "folders", "signature", "calendars", "rules", "arrange")
+        routes = ("upload", "calendar", "event", "act", "plan", "folders", "signature", "calendars", "rules", "arrange", "invite")
         asked = [self.ask(link, route, {"id": "x"}) for route in routes]
         answers = self.round(link)
         self.assertEqual(sorted(route for route, _ in self.mailbox.calls), sorted(routes))

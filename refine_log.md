@@ -940,3 +940,59 @@ Asked for: the handoff of Run 11 and 12, `scripts/check_outlook.py` on the ASUS,
 - A real phone, as before.
 
 stop: run 13 ended with 0.10.1 merged to `main`; the PC moves to it by itself.
+
+## Run 14 (2026-11-21): a forward kept being told "Outlook is busy" (0.10.3)
+
+Asked for: "i wanna forward but keep saying outlook busy, can u fix". Not a judged round. Found by
+reading the code against what Run 13 measured on the PC; written on the Mac.
+
+### What was wrong
+
+- Run 13 measured it without naming it: on the PC the calendar takes Outlook "more than 5 minutes
+  in the first run and under 40 seconds in the two later ones", and Outlook's window stalled for
+  10 to 60 seconds.
+- The phone waits 20 seconds for the calendar, is told "busy", and asks again a second later, for
+  five minutes. Since 0.9.0 every one of those tries put a new reading of the whole calendar to
+  Outlook, and threw the answer of the one before away because nobody waited for it any more. A
+  reading of 40 seconds or more could never arrive, and Outlook was kept at it without a pause.
+- Outlook answers one call at a time. A send waits up to 120 seconds for the call before it; behind
+  one reading after the other it gave up with "Outlook on your PC is busy, so nothing was sent".
+  The same held for the folders (8 data files) and for other people's calendars.
+- Reading ahead had become heavier too: for every invitation among the newest mail Outlook was
+  asked to find the meeting in that same slow calendar, and for a mail to very many people each
+  one's address was asked for separately, up to 300 of them.
+- Through the relay, marking a mail as read (done behind every tap since 0.9.0) was tried again
+  every 3 seconds for 5 minutes while Outlook was busy, each time with "Outlook on your PC is
+  busy. Still trying" on screen, over a mail that had opened long ago.
+
+### Changes kept
+
+- The calendar, the folders, the other calendars, the rules and what an invitation is for go the
+  way lists and messages always went: one question however many ask, waited for up to 15 minutes,
+  the answer kept for whoever asks next.
+- The calendar is kept ten minutes instead of one. Refresh on the phone asks anew.
+- A long reading asks between two steps whether a send is waiting, and stops if so.
+- A call Outlook turns away is made again (4 tries in all, 1.5 s apart) before anybody is told.
+- A send, a delete or a calendar change that could not wait says what Outlook was kept by and for
+  how long.
+- What an invitation is for is asked when the mail is opened. Of a mail to more than 60 people the
+  rest are listed by what Outlook says of them without being asked one by one.
+- Marking as read through the relay is tried once, and says nothing.
+
+### Hard gates (code-checked)
+
+- 386 unit and server tests (370 before). New: a calendar that takes longer than the phone waits
+  is asked for once in five tries and its late answer is what the phone gets; a reading gives way
+  and the send goes next (in under a second where the reading would have taken two); a forward
+  turned away at Send is made again and leaves once.
+- 211 browser steps, all pass.
+
+### Not verified
+
+- That this was the cause on the PC. It follows from the code and from Run 13's numbers, and the
+  tests show the loop is gone; nobody has watched a forward go through on the real Outlook since.
+  The message now says what Outlook was kept by, so if it comes again it names the cause.
+- What makes the calendar itself so slow there. One step of it (Outlook working out the repeating
+  entries) cannot be interrupted; a send that arrives during that step still waits for it.
+
+stop: run 14 ended with 0.10.3 merged to `main`; the PC moves to it by itself.
