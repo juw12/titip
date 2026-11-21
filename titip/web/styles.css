@@ -140,6 +140,18 @@ body.mail { background: var(--paper); }
 }
 .folderMenu a:hover { background: var(--wash); }
 .folderMenu a[aria-current="page"] { font-weight: 600; }
+.menuNote { padding: var(--s3) var(--s4) var(--s1); border-top: 1px solid var(--line); margin-top: var(--s1); color: var(--muted); font: 500 12px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.ownName { min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.ownName small { color: var(--muted); font-size: 13px; }
+/* what can be done with the message that is open: the same kind of list, at the other edge */
+.doMenu { position: absolute; top: auto; left: auto; right: var(--s4); margin-top: calc(-1 * var(--s1)); }
+.doMenu button {
+  display: flex; align-items: center; width: 100%; min-height: var(--tap); padding: 0 var(--s4);
+  background: none; border: 0; text-align: left;
+}
+.doMenu button:hover { background: var(--wash); }
+.tick { display: flex; align-items: center; gap: var(--s2); min-height: 44px; color: var(--ink-2); font-size: 14px; }
+.tick input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
 .folderMenu a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; background: var(--signal); }
 .tools { margin-left: auto; display: flex; }
 .icon {
@@ -176,7 +188,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 }
 
 .search { padding: var(--s2) var(--s4); border-bottom: 1px solid var(--line); background: var(--ground); }
-.search input {
+.search input[type="search"] {
   width: 100%; min-height: var(--tap); padding: var(--s2) var(--s3);
   background: var(--paper); border: 1px solid var(--line-strong); border-radius: var(--radius);
 }
@@ -225,6 +237,8 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .row .clip { width: 14px; height: 14px; margin-right: 4px; vertical-align: -2px; }
+.row .flag { color: var(--signal-ink); }
+.row .bang { color: var(--stamp); font-weight: 700; }
 /* unread, where Outlook marks it, in the one signal colour: an orange edge, a bold name and subject, an orange time */
 .row.unread::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--signal); }
 .row.unread .who { font-weight: 700; }
@@ -254,7 +268,11 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   background: none; border: 0; color: var(--link); font-weight: 600;
 }
 .readerTop { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: var(--tap); }
-.link.danger { margin-left: auto; padding: 0 0 0 var(--s2); color: var(--stamp); }
+.readerDo { margin-left: auto; display: flex; gap: var(--s4); }
+.readerDo .link { padding: 0; }
+.link.danger { color: var(--stamp); }
+.reader { position: relative; }
+.tags { padding: var(--s2) 0; border-bottom: 1px solid var(--line); color: var(--ink-2); font: 500 12px/1.6 var(--mono); letter-spacing: 0.02em; }
 .reader h2 { font: 400 28px/1.15 var(--serif); margin: var(--s1) 0 var(--s3); }
 /* a meeting: when, where, what you answered, and the three answers */
 .invite { padding: var(--s3) 0; border-bottom: 1px solid var(--line); }
@@ -355,6 +373,24 @@ button:disabled { opacity: 0.55; cursor: default; }
 .composeFoot { display: flex; align-items: center; gap: var(--s2) var(--s3); flex-wrap: wrap; padding-top: var(--s2); }
 .composeFoot button { display: inline-flex; align-items: center; gap: 6px; }
 .composeFoot button svg { width: 18px; height: 18px; }
+.composeFoot button[aria-pressed="true"] { background: var(--pick); border-color: var(--line-strong); color: var(--stamp); }
+/* a calendar entry is written on the same sheet as a mail */
+.hours2 .pair { display: flex; align-items: center; gap: var(--s3); color: var(--muted); }
+.hours2 .pair input { width: auto; flex: 0 1 auto; }
+.field input[type="date"], .field input[type="time"] { font-variant-numeric: tabular-nums; }
+#planner .tick { border-bottom: 1px solid var(--line); }
+/* a list to pick from: folders to move a mail to, categories to tick */
+.picker { position: fixed; inset: 0; z-index: 12; display: flex; align-items: flex-end; justify-content: center; background: rgb(0 0 0 / 0.32); }
+.pickerBox {
+  width: 100%; max-width: 520px; max-height: 80dvh; overflow: auto; padding: var(--s1) var(--s4) max(var(--s4), env(safe-area-inset-bottom));
+  background: var(--paper); border-radius: var(--radius) var(--radius) 0 0; box-shadow: 0 -6px 20px rgb(0 0 0 / 0.2);
+}
+.pickOne {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3); width: 100%; min-height: 52px; padding: 6px 0;
+  background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left;
+}
+.tickBox { flex: none; width: 22px; height: 22px; border: 1.5px solid var(--line-strong); border-radius: 4px; }
+.pickOne[aria-checked="true"] .tickBox { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--paper); }
 .footNote { color: var(--muted); font-size: 13px; }
 
 /* ---------- the people a mail goes to: one rounded name each, the way Outlook shows them */
@@ -424,6 +460,9 @@ button:disabled { opacity: 0.55; cursor: default; }
   .bar { padding-left: var(--s5); padding-right: var(--s4); }
   .brand { min-width: 96px; }
   .folderMenu { left: var(--s5); }
+  .doMenu { left: auto; right: var(--s6); }
+  .picker { align-items: center; }
+  .pickerBox { border-radius: var(--radius); }
   .readerTop { min-height: 0; }
   .tabs { margin-left: var(--s4); }
   .tabs a { color: var(--on-head); opacity: 0.84; border-bottom: 3px solid transparent; border-top: 3px solid transparent; }

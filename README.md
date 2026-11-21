@@ -14,14 +14,17 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 
 - Shows Inbox, Sent and Drafts from the classic Outlook desktop app, newest first, including mail that
   rules or archivers moved into `.pst` data files. Tap the folder's name in the bar for the others:
-  Outbox, Deleted and Junk. A mail that waits in the Outbox is said over every list, so you know it
-  has not left yet. It is laid out the way Outlook's phone app is:
+  Outbox, Deleted, Junk, and under them **your own folders**, of every data file, each with where it
+  is and how much in it is unread. A mail that waits in the Outbox is said over every list, so you
+  know it has not left yet. It is laid out the way Outlook's phone app is:
   a round initial for each sender, mail grouped under Today, Yesterday and so on, unread mail in
   bold with a coloured edge. It is drawn the way [Cairn](https://github.com/juw12/cairn) is: warm
   paper, ink, hairlines, a serif for headings, and one orange for what is new (see `design.md`).
 - Opens a message with its formatting in a frame that cannot run scripts or load remote pictures,
   or as plain text. Attachments download to the phone.
-- Reply, Reply all, Forward and new mail. Outlook adds the earlier thread. (No automatic signature: type it, or keep it in a draft.)
+- Reply, Reply all, Forward and new mail. Outlook adds the earlier thread. A new mail starts with
+  the **signature** Outlook has for new mail, an answer with the one for answers, as text under the
+  cursor: change it or take it out. **High importance** is a button under the text.
 - An answer lists who it goes to, To and Cc, the way Outlook addressed it, and you can change that:
   take somebody out, put somebody in, move somebody to Cc. It works the same for Reply, Reply all
   and Forward. **Bcc** opens a third line. The mail goes to the people listed and to nobody else.
@@ -32,8 +35,14 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   their dates. A meeting opens with when, where, who is invited and its text. An invitation can be
   answered with **Accept**, **Tentative** or **Decline**, from the calendar or from the mail that
   brought it, and the organizer is told as if you had answered in Outlook.
+- **New entry** on the calendar makes an appointment, or with people in it a meeting, and Outlook
+  invites them. An entry of your own opens with **Change** and **Delete** (**Cancel the meeting**
+  when people are invited, and they are told).
 - **Delete** moves a message to Deleted Items. A draft is discarded the same way, and a mail deleted
   from the Outbox does not leave.
+- **More**, next to Delete: **Mark as unread**, **Flag**, **Move to a folder** (any folder of your own,
+  so also Archive), **Categories** (Outlook's own, ticked). A flag and high importance show in the list.
+- A mail you open on the phone is marked read in Outlook too, the way Outlook's own phone app does it.
 - Type a few letters in To or Cc and Titip suggests the people of your own mail, name and address,
   the ones you write to first, and under them people from Outlook's address book (the company
   directory). Tap one, or press Enter. Each person becomes a label with the name on it, the way
@@ -41,7 +50,7 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - Every send waits 3 seconds behind an **Undo** button, and so does a delete and an answer to an
   invitation. **Save as draft** puts it in Outlook's Drafts. If a send fails, the message comes back
   with your text, your files and the reason.
-- Search by subject or person. Light and dark. Works as a home-screen app.
+- Search by subject or person, and with a tick also in the text of the mail. Light and dark. Works as a home-screen app.
 
 It stores no password, and on the PC it writes no mail to disk. A file you attach is the one
 exception, for a moment: it rests in Titip's memory, and is put in Windows' temporary folder only
@@ -305,15 +314,32 @@ Titip opens a door from your network to your mailbox. Read this first.
   list, not as one line of text.
 - A send goes ahead of everything else that waits for Outlook, the reading ahead included. So does
   a delete and an answer to an invitation.
+- An answer you did not re-address goes to whom Outlook addressed it, by the same steps as before
+  0.9.0: the phone says that nobody was added or taken out, and the PC then leaves the recipients
+  alone. Only an answer you changed has its recipients gone through.
 - Reply all lists the first 300 people of a mail. A mail that went to more says so, and is better
   answered in Outlook. Somebody Outlook knows only by an internal name (some lists and rooms) is
   shown by name with a grey label; untouched, he stays on the answer exactly as Outlook put him.
 - A phone page from before 0.9.0 (an icon that was open for hours) does not list who an answer goes
   to. For it Titip does what it did before: Outlook addresses the answer and Cc is only added to.
-- The Outbox, Deleted, Junk and the calendar are not read ahead: they are asked for when you open
-  them. The calendar is kept for a minute, and read again after you answered an invitation.
+- A mail that asks for a read receipt is not marked read from the phone. Outlook may ask on the PC
+  whether to send the receipt, and nobody is there to answer. It stays unread in Outlook until you
+  open it there.
+- Your own folders are asked for when you open the list of folders, and kept an hour: walking
+  every data file takes Outlook a while. At most 300 are listed, five folders deep. The number of
+  unread mail is shown for the folders of your mailbox, not for those of older data files.
+- A search in the text asks Outlook by word where it keeps an index of the data file (quick), and
+  letter by letter where it does not, which reads every mail of the folder and can take a minute.
+- The signature is read from the files Outlook keeps for it, as plain text. Formatting and pictures
+  of a signature do not come along. If Outlook keeps its signatures only online, there is none.
+- An entry's time is handed to the PC as one moment, so a phone in another time zone still makes it
+  at the hour you meant. The PC sets the time, reads it back, and sets it again if Outlook shifted it.
+- The Outbox, Deleted, Junk, your own folders and the calendar are not read ahead: they are asked
+  for when you open them. The calendar is kept for a minute, and read again after you answered an invitation.
 - Calendar dates are asked of Outlook in the way your PC writes dates (Windows' short date), a day
-  more on each side, and every entry is then checked against the real days.
+  more on each side, and every entry is then checked against the real days. If what comes back is
+  mostly from other days, Outlook read the dates another way: they are asked again year first, then
+  month first, and the way that worked is remembered.
 - Files that wait to be attached hold back a restart for an update for two minutes, and are
   dropped after fifteen when no mail came for them.
 - After the phone is put down, Titip goes on looking for new mail every five minutes for eight hours,
@@ -338,16 +364,15 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Classic Outlook on Windows only.
 - Text you type is sent as plain paragraphs. A draft sent unchanged keeps its formatting; a draft you
   edit on the phone goes as plain text.
-- Search looks at subject and sender (recipient in Sent), not the message body.
+- Search looks at subject and sender (recipient in Sent), and at the text only when you tick it.
 - The subject of an answer or a forward is Outlook's (RE:, FW:) and cannot be changed.
-- The calendar is your own, to read and to answer invitations in. No new meeting, no change to an
-  entry, no shared calendars. A repeating meeting is answered as a whole series. Outlook takes a
-  declined meeting out of the calendar.
+- The calendar is your own; shared calendars are not shown. A repeating entry, an entry over several
+  days with hours, and who is invited to a meeting are changed in Outlook. A repeating meeting is
+  answered as a whole series. Outlook takes a declined meeting out of the calendar.
 - Delete moves to Deleted Items. Nothing is removed for good from the phone, and Deleted Items is not emptied.
-- Opening a message on the phone clears its unread mark on that phone only. Outlook still shows it as unread.
-- It is laid out like Outlook's phone app but is not it: no swipe to delete, no archive, flags or
-  categories, no folders of your own (Inbox, Sent, Drafts, Outbox, Deleted and Junk are shown), no
-  importance mark, no read receipts, no signature.
+- Folders are opened and moved into, not made, renamed or deleted. Categories are ticked, not made.
+- It is laid out like Outlook's phone app but is not it: no swipe to delete, no reminders, no rules,
+  no read receipts asked for, no formatted text or pictures in what you write, no contacts page.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 
@@ -367,6 +392,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
+python scripts/check_outlook.py               # on the PC: what 0.9.0 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

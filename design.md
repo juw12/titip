@@ -93,6 +93,11 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
   it steps back. The answer you gave is the pressed one of three plain buttons.
 - A file that goes along is a label with a paper clip, its size in mono, and a cross: a tap takes it out.
 - A mail in the Outbox has not left: one line says so over every list, with the way there.
+- More sits next to Delete, as a word. What it lists is done at once (flag, unread, categories); what
+  takes the mail away (move) waits behind Undo like Delete. A flag is the small orange flag in the
+  list, importance a red exclamation mark: the two marks Outlook has, in the two colours Titip has.
+- A list to pick from (folders to move to, categories to tick) rises from the bottom over a dimmed page.
+- A calendar entry is written on the same sheet as a mail, with the same labels for people.
 - PC out of reach: the list from memory if there is one, and one sentence that names the cause (see
   "When the phone cannot reach your PC" in the README). Otherwise "Can't show your mail", the reason,
   and Try again.

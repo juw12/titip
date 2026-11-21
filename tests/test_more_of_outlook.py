@@ -390,7 +390,8 @@ class Appointment:
 
 class CalendarItems:
     def __init__(self, entries):
-        self.entries, self.steps, self.filter = entries, [], ""
+        self.entries, self.steps, self.filter, self.filters = entries, [], "", []
+        self.reads = None  # how this Outlook reads a filter: text -> the entries it gives back (or it raises)
 
     def Sort(self, by):
         self.steps.append(("sort", by))
@@ -402,7 +403,8 @@ class CalendarItems:
 
     def Restrict(self, text):
         self.filter = text
-        return iter(self.entries)
+        self.filters.append(text)
+        return iter(self.entries if self.reads is None else self.reads(text))
 
 
 class Namespace:
@@ -454,12 +456,59 @@ class Calendar(unittest.TestCase):
         self.assertEqual((invitation["invited"], invitation["response"], invitation["meeting"]), (True, "none", True))
         self.assertEqual((stand_up["invited"], stand_up["response"], stand_up["recurring"]), (False, "", True))
 
-    def test_outlook_is_asked_for_a_day_more_on_each_side_in_this_pcs_way_of_writing_dates(self):
-        box = self.box()
+    def test_outlook_is_asked_for_a_day_more_on_each_side_first_in_this_pcs_way_of_writing_dates(self):
+        box = self.box(Appointment("AD", "Fine", at(21, 9), at(21, 10)))
         box._calendar(0, 14)
-        self.assertEqual(box._ns.items.filter, f"[Start] <= '{short_date(at(20) + dt.timedelta(days=15))}' AND [End] >= '{short_date(at(19))}'")
+        self.assertEqual(box._ns.items.filters, [f"[Start] <= '{short_date(at(20) + dt.timedelta(days=15))}' AND [End] >= '{short_date(at(19))}'"])
+        box._ns.items.reads = lambda text: []
         box._calendar(14, 14)
         self.assertIn(short_date(at(20) + dt.timedelta(days=13)), box._ns.items.filter)
+        self.assertEqual(len(box._ns.items.filters), 2, "the way that gave an answer is asked again, and an empty answer from it is believed")
+
+    def test_dates_outlook_reads_another_way_are_asked_for_again_written_differently(self):
+        """Outlook on this PC reads 11/12/2026 as the 11th of December, not as the 12th of November."""
+        fine = Appointment("AD", "This week", at(21, 9), at(21, 10))
+        far = [Appointment("AX", f"Far away {n}", dt.datetime(2027, 3, 1 + n, 9), dt.datetime(2027, 3, 1 + n, 10)) for n in range(4)]
+        box = self.box()
+        box._ns.items.reads = lambda text: [fine] if "2026-" in text else far  # only year first is understood
+        page = box._calendar(0, 14)
+        self.assertEqual([event["subject"] for event in page["events"]], ["This week"])
+        self.assertEqual(len(box._ns.items.filters), 2)
+        self.assertIn("2026-11-19", box._ns.items.filters[-1])
+        box._calendar(0, 7)
+        self.assertEqual(len(box._ns.items.filters), 3, "the way that worked is the one asked first from then on")
+        self.assertIn("2026-11-19", box._ns.items.filters[-1])
+
+    def test_a_way_of_writing_dates_that_outlook_refuses_is_passed_over(self):
+        fine = Appointment("AD", "This week", at(21, 9), at(21, 10))
+        box = self.box()
+
+        def reads(text):
+            if "2026-" not in text:
+                raise RuntimeError("Type mismatch or the value in the condition is not valid")
+            return [fine]
+
+        box._ns.items.reads = reads
+        self.assertEqual(len(box._calendar(0, 14)["events"]), 1)
+        box._ns.items.reads = lambda text: (_ for _ in ()).throw(RuntimeError("never"))
+        box._date_way = None
+        with self.assertRaises(MailError) as caught:
+            box._calendar(0, 14)
+        self.assertIn("did not understand the days", str(caught.exception))
+
+    def test_when_no_way_of_asking_is_clean_what_belongs_to_the_days_is_still_shown(self):
+        fine = Appointment("AD", "This week", at(21, 9), at(21, 10))
+        far = [Appointment("AX", f"Far away {n}", dt.datetime(2027, 3, 1 + n, 9), dt.datetime(2027, 3, 1 + n, 10)) for n in range(4)]
+        box = self.box()
+        box._ns.items.reads = lambda text: [fine, *far]
+        self.assertEqual([event["subject"] for event in box._calendar(0, 14)["events"]], ["This week"])
+        self.assertIsNone(box._date_way)
+
+    def test_days_with_nothing_in_them_are_an_empty_calendar_not_a_problem(self):
+        box = self.box()
+        page = box._calendar(0, 14)
+        self.assertEqual((page["events"], page["from"]), ([], "2026-11-20"))
+        self.assertGreaterEqual(len(box._ns.items.filters), 2, "every way of writing the dates was tried before saying so")
 
     def test_a_series_without_an_end_does_not_keep_outlook_for_ever(self):
         saved, mailbox.CALENDAR_LOOK = mailbox.CALENDAR_LOOK, 5

@@ -324,6 +324,59 @@ class MoreOfOutlook(ServerCase):
         self.assertEqual(self.post("/api/act", {"what": "empty-the-mailbox", "id": "x"})[0], 400)
         self.assertEqual(self.post("/api/act", {"what": "delete", "id": invitation["id"]}, cookie=False)[0], 401)
 
+    def test_your_own_folders_the_signature_and_a_search_in_the_text(self):
+        reply, own = self.get("/api/folders")
+        self.assertEqual((reply.status, own["folders"][0]["name"], own["categories"][0]), (200, "Hinge project", "Customer"))
+        self.assertEqual(len(self.get("/api/mail?folder=" + own["folders"][0]["id"])[1]["mail"]), 2)
+        self.assertEqual(self.get("/api/mail?folder=f.nothing.here")[0].status, 502)
+        self.assertTrue(self.get("/api/signature")[1]["new"].startswith("Rin Aoki"))
+        self.assertEqual(self.get("/api/mail?folder=inbox&q=shore")[1]["mail"], [])
+        self.assertEqual(len(self.get("/api/mail?folder=inbox&q=shore&deep=1")[1]["mail"]), 1)
+        self.assertEqual(self.app.mail_call("mail", {"folder": "inbox", "q": "shore", "deep": "1"})[1]["mail"][0]["subject"][:5], "Quote")
+        for path in ("/api/folders", "/api/signature"):
+            self.assertEqual(self.phone("GET", path)[0].status, 401, path)
+
+    def test_a_message_is_flagged_labelled_marked_and_moved(self):
+        _, page = self.get("/api/mail?folder=inbox&q=laptop")
+        mail_id = page["mail"][0]["id"]
+        own = self.get("/api/folders")[1]["folders"]
+        for order, answer in (
+            ({"what": "flag"}, {"ok": True, "flagged": True}),
+            ({"what": "categorize", "categories": ["To read"]}, {"ok": True, "categories": ["To read"]}),
+            ({"what": "unread"}, {"ok": True, "unread": True}),
+            ({"what": "read"}, {"ok": True, "unread": False}),
+            ({"what": "move", "to": own[2]["id"]}, {"ok": True, "moved": True}),
+        ):
+            self.assertEqual(self.post("/api/act", {"id": mail_id, **order}), (200, answer), order)
+        moved = self.get("/api/mail?folder=" + own[2]["id"])[1]["mail"][0]
+        self.assertEqual((moved["id"], moved["flagged"], self.get("/api/item?id=" + mail_id)[1]["categories"]), (mail_id, True, ["To read"]))
+        self.assertEqual(self.post("/api/act", {"what": "move", "id": mail_id, "to": "outbox"})[0], 400)
+
+    def test_a_busy_outlook_does_not_keep_a_tap_waiting_for_the_mark_as_read(self):
+        real = self.app.mailbox.act
+        self.app.mailbox.act = lambda payload: (_ for _ in ()).throw(OutlookBusy())
+        try:
+            status, answer = self.post("/api/act", {"what": "read", "id": "x"})
+        finally:
+            self.app.mailbox.act = real
+        self.assertEqual((status, answer["busy"]), (503, True))
+
+    def test_a_calendar_entry_is_made_changed_and_taken_out(self):
+        import datetime as dt
+
+        start = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).replace(minute=0, second=0, microsecond=0)
+        order = {"what": "save", "subject": "Gasket fit check", "location": "Lab 2", "with": ["priya.nair@lumenworks.example"],
+                 "start": start.strftime("%Y-%m-%dT%H:%M:%SZ"), "end": (start + dt.timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        self.assertEqual(self.post("/api/plan", order), (200, {"ok": True, "saved": True, "told": True}))
+        entry = next(event for event in self.get("/api/calendar")[1]["events"] if event["subject"] == "Gasket fit check")
+        self.assertEqual((entry["start"], entry["mine"], entry["meeting"]), (order["start"], True, True))
+        self.assertEqual(self.post("/api/plan", {**order, "id": entry["id"], "subject": "Gasket fit check, Lab 3"})[0], 200)
+        self.assertEqual(self.get("/api/event?id=" + entry["id"])[1]["subject"], "Gasket fit check, Lab 3")
+        self.assertEqual(self.post("/api/plan", {"what": "remove", "id": entry["id"]}), (200, {"ok": True, "removed": True, "told": True}))
+        status, answer = self.post("/api/plan", {**order, "subject": ""})
+        self.assertEqual((status, answer["error"]), (400, "Give it a title first."))
+        self.assertEqual(self.post("/api/plan", order, cookie=False)[0], 401)
+
     def test_who_an_answer_goes_to_is_shown_and_then_exactly_that_is_sent(self):
         _, page = self.get("/api/mail?folder=inbox&q=hinge")
         _, item = self.get("/api/item?id=" + page["mail"][0]["id"])
@@ -451,6 +504,21 @@ class OneMailFunction(ServerCase):
             self.app.mailbox.get = real
         self.assertEqual((status, answer["busy"]), (503, True))
         self.assertFalse(self.app.busy())  # every call was counted out again
+        self.app.mailbox.get = lambda *args: 1 / 0  # something nobody expected
+        try:
+            status, answer = self.app.mail_call("item", {"id": "x"})
+        finally:
+            self.app.mailbox.get = real
+        self.assertEqual((status, answer["error"]), (502, "Titip on your PC could not read that (ZeroDivisionError)."))
+        real_act = self.app.mailbox.act
+        self.app.mailbox.act = lambda payload: {}["missing"]
+        try:
+            status, answer = self.app.mail_call("act", {"what": "delete", "id": "x"})
+        finally:
+            self.app.mailbox.act = real_act
+        self.assertEqual(status, 502)
+        self.assertIn("Look in Outlook before you try it again", answer["error"])
+        self.assertFalse(self.app.busy())
 
     def test_an_attachment_for_the_relay_is_base64_and_a_large_one_is_refused(self):
         import base64

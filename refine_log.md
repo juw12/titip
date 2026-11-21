@@ -730,11 +730,12 @@ check of the automatic send, which run 9 left unseen.
 
 stop: run 10 ended after the live result; no judged round was run.
 
-## Run 11 (2026-11-20): more of Outlook (0.9.0)
+## Run 11 (2026-11-20 and 21): more of Outlook, then the rest of it (0.9.0)
 
-Asked for: attach a file to a mail written on the phone; change To and Cc of an answer, for Reply,
-Reply all and Forward; see the Outbox and meetings; and look at what else Outlook has and bring it
-in. Not a judged round. Written on a Mac, where there is no Outlook: see Not verified.
+Asked for, first: attach a file to a mail written on the phone; change To and Cc of an answer, for
+Reply, Reply all and Forward; see the Outbox and meetings; look at what else Outlook has and bring
+it in. Then: narrow what was at risk, bring in what was still left out, and merge. Not a judged
+round. Written on a Mac, where there is no Outlook: see Not verified.
 
 ### What Outlook has that Titip did not, and what was taken
 
@@ -744,14 +745,18 @@ in. Not a judged round. Written on a Mac, where there is no Outlook: see Not ver
 | Change who an answer goes to | Taken, for Reply, Reply all and Forward, with Bcc |
 | Leave a file of the original out of a forward | Taken, also for a draft |
 | Outbox, Deleted Items, Junk | Taken, under the folder's name in the bar |
-| Calendar | Taken, to read: two weeks at a time, half a year at most |
+| Folders of your own | Taken, of every data file, under the same list. Opened and moved into, not made or renamed |
+| Archive | Taken as Move to a folder: Archive is a folder like any other |
+| Flag, categories | Taken, under More. Categories are ticked, not made |
+| Read and unread in Outlook | Taken: a mail opened on the phone is read in Outlook; Mark as unread under More |
+| Calendar | Taken: two weeks at a time, half a year at most |
 | Accept, Tentative, Decline | Taken, from the calendar and from the invitation mail |
+| New meeting, change a meeting | Taken for your own entries that do not repeat. Who is invited is changed in Outlook |
+| Search in the text of mail | Taken, behind a tick: by word where Outlook keeps an index, letter by letter elsewhere |
+| Signature | Taken as text, from the files Outlook keeps: the one for new mail and the one for answers |
+| High importance | Taken, for what you write, and shown in the list |
 | Delete a message | Taken: to Deleted Items, behind Undo. Never for good |
-| Folders of your own, archive, flags, categories | Not taken |
-| Mark as read or unread in Outlook | Not taken: a mail that asks for a read receipt can open a window on the PC |
-| New meeting, change a meeting | Not taken |
-| Search in the text of mail | Not taken |
-| Signature, importance, read receipts | Not taken |
+| Reminders, rules, shared calendars, read receipts asked for, formatted text | Not taken |
 
 ### Changes kept
 
@@ -764,43 +769,63 @@ in. Not a judged round. Written on a Mac, where there is no Outlook: see Not ver
   hands back is the whole list; the PC keeps whoever Outlook had put there, takes out the others
   and adds who is new. A page from before 0.9.0 does not say `recipients: exact` and gets what it
   got before.
-- Calendar: sorted by start, repeating entries taken apart, asked for in Windows' own short date
-  with a day more on each side, then every entry checked against the real days. At most 400
-  entries are looked at for a page.
+- Calendar: sorted by start, repeating entries taken apart, a day more on each side, then every
+  entry checked against the real days. At most 400 entries are looked at for a page.
 - The phone page can be newer than the PC for a while (the public page updates first). What is new
   then says "Titip on your PC is version 0.8.3 and this needs 0.9.0" instead of waiting for an
   answer that does not come.
 - A request on your own network over 60,000 characters is no longer marked to outlive its page: a
   browser refuses that above 64 KB, and a piece of a file is larger.
 
+### What was at risk, and what was done about it
+
+- A plain answer went through new code. Now it does not: the phone says when nobody was added or
+  taken out (`kept`), and the PC then leaves the recipients exactly as Outlook addressed them, by
+  the steps of 0.8.3. Only an answer that was re-addressed has its recipients gone through.
+- The calendar depended on Outlook reading dates the way Windows writes them. Now the answer is
+  looked at: when most of what comes back is from other days, the dates are asked again year
+  first, then month first, and the way that worked is remembered. A way Outlook refuses outright
+  is passed over. When no way is clean, what does belong to the days is still shown.
+- A time set on a calendar entry is read back and set again if Outlook shifted it (a time zone
+  applied on the way in), and refused if it still does not read back right.
+- Marking as read never makes Outlook ask about a read receipt: such a mail is left unread there.
+- `scripts/check_outlook.py` asks the real Outlook, reading only: the lists with their new
+  columns, the folders, the calendar and which way of writing dates worked, the signature, and an
+  answer to all that is made, re-addressed and thrown away unsent. With `--write` it also makes
+  and deletes one calendar entry and one draft with a file. It prints counts, never mail.
+
 ### Hard gates (code-checked)
 
-- 290 unit and server tests (229 before). All pass on Windows with Python 3.12 (the `tests`
-  workflow, started by hand on the branch). On the Mac it was written on, 286 pass with Python
-  3.14: the 4 that do not need Windows' `pythoncom`, as before this run.
-- 158 browser steps (128 before), all pass, no console error: Reply all with somebody taken out
-  and somebody added, Bcc, two files in three pieces, a file too large refused, a forward that
-  leaves a file behind, the folder list, a mail stopped in the Outbox with Undo first, the
-  calendar, an invitation accepted, a file of 250 KB through the stand-in relay with the worker's
-  size rule, and the older-PC message.
+- 335 unit and server tests (229 before this run). On the Mac 331 pass with Python 3.14; the 4
+  that do not need Windows' `pythoncom`, as before this run. The `tests` workflow runs them all on
+  Windows.
+- 186 browser steps (128 before), all pass, no console error. Added: Reply all re-addressed, Bcc,
+  files in pieces, a file too large refused, a forward that leaves a file behind, the folder list
+  with your own folders, a mail stopped in the Outbox, the calendar, an invitation accepted, the
+  older-PC message, flag, categories, move, mark as unread, a search in the text, the signature,
+  high importance, an untouched answer that says `kept`, a meeting made, changed and cancelled,
+  and a 250 KB file through the stand-in relay with the worker's size rule.
 
 ### Found while checking, and fixed
 
-- The browser run failed two times in three at "the switch shows at once", on a page this run did
-  not touch. The stand-in relay gave the state a newer time on every read, so a read that fell
-  between the tap and the check looked like news from the PC. It now keeps one time, as a PC that
-  has not written again does.
+- The browser run failed now and then at "the switch shows at once", on a page this run did not
+  touch. The run looked at the page the moment the stand-in relay had the order, which is a moment
+  before the page has the relay's "ok" and draws the switch. It now waits for the page.
+- The run handed the browser a 15 MB file through its debugging channel to see it refused, which
+  took longer than 30 seconds on a busy Mac. It now names a file on disk, whose size is all that
+  is asked.
 
 ### Not verified
 
-- Nothing of this has run against a real Outlook. The fake Outlook in the tests does what the
-  documentation says Outlook does; where Outlook differs, the tests do not see it. Most at risk:
-  the calendar (how Outlook reads the dates in the filter on a PC that is not set to English),
-  `Recipients.Remove` on an answer, an answer to an invitation without a window opening, and
-  whether a forward numbers its attachments as the original does (checked by name before one is
-  taken out, so a difference stops the send and does not take out the wrong file).
-- A reply from a new page goes through new code. If that code fails on the real Outlook, an
-  answer is refused with a reason and nothing leaves; it does not go to the wrong people.
-- A real phone: the file picker of iOS and Android, a photo of several MB on mobile data.
+- Nothing of this has run against a real Outlook. The stand-in Outlook in the tests does what the
+  documentation says Outlook does; where Outlook differs, the tests do not see it. The check
+  script above is how it gets verified, on the PC. Still most at risk, in this order: making and
+  changing a calendar entry, the list of your own folders on a mailbox with many data files (how
+  long it takes), flags on an account that is not Exchange, the signature when Outlook keeps its
+  signatures only online, and a search in the text of a large folder without an index.
+- What cannot go wrong quietly: every one of these ends in a message on the phone when Outlook
+  refuses, and nothing is sent, moved or deleted by a step that failed.
+- A real phone: the file picker of iOS and Android, a photo of several MB on mobile data, the date
+  and time fields of a calendar entry on an iPhone.
 
-stop: run 11 ended with the branch pushed for review; it is not on `main`, so no PC has it yet.
+stop: run 11 ended with 0.9.0 merged to `main`; the PC moves to it by itself.

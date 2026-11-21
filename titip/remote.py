@@ -49,8 +49,10 @@ KEEP_IDLE_S = 30  # a connection to the relay that was silent this long is not u
 KEEP_CONNECTIONS = 6  # open ones kept for each way out
 MAX_REPLY = 8_000_000
 ALLOWED_ORDERS = ("switch", "mode", "check", "send", "drop")
-ASK_ROUTES = ("state", "mail", "item", "attachment", "send", "people", "upload", "calendar", "event", "act")
-ONCE_ROUTES = ("send", "act")  # what changes something: never carried out for an ask from before this start
+ASK_ROUTES = (
+    "state", "mail", "item", "attachment", "send", "people", "upload", "calendar", "event", "act", "plan", "folders", "signature",
+)
+ONCE_ROUTES = ("send", "act", "plan")  # what changes something: never carried out for an ask from before this start
 ASK_MAX_AGE_S = 120
 ASK_IDLE_S = 3  # how often the PC looks for a question while nobody is reading mail
 ASK_BUSY_S = 0.7  # ... and while somebody is

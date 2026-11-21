@@ -429,19 +429,22 @@ class MailFromAnywhere(unittest.TestCase):
         link = self.make()
         self.now += 5
         self.mailbox.reply = (200, {"ok": True})
-        asked = [self.ask(link, route, {"id": "x"}) for route in ("upload", "calendar", "event", "act")]
+        routes = ("upload", "calendar", "event", "act", "plan", "folders", "signature")
+        asked = [self.ask(link, route, {"id": "x"}) for route in routes]
         answers = self.round(link)
-        self.assertEqual(sorted(route for route, _ in self.mailbox.calls), ["act", "calendar", "event", "upload"])
+        self.assertEqual(sorted(route for route, _ in self.mailbox.calls), sorted(routes))
         self.assertTrue(all(answers[identity]["status"] == 200 for identity in asked))
 
     def test_a_delete_or_an_answer_from_before_the_start_is_refused_and_a_piece_of_a_file_is_not(self):
         link = self.make()
         early = self.ask(link, "act", {"what": "delete", "id": "x"}, at=self.now - 30)
+        entry = self.ask(link, "plan", {"what": "save", "subject": "x"}, at=self.now - 30)
         piece = self.ask(link, "upload", {"upload": "x"}, at=self.now - 30)
         answers = self.round(link)
         self.assertEqual([route for route, _ in self.mailbox.calls], ["upload"])
-        self.assertEqual(answers[early]["status"], 400)
-        self.assertIn("nothing was changed", answers[early]["data"]["error"])
+        for refused in (early, entry):
+            self.assertEqual(answers[refused]["status"], 400)
+            self.assertIn("nothing was changed", answers[refused]["data"]["error"])
         self.assertEqual(answers[piece]["status"], 200)
 
     def test_after_a_failure_the_pc_looks_again_soon_only_while_someone_reads(self):

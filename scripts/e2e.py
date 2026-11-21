@@ -6,7 +6,8 @@ Starts Titip with invented mail on spare ports, pairs a browser through the real
 PC's network address), then reads, answers, undoes, sends, saves a draft and searches, at phone and
 desktop sizes, light and dark. Changes who a Reply all goes to, attaches files, forwards without one of
 the original's files, opens the Outbox and stops a mail there, reads the calendar and accepts an
-invitation. Then Autopilot: on the paired phone, on the public page (demo), and
+invitation. Opens a folder of your own, flags, labels, moves and marks a mail, searches in the text,
+writes with the signature and high importance, and makes, changes and cancels a meeting. Then Autopilot: on the paired phone, on the public page (demo), and
 through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
 trip: the code for any network opens the public mail app, a stand-in relay with the worker's rules
 passes sealed text, this Titip answers. Then the iPhone Home Screen: a browser with an iPhone's name
@@ -444,7 +445,10 @@ def main() -> None:
                   f"the file labels are at least 44 px high and nothing overflows sideways {low if low else ''}")
             page.fill("#bodyInput", "Thanks. A closer photo of the cam is attached.")
             page.screenshot(path=SHOTS / "phone-answer-files.png")
-            page.set_input_files("#fileInput", [{"name": "whole-test-video.mov", "mimeType": "video/quicktime", "buffer": bytes(15_000_001)}])
+            too_large = Path(home) / "whole-test-video.mov"  # a file on disk: its 15 MB are never read, only its size is asked
+            with too_large.open("wb") as empty:
+                empty.truncate(15_000_001)
+            page.set_input_files("#fileInput", str(too_large))
             check("does not fit" in page.inner_text("#composeError") and files.count() == 2,
                   "a file that would make the mail too large is refused with the reason, and the others stay")
             posted.clear()
@@ -456,7 +460,7 @@ def main() -> None:
                   "a file goes to the PC in pieces, each small enough for one request")
             check(sent_as["recipients"] == "exact" and sent_as["to"] == ["mateo.silva@lumenworks.example"]
                   and sent_as["cc"] == ["jonas.weber@lumenworks.example"] and sent_as["bcc"] == ["quiet@lumenworks.example"]
-                  and len(sent_as["files"]) == 2,
+                  and len(sent_as["files"]) == 2 and "kept" not in sent_as,
                   "the PC is handed exactly the people on the labels and the names of the two files")
             page.click("#back")
             page.click(".tabs a[data-folder=sent]")
@@ -598,6 +602,175 @@ def main() -> None:
                   and page.locator("#actions button").count() == 3,
                   "the invitation in the inbox shows the same meeting and answer, next to Reply")
             page.click("#back")
+
+            # ---- the rest of Outlook: marks in the list, your own folders, More (flag, categories, move, unread)
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            check(page.locator(".row:has(.subject:has-text('Drop test slot')) .flag").count() == 1
+                  and page.locator(".row:has(.subject:has-text('Hinge sample B')) .bang").count() == 1,
+                  "a flagged mail and one of high importance are marked in the list")
+            read_there = page.evaluate(
+                "fetch('/api/mail?folder=inbox&limit=1', {headers: {'X-Titip': '1'}}).then(reply => reply.json()).then(page => page.mail[0].unread)")
+            check(read_there is False, "a mail read on the phone is marked read on the PC too")
+            page.click("#folderPick")
+            expect(page.locator("#ownFolders a")).to_have_count(3, timeout=10000)
+            first_own = page.locator("#ownFolders a").first.inner_text()
+            check("Hinge project" in first_own and "Inbox" in first_own and page.inner_text("#ownNote").upper() == "YOUR FOLDERS" and overflow(page) <= 0,
+                  "the list of folders goes on with your own, each with where it is")
+            page.screenshot(path=SHOTS / "phone-own-folders.png")
+            page.locator("#ownFolders a").first.click()
+            page.wait_for_selector(".row .subject:has-text('Hinge sample A')")
+            check(page.inner_text("#folderName") == "Hinge project" and page.locator(".row").count() == 2,
+                  "a folder of your own opens like any other")
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Thanks for covering')")
+            page.locator(".row:has(.subject:has-text('Thanks for covering'))").click()
+            page.wait_for_selector("#actions button:has-text('Reply')")
+            page.click("#moreToggle")
+            check(page.locator("#moreMenu button").all_inner_texts() == ["Mark as unread", "Flag", "Move to a folder", "Categories"]
+                  and overflow(page) <= 0, "More, next to Delete, lists what else can be done with the message")
+            page.screenshot(path=SHOTS / "phone-more.png")
+            page.click("#doFlag")
+            expect(page.locator("#toastText")).to_have_text("Flagged", timeout=15000)
+            expect(page.locator("#tags")).to_have_text("Flagged")
+            page.click("#moreToggle")
+            check(page.inner_text("#doFlag") == "Clear the flag", "a flag is set, shown under the sender, and can be cleared again")
+            page.click("#doLabel")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(4, timeout=10000)
+            page.locator("#pickerList .pickOne:has-text('Customer')").click()
+            page.wait_for_timeout(200)
+            page.screenshot(path=SHOTS / "phone-categories.png")
+            low = [round(box["height"]) for box in (one.bounding_box() for one in page.locator("#pickerList .pickOne").all()) if box["height"] < 44]
+            page.click("#pickerDone")
+            expect(page.locator("#toastText")).to_have_text("Categories saved", timeout=15000)
+            check("Customer" in page.inner_text("#tags") and "Flagged" in page.inner_text("#tags") and not low,
+                  f"Outlook's categories can be ticked for a message {low if low else ''}")
+            page.click("#moreToggle")
+            page.click("#doMove")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(4, timeout=10000)
+            places = [text.split("\n")[0] for text in page.locator("#pickerList .pickOne").all_inner_texts()]
+            check(places == ["Hinge project", "Suppliers", "Archive", "Junk"], f"Move lists the folders it can go to, not the one it is in {places}")
+            page.locator("#pickerList .pickOne:has-text('Archive')").click()
+            expect(page.locator("#toastText")).to_contain_text("Moving to Archive in")
+            expect(page.locator("#toastText")).to_have_text("Moved to Archive", timeout=30000)
+            expect(page.locator(".row:has(.subject:has-text('Thanks for covering'))")).to_have_count(0)
+            check(page.locator("#letter").is_hidden(), "moved behind Undo, the mail is gone from the inbox")
+            page.click("#folderPick")
+            page.locator("#ownFolders a:has-text('Archive')").click()
+            page.wait_for_selector(".row .subject:has-text('Thanks for covering')")
+            check(page.locator(".row .flag").count() == 1, "and is in the folder it was moved to, flag and all")
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Lab 2 air')")
+            page.locator(".row:has(.subject:has-text('Lab 2 air'))").click()
+            page.wait_for_selector("#actions button:has-text('Reply')")
+            page.click("#moreToggle")
+            page.click("#doUnread")
+            expect(page.locator("#toastText")).to_have_text("Marked as unread", timeout=15000)
+            expect(page.locator(".row.unread:has(.subject:has-text('Lab 2 air'))")).to_have_count(1)
+            check(page.locator("#letter").is_hidden(), "Mark as unread goes back to the list, where the mail is bold again")
+
+            # ---- a search can look in the text of the mail too
+            page.click("#searchToggle")
+            page.fill("#q", "shore")
+            page.wait_for_selector("#state strong:has-text('No match')")
+            page.check("#deep")
+            expect(page.locator(".row")).to_have_count(1, timeout=15000)
+            check("Quote Q-2291" in page.inner_text(".row .subject"), "ticked, a search finds a word that is only in the text of a mail")
+            page.uncheck("#deep")
+            page.wait_for_selector("#state strong:has-text('No match')")
+            page.click("#searchToggle")
+            expect(page.locator(".row").nth(5)).to_be_visible()
+
+            # ---- a new mail starts with Outlook's signature; importance; an answer nobody re-addressed
+            page.click("#write")
+            check(page.input_value("#bodyInput") == "\n\nRin Aoki\nHardware, Lumenworks\nrin.aoki@lumenworks.example"
+                  and page.evaluate("document.getElementById('bodyInput').selectionStart") == 0,
+                  "a new mail starts with the signature Outlook has for it, the cursor above it")
+            page.locator("#toInput").press_sequentially("pri")
+            page.locator("#people .person").first.click()
+            page.fill("#subjectInput", "Fixture drawing")
+            page.click("#send")
+            check(page.inner_text("#composeError") == "Write a message first.", "a signature alone is not a message")
+            page.locator("#bodyInput").press_sequentially("Rev C is on the share.")
+            page.click("#important")
+            check(page.get_attribute("#important", "aria-pressed") == "true", "High importance can be pressed")
+            posted.clear()
+            page.click("#send")
+            expect(page.locator("#toastText")).to_have_text("Sent to Priya Nair", timeout=30000)
+            urgent = next(body for name, body in posted if name == "send")
+            check(urgent["importance"] == "high" and urgent["body"] == "Rev C is on the share.\n\nRin Aoki\nHardware, Lumenworks\nrin.aoki@lumenworks.example",
+                  "the PC is told it is important, and the text goes with the signature under it")
+            page.locator(".row").first.click()
+            page.wait_for_selector("#actions button:has-text('Reply')")
+            page.click("#actions button:has-text('Reply')")
+            check(page.input_value("#bodyInput") == "\n\nRin", "an answer starts with the signature for answers")
+            page.locator("#bodyInput").press_sequentially("Noted, thanks.")
+            posted.clear()
+            page.click("#send")
+            expect(page.locator("#toastText")).to_have_text("Sent to Mateo Silva", timeout=30000)
+            plain = next(body for name, body in posted if name == "send")
+            check(plain["recipients"] == "exact" and plain.get("kept") is True and plain["to"] == ["mateo.silva@lumenworks.example"],
+                  "an answer nobody re-addressed says so, and the PC leaves it addressed as Outlook addressed it")
+            page.click("#back")
+            page.click(".tabs a[data-folder=sent]")
+            page.wait_for_selector(".row .subject:has-text('Fixture drawing')")
+            check(page.locator(".row:has(.subject:has-text('Fixture drawing')) .bang").count() == 1, "the important mail is marked in Sent")
+
+            # ---- a calendar entry made on the phone, changed, and cancelled
+            page.click(".tabs a[data-folder=calendar]")
+            page.wait_for_selector(".row.event")
+            check(page.inner_text("#write").strip() == "New entry", "on the calendar the button makes a new entry")
+            page.click("#write")
+            expect(page.locator("#planner")).to_be_visible()
+            check(page.input_value("#planDay") == time.strftime("%Y-%m-%d", time.localtime(time.time() + 3600))
+                  and page.input_value("#planFrom").endswith(":00") and page.locator("#withField").is_visible(),
+                  "a new entry starts at the next full hour, half an hour long")
+            page.click("#planSave")
+            check(page.inner_text("#planError") == "Give it a title first.", "an entry without a title is stopped")
+            page.fill("#planSubject", "Gasket fit check")
+            page.fill("#planDay", time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400)))
+            page.fill("#planFrom", "16:30")
+            page.fill("#planTo", "17:00")
+            page.fill("#planWhere", "Lab 2")
+            page.locator("#withInput").press_sequentially("pri")
+            expect(page.locator("#people .personName").first).to_have_text("Priya Nair")
+            page.locator("#people .person").first.click()
+            page.fill("#planNotes", "Bring both units.")
+            check(page.locator("#withField .chipName").all_inner_texts() == ["Priya Nair"] and overflow(page) <= 0,
+                  "people are put in the way they are put on a mail")
+            page.screenshot(path=SHOTS / "phone-entry.png")
+            posted.clear()
+            page.click("#planSave")
+            expect(page.locator("#toastText")).to_contain_text("Sending the invitation in")
+            expect(page.locator("#toastText")).to_have_text("Invitation sent to Priya Nair", timeout=30000)
+            made = next(body for name, body in posted if name == "plan")
+            check(made["with"] == ["priya.nair@lumenworks.example"] and made["start"].endswith("Z") and made["subject"] == "Gasket fit check",
+                  "the PC is handed the people by address and the time as one moment, whatever clock the phone is on")
+            entry = page.locator(".row.event:has-text('Gasket fit check')")
+            expect(entry).to_have_count(1, timeout=15000)
+            check("4:30" in entry.inner_text() and "Lab 2" in entry.inner_text(), "the meeting is in the calendar, under tomorrow")
+            entry.click()
+            page.wait_for_selector("#actions button:has-text('Change')")
+            check(page.locator("#actions button").all_inner_texts() == ["Change", "Cancel the meeting"]
+                  and "priya.nair@lumenworks.example" in page.inner_text("#to") and page.locator("#answers").is_hidden(),
+                  "your own meeting can be changed or cancelled, not answered")
+            page.click("#actions button:has-text('Change')")
+            check(page.inner_text("#planTitle") == "Change entry" and page.input_value("#planSubject") == "Gasket fit check"
+                  and page.input_value("#planFrom") == "16:30" and page.locator("#withField").is_hidden()
+                  and "told about the change" in page.inner_text("#planNote"),
+                  "Change opens it with what it holds; who is invited stays as it is")
+            page.fill("#planSubject", "Gasket fit check, both units")
+            page.click("#planSave")
+            expect(page.locator("#toastText")).to_have_text("Saved. The people invited are told.", timeout=30000)
+            entry = page.locator(".row.event:has-text('both units')")
+            expect(entry).to_have_count(1, timeout=15000)
+            entry.click()
+            page.wait_for_selector("#actions button:has-text('Cancel the meeting')")
+            page.click("#actions button:has-text('Cancel the meeting')")
+            expect(page.locator("#toastText")).to_contain_text("Cancelling the meeting in")
+            expect(page.locator("#toastText")).to_have_text("Cancelled. The people invited are told.", timeout=30000)
+            expect(page.locator(".row.event:has-text('both units')")).to_have_count(0, timeout=15000)
+            check(page.locator("#letter").is_hidden(), "cancelled behind Undo, the meeting is gone from the calendar")
 
             # ---- search and empty state
             page.click(".tabs a[data-folder=inbox]")
@@ -760,12 +933,10 @@ def main() -> None:
             wire: list[str] = []
             orders: list[dict | None] = []
 
-            wrote_at = int(time.time()) - 5  # the PC's last write: it does not write again while the phone looks
-
             def relay(route) -> None:
                 request, cors = route.request, {"Access-Control-Allow-Origin": "*"}
                 if request.method == "GET":
-                    sealed = remote.seal(key, {**remote.slim(desk("/api/auto")), "published": wrote_at})
+                    sealed = remote.seal(key, {**remote.slim(desk("/api/auto")), "published": int(time.time()) - 5})
                     wire.append(sealed)
                     return route.fulfill(status=200, headers=cors, content_type="text/plain", body=sealed)
                 wire.append(request.post_data or "")
@@ -789,6 +960,10 @@ def main() -> None:
             check(bool(order) and order.get("name") == "switch" and order.get("on") is True
                   and bool(order.get("nonce")) and abs(time.time() - order.get("at", 0)) < 120,
                   "the phone's order decrypts on the PC side, with a nonce and a time")
+            try:  # the relay has the order a moment before the page has its "ok": wait for the page, not for the relay
+                expect(far.locator("#headline")).to_have_text("On", timeout=3000)
+            except AssertionError:
+                pass
             check(far.inner_text("#headline") == "On", "the switch shows at once while the PC picks the order up")
             check(all("Invoice" not in text and "nadia" not in text and "switch" not in text for text in wire),
                   "nothing readable passes through the relay")
