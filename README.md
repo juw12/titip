@@ -46,6 +46,18 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   repeats you are asked: only this one, or the whole series.
 - **Other calendars** on the calendar page: more of your own and the ones people share with you,
   as Outlook lists them. They are read; nothing in them is answered or changed from the phone.
+- **Reminders on this phone**, one line on the calendar page: switched on, an entry whose reminder
+  is due is said on the page with a short tone, and as a notification where the phone allows one.
+  They ring while Titip is open on the phone, not while it is closed.
+- **Tasks**, **Notes** and **Contacts**, under the folder's name with the other folders: Outlook's
+  own. The open tasks come by the day they are due, the done ones a tap away; **New task**,
+  **Done**, **Change**, **Delete**. A note is its text, and its first line is its name. A contact
+  opens with the address to write to and the numbers to call: **Write a mail** starts one to that
+  person, a tap on a number dials it, and the search finds a contact by name, company or address.
+- **Send later**, a button under the text: pick a day and a time, and the mail waits in Outlook's
+  Outbox until then. It can still be stopped there.
+- **Automatic replies** (out of office), under the list of folders: the switch, on or off. While
+  they are on, one line over every list says so, with **Switch off** next to it.
 - **Delete** moves a message to Deleted Items. A draft is discarded the same way, and a mail deleted
   from the Outbox does not leave.
 - **More**, next to Delete: **Mark as unread**, **Flag**, **Move to a folder** (any folder of your own,
@@ -228,7 +240,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.10.3`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.11.0`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page.
 
@@ -389,6 +401,29 @@ Titip opens a door from your network to your mailbox. Read this first.
   month first, and the way that worked is remembered.
 - Files that wait to be attached hold back a restart for an update for two minutes, and are
   dropped after fifteen when no mail came for them.
+- A mail sent for later is handed to Outlook at once, with the time before which it is not to be
+  delivered. Outlook must be open on the PC at that time for it to leave; if it is not, the mail
+  leaves the next time Outlook runs. It can wait 60 days at most. The time is set, read back, and
+  set again if Outlook shifted it; a time Outlook does not take stops the mail instead of sending
+  it now.
+- The switch for automatic replies is the switch only. The text people get, whom outside the
+  company it goes to, and from when to when, are what was last set in Outlook. An Exchange mailbox
+  says whether they are on; for another kind of mailbox the phone does not offer the switch. After
+  switching, Titip reads the state back, and says so if Outlook took the switch and nothing changed.
+- Reminders ring only while Titip is open and on screen: a web page cannot wake a phone, so do not
+  count on them the way you count on Outlook's own. For them the phone asks for the calendar every
+  half hour, which on a PC where reading the calendar is slow keeps Outlook busy that often: leave
+  them off there. An entry made less than half an hour before its reminder can be missed. Outlook's
+  own reminder on the PC is not answered or closed from the phone.
+- Tasks, notes and contacts are those of your own mailbox, not of other data files or shared
+  folders, the first 300 of each. They are asked for when you open the page, like the calendar. A
+  list of people among the contacts is left out. A contact's name, company, job title, first
+  address, mobile and work number are changed on the phone; everything else it has stays as it is.
+  Text you did not change keeps the formatting it has in Outlook. Delete moves to Deleted Items.
+- A search in the contacts asks Outlook to look in name, company and first address. Where Outlook
+  cannot search the folder, Titip looks through the first 3,000 contacts itself.
+- A task's due day is set at noon and read back, so an Outlook that shifts times still lands on
+  the day you picked. If it does not, the day is not saved and the phone says so.
 - After the phone is put down, Titip goes on looking for new mail every five minutes for eight hours,
   so what arrived in the meantime is already there when the phone is picked up again. It stops the
   first time it finds Outlook closed, and never opens Outlook for a phone nobody holds.
@@ -422,8 +457,11 @@ Titip opens a door from your network to your mailbox. Read this first.
   never renamed or taken out. Categories have no colour chosen for them on the phone.
 - Formatting is bold, italic, underlined and lists. No fonts, colours, tables or pictures in the
   text; a picture goes along as a file.
-- It is laid out like Outlook's phone app but is not it: no swipe to delete, no reminder that
-  rings on the phone, no tasks, notes or contacts pages, no out-of-office switch, no delayed send.
+- A task has a name, a due day, high importance and a text. Its start day, how it repeats and
+  whom it is assigned to are set in Outlook. A note has no colour. A contact has no picture.
+- Automatic replies: the switch, not the text and not a time span.
+- It is laid out like Outlook's phone app but is not it: no swipe to delete, and a reminder rings
+  only while the page is open.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 
@@ -443,7 +481,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 and 0.10.0 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.11.0 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

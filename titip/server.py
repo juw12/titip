@@ -219,7 +219,7 @@ class PhoneHandler(_Handler):
                 return self._error(HTTPStatus.BAD_GATEWAY, str(error))
             except ValueError:
                 return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
-        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite"):
+        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite", "/api/things", "/api/thing"):
             return self._json(*self.app.mail_call(route[5:], query))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -244,7 +244,7 @@ class PhoneHandler(_Handler):
             return self._error(HTTPStatus.UNAUTHORIZED, NOT_PAIRED)
         if route == "/api/auto":
             return self._auto_order(body)
-        if route in ("/api/send", "/api/upload", "/api/act", "/api/plan", "/api/arrange"):
+        if route in ("/api/send", "/api/upload", "/api/act", "/api/plan", "/api/arrange", "/api/keep"):
             return self._json(*self.app.mail_call(route[5:], body))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -445,6 +445,16 @@ class Titip:
                     return 200, self.mailbox.arrange(params)
                 except MailError as error:
                     return 400, {"error": str(error)}
+            if route == "keep":  # a task, a note or a contact saved, ticked off or taken out
+                try:
+                    return 200, self.mailbox.keep(params)
+                except MailError as error:
+                    return 400, {"error": str(error)}
+            if route == "things":  # the list of tasks, notes or contacts
+                done = str(params.get("done", "")) in ("1", "True", "true")
+                return 200, self.mailbox.things(str(params.get("kind", "")), str(params.get("q", "")), done)
+            if route == "thing":
+                return 200, self.mailbox.thing(str(params.get("kind", "")), str(params.get("id", "")))
             if route == "calendars":  # the other calendars Outlook shows
                 return 200, self.mailbox.calendars()
             if route == "rules":
@@ -488,7 +498,7 @@ class Titip:
         except (ValueError, TypeError):
             return 400, {"error": "Bad request."}
         except Exception as error:  # something no part of Titip expected: the phone still gets an answer, in words
-            if route in ("send", "act", "plan", "arrange"):
+            if route in ("send", "act", "plan", "arrange", "keep"):
                 return 502, {"error": f"Something went wrong on your PC while doing that ({type(error).__name__}). Look in Outlook before you try it again."}
             return 502, {"error": f"Titip on your PC could not read that ({type(error).__name__})."}
         finally:

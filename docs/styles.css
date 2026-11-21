@@ -200,10 +200,11 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   background: var(--ground); border-bottom: 1px solid var(--line);
 }
 .demo a { color: var(--link); font-weight: 600; white-space: nowrap; }
-#outboxNote, #calBar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding-top: 0; padding-bottom: 0; }
-#outboxNote a, #calBar .link { flex: none; display: inline-flex; align-items: center; min-height: 44px; }
-#calBar .link { padding: 0; font-size: 13px; text-decoration: underline; }
-#calName { font-weight: 600; color: var(--ink); }
+#outboxNote, #calBar, #awayNote, #thingBar, #remindBar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding-top: 0; padding-bottom: 0; }
+#outboxNote a, .demo .link { flex: none; display: inline-flex; align-items: center; min-height: 44px; }
+.demo .link { padding: 0; font-size: 13px; text-decoration: underline; }
+#calName, #thingSay { font-weight: 600; color: var(--ink); }
+#awayNote span { padding: var(--s2) 0; }
 
 /* ---------- list */
 .panes { display: block; }
@@ -250,6 +251,14 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .row.unread .time, .row[aria-current="true"].unread .time { color: var(--signal-ink); font-weight: 500; }
 /* the calendar: the hours where a mail has its sender's initials, the answer where it has its time */
 .row.event { grid-template-columns: 64px minmax(0, 1fr) auto; }
+/* a task or a note: no initials in front, the name and one line under it */
+.row.thing { grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--s3); }
+.row.thing .who { white-space: normal; }
+.row.thing .preview { grid-column: 1 / span 2; }
+.row.off .who { color: var(--muted); text-decoration: line-through; }
+/* a contact: company and address on one line, cut short where the phone is narrow */
+.row.contact .preview { display: block; white-space: nowrap; text-overflow: ellipsis; }
+#letter.bare .meta { display: none; }
 .hours { grid-row: 1 / span 2; display: flex; flex-direction: column; font-size: 12px; line-height: 23px; letter-spacing: 0.02em; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .hours .until { color: var(--muted); line-height: 20px; }
 .row.event .who { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -422,8 +431,10 @@ button:disabled { opacity: 0.55; cursor: default; }
 /* ---------- the people a mail goes to: one rounded name each, the way Outlook shows them */
 .chips { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; min-width: 0; cursor: text; }
 .chips input { flex: 1 1 96px; width: auto; min-width: 96px; }
-/* not being typed in: the empty box must not take a line of its own under the names */
-.field:not(:focus-within) .chip ~ input { flex-basis: 24px; min-width: 24px; }
+/* not being typed in: the empty box must not take a line of its own under the names. The mark is
+   taken off a moment after the box is left (app.js), not the instant it is: what is tapped next
+   would move away under the finger, and the tap would miss it. */
+.chips:not(.typing) .chip ~ input { flex-basis: 24px; min-width: 24px; }
 .chip {
   position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
   min-height: 32px; margin: 6px 0; padding: 0 10px 0 12px;
@@ -455,7 +466,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   background: var(--toast); color: #fffdf8; border-radius: var(--radius);
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.22);
 }
-.toast button { min-height: 44px; padding: 0 var(--s4); background: none; border: 0; color: #86aee0; font-weight: 700; }
+.toast button { flex: none; min-height: 44px; padding: 0 var(--s4); background: none; border: 0; color: #86aee0; font-weight: 700; white-space: nowrap; }
 
 /* ---------- phone: folders at the thumb with their pictures, one pane at a time */
 @media (max-width: 859px) {

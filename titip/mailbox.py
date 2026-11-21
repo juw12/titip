@@ -150,11 +150,12 @@ DOING = {
     "_event": "opening a calendar entry", "_invite_of": "looking up a meeting", "_lookup": "searching the address book",
     "_note_people": "reading who a mail went to", "_attachment": "saving an attachment", "_send": "sending a mail",
     "_act": "changing a message", "_plan": "changing the calendar", "_arrange": "changing folders or rules",
+    "_things": "reading tasks, notes or contacts", "_thing": "opening a task, a note or a contact", "_keep_thing": "saving a task, a note or a contact",
 }
 RPC_TRIES = 4  # a call Outlook turns away (a window of its own is in the way) is made again this often
 RPC_PAUSE = 1.5
 SLOW_SECONDS = 900  # how long the answer to a slow question (the calendar, the folders) is waited for and still kept
-SLOW = ("calendar", "folders", "calendars", "rules", "invite")
+SLOW = ("calendar", "folders", "calendars", "rules", "invite", "things")
 ACCESSOR_RECIPIENTS = 60  # of one message: the people whose internet address Outlook is asked for one by one
 
 
@@ -288,6 +289,7 @@ def clean_send_request(payload: dict) -> dict:
         "importance": payload.get("importance") if payload.get("importance") in ("high", "low") else "",
         "receipt": payload.get("receipt") is True,  # ask the people it goes to for a read receipt
         "marks": payload.get("format") == "marks",  # **bold**, *italic*, __underlined__ and lists become formatting
+        "later": None,  # the moment it is to leave, on this PC's clock; until then it waits in the Outbox
         "subject": str(payload.get("subject") or "").strip()[:255],
         "body": str(payload.get("body") or "")[:MAX_BODY],
         "files": clean_files(payload.get("files")),
@@ -295,6 +297,16 @@ def clean_send_request(payload: dict) -> dict:
     }
     if mode != "new" and not request["id"]:
         raise MailError("The original message is missing.")
+    if payload.get("later") and action == "send":
+        try:
+            request["later"] = local_time(payload.get("later"))
+        except (TypeError, ValueError):
+            raise MailError("That day or time could not be read.")
+        ahead = request["later"] - dt.datetime.now()
+        if ahead < dt.timedelta(minutes=1):
+            raise MailError("The time to send it has passed already. Pick a later one, or send it now.")
+        if ahead > dt.timedelta(days=LATER_MOST_DAYS):
+            raise MailError(f"A mail can wait {LATER_MOST_DAYS} days at most.")
     if action == "send":
         anyone = request["to"] or request["cc"] or request["bcc"]
         if not anyone and (request["exact"] or mode not in ("reply", "replyAll")):
@@ -305,7 +317,7 @@ def clean_send_request(payload: dict) -> dict:
 
 
 ACTS = ("delete", "respond", "read", "unread", "flag", "unflag", "move", "categorize")
-ARRANGES = ("folder", "rename", "unfolder", "category", "rule", "ruleFrom")
+ARRANGES = ("folder", "rename", "unfolder", "category", "rule", "ruleFrom", "away")
 NAME_MOST = 80  # letters of a folder's or a category's name
 RULES_SHOWN = 100
 
@@ -328,6 +340,8 @@ def clean_arrange_request(payload: dict) -> dict:
         raise MailError("Unknown folder.")
     if what == "rule" and not request["name"]:
         raise MailError("The rule is missing.")
+    if what == "away":
+        return {**request, "on": payload.get("on") is True}
     if what == "ruleFrom" and (not request["id"] or not (request["to"] == "junk" or FOLDER_ID.fullmatch(request["to"]))):
         raise MailError("Say which mail and which folder.")
     return request
@@ -357,6 +371,46 @@ def clean_act_request(payload: dict) -> dict:
             name = " ".join(str(name or "").split())[:100]
             if name and not re.search(r"[;,]", name) and name not in request["categories"]:
                 request["categories"].append(name)
+    return request
+
+
+LATER_MOST_DAYS = 60  # how long a mail may wait in the Outbox to be sent
+P_AWAY = PROP + "0x661D000B"  # PR_OOF_STATE: are automatic replies (out of office) switched on for this mailbox?
+OL_CONTACTS, OL_NOTES, OL_TASKS = 10, 12, 13
+# The pages besides mail and calendar: Outlook's tasks, notes and contacts. For each: its folder,
+# the kind of thing Outlook makes for it, and what such a thing's class starts with.
+THINGS = {"tasks": (OL_TASKS, 3, "IPM.Task"), "notes": (OL_NOTES, 5, "IPM.StickyNote"), "contacts": (OL_CONTACTS, 2, "IPM.Contact")}
+THINGS_SHOWN = 300
+THINGS_LOOK = 3000  # contacts looked through for a search, when Outlook cannot search them itself
+NO_DAY = dt.datetime(4501, 1, 1, 12)  # Outlook's "no date" (noon, so that a time shifted on the way in stays on that day)
+
+
+def clean_keep_request(payload: dict) -> dict:
+    """A task, a note or a contact to save, tick off or take out: checked before Outlook is asked for anything."""
+    kind, what = payload.get("kind"), payload.get("what")
+    if kind not in THINGS or what not in ("save", "remove", "done", "undone") or (what in ("done", "undone") and kind != "tasks"):
+        raise MailError("Unknown action.")
+    request = {"kind": kind, "what": what, "id": str(payload.get("id") or "")}
+    if what != "save":
+        if not request["id"]:
+            raise MailError("It is missing.")
+        return request
+    line = lambda name, most=255: " ".join(str(payload.get(name) or "").split())[:most]  # noqa: E731
+    request.update(title=line("title"), body=str(payload.get("body") or "")[:MAX_BODY], important=payload.get("important") is True,
+                   due=None, email=line("email"), mobile=line("mobile", 60), phone=line("phone", 60), company=line("company"), job=line("job"))
+    if kind == "notes":
+        if not request["body"].strip():
+            raise MailError("Write the note first.")
+        return request
+    if not request["title"]:
+        raise MailError("Give it a name first." if kind == "contacts" else "Say what is to be done first.")
+    if kind == "tasks" and payload.get("due"):
+        try:
+            request["due"] = dt.datetime.strptime(str(payload.get("due")), "%Y-%m-%d").date()
+        except ValueError:
+            raise MailError("That day could not be read.")
+    if request["email"] and not re.fullmatch(r"[^@\s<>;,]+@[^@\s<>;,]+", request["email"]):
+        raise MailError("That e-mail address is not complete.")
     return request
 
 
@@ -1141,7 +1195,15 @@ class OutlookMailbox:
             "account": who[0],
             "name": who[1],
             "counts": counts,
+            "away": self._away(),
         }
+
+    def _away(self) -> bool | None:
+        """Are automatic replies (out of office) on? None when this mailbox does not say (not an Exchange one)."""
+        try:
+            return bool(self._ns.DefaultStore.PropertyAccessor.GetProperty(P_AWAY))
+        except Exception:
+            return None
 
     # -------------------------------------------------- list
     def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "", deep: bool = False) -> dict:
@@ -1667,6 +1729,10 @@ class OutlookMailbox:
                 return {"ok": True, "saved": True}
             if not mail.Recipients.Count:
                 raise MailError("Add at least one recipient.")
+            if request["later"] is not None:  # it goes to the Outbox now and leaves by itself then, while Outlook is open
+                self._set_time(mail, "DeferredDeliveryTime", request["later"])
+                mail.Send()
+                return {"ok": True, "sent": True, "later": True}
             mail.Send()
             return {"ok": True, "sent": True}
         except Exception:
@@ -2281,6 +2347,18 @@ class OutlookMailbox:
                     raise MailError(f"There is a category \u201c{category.Name}\u201d already.")
             self._ns.Categories.Add(request["name"])
             return {"ok": True, "name": request["name"]}
+        if what == "away":
+            # The switch only. The text of the reply, and whom it goes to, is what is set in Outlook.
+            try:
+                self._ns.DefaultStore.PropertyAccessor.SetProperty(P_AWAY, request["on"])
+            except Exception as error:
+                if getattr(error, "hresult", None) in RPC_BUSY:
+                    raise
+                raise MailError("Outlook did not let Titip switch the automatic replies. Switch them in Outlook itself.")
+            if self._away() is not request["on"]:
+                raise MailError("Outlook took the switch but the automatic replies did not change. Switch them in Outlook itself.")
+            self._state_cache = None
+            return {"ok": True, "away": request["on"]}
         rules = self._ns.DefaultStore.GetRules()
         if what == "rule":
             for rule in rules:
@@ -2308,6 +2386,192 @@ class OutlookMailbox:
         move.Enabled = True
         rules.Save()
         return {"ok": True, "name": name}
+
+    # -------------------------------------------------- tasks, notes and contacts
+    def things(self, kind: str, query: str = "", done: bool = False) -> dict:
+        """Outlook's tasks (open ones, or with `done` the finished), notes or contacts, as a list. `query` narrows it."""
+        if kind not in THINGS:
+            raise MailError("Unknown page.")
+        self._phone_asked()
+        query = " ".join(str(query or "").split())[:80]
+        return self._asked(("things", kind, query.lower(), bool(done)), self._things, kind, query, bool(done), fresh=LIST_FRESH_SECONDS)
+
+    @staticmethod
+    def _day(value) -> str:
+        """A date of Outlook's as "2026-11-23", or "" for its "no date"."""
+        try:
+            return "" if value.year < 1980 or value.year > 4000 else f"{value.year:04d}-{value.month:02d}-{value.day:02d}"
+        except AttributeError:
+            return ""
+
+    @staticmethod
+    def _moment(value) -> str:
+        """A time of this PC's clock as Outlook hands it over (marked UTC though it is not), as real UTC."""
+        try:
+            local = dt.datetime(value.year, value.month, value.day, value.hour, value.minute, value.second)
+            return local.astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if 1980 <= value.year <= 4000 else ""
+        except (AttributeError, ValueError, OSError):
+            return ""
+
+    def _thing_row(self, kind: str, item, store_key: str) -> dict:
+        row = {"id": f"{store_key}.{item.EntryID}", "kind": kind}
+        if kind == "tasks":
+            row.update(title=str(getattr(item, "Subject", "") or "(no subject)"), due=self._day(getattr(item, "DueDate", None)),
+                       done=bool(getattr(item, "Complete", False)), important=getattr(item, "Importance", 1) == 2)
+        elif kind == "notes":
+            text = str(getattr(item, "Body", "") or "")
+            first, _, rest = text.strip().partition("\n")
+            row.update(title=first.strip()[:120] or "(empty note)", preview=" ".join(rest.split())[:180],
+                       time=self._moment(getattr(item, "LastModificationTime", None)))
+        else:
+            email = str(getattr(item, "Email1Address", "") or "")
+            name = str(getattr(item, "FullName", "") or "") or str(getattr(item, "FileAs", "") or "") or str(getattr(item, "Subject", "") or "")
+            row.update(title=name or str(getattr(item, "CompanyName", "") or "") or email or "(no name)",
+                       company=str(getattr(item, "CompanyName", "") or ""), email=email if "@" in email else "",
+                       phone=str(getattr(item, "MobileTelephoneNumber", "") or getattr(item, "BusinessTelephoneNumber", "") or ""))
+        return row
+
+    def _things(self, kind: str, query: str, done: bool) -> dict:
+        folder = self._ns.GetDefaultFolder(THINGS[kind][0])
+        store_key = self._store_key(folder.StoreID)
+        items = folder.Items
+        needle = query.lower()
+        searched = False
+        if kind == "tasks":  # narrowed first, sorted after: what Restrict hands back is not promised to keep an order
+            items = items.Restrict("[Complete] = True" if done else "[Complete] = False")
+            items.Sort("[DueDate]")
+        elif kind == "notes":
+            items.Sort("[LastModificationTime]", True)
+        else:
+            if needle:
+                text = re.sub(r"[%_\[\]'\"]", " ", needle).strip()
+                try:  # Outlook searches name, company and address itself; where it cannot, they are looked through here
+                    items = items.Restrict("@SQL=" + " OR ".join(
+                        f'"urn:schemas:contacts:{field}" like \'%{text}%\'' for field in ("cn", "o", "email1")))
+                    searched = True
+                except Exception as error:
+                    if getattr(error, "hresult", None) in RPC_BUSY:
+                        raise
+            items.Sort("[FullName]")
+        found, looked, more = [], 0, False
+        for item in items:
+            self._give_way()
+            looked += 1
+            if len(found) >= THINGS_SHOWN or looked > THINGS_LOOK:
+                more = True
+                break
+            try:
+                if not str(getattr(item, "MessageClass", "") or "").startswith(THINGS[kind][2]):
+                    continue  # a list of contacts, say: not one person
+                row = self._thing_row(kind, item, store_key)
+            except Exception as error:
+                if isinstance(error, OutlookBusy) or getattr(error, "hresult", None) in RPC_BUSY:
+                    raise
+                continue
+            if needle and not searched and needle not in " ".join(str(value) for value in row.values()).lower():
+                continue
+            found.append(row)
+        return {"kind": kind, "things": found, "more": more}
+
+    def thing(self, kind: str, thing_id: str) -> dict:
+        """One task, note or contact in full."""
+        if kind not in THINGS:
+            raise MailError("Unknown page.")
+        self._phone_asked()
+        return self._do(self._thing, kind, thing_id)
+
+    def _of_kind(self, kind: str, thing_id: str):
+        try:
+            item = self._item(thing_id)
+        except MailError as error:
+            if "moved or deleted" in str(error):  # said of a mail; this is a task, a note or a contact
+                raise MailError("It is not there any more. Refresh the list.")
+            raise
+        if not str(getattr(item, "MessageClass", "") or "").startswith(THINGS[kind][2]):
+            raise MailError("That is not what it was when the list was read. Refresh the list.")
+        return item
+
+    def _thing(self, kind: str, thing_id: str) -> dict:
+        item = self._of_kind(kind, thing_id)
+        row = {**self._thing_row(kind, item, thing_id.partition(".")[0]), "id": thing_id, "body": (getattr(item, "Body", "") or "")[:MAX_BODY]}
+        if kind == "contacts":
+            emails = [str(getattr(item, f"Email{number}Address", "") or "") for number in (1, 2, 3)]
+            phones = [(label, str(getattr(item, name, "") or "")) for label, name in (
+                ("Mobile", "MobileTelephoneNumber"), ("Work", "BusinessTelephoneNumber"), ("Home", "HomeTelephoneNumber"))]
+            row.update(emails=[address for address in emails if "@" in address], job=str(getattr(item, "JobTitle", "") or ""),
+                       phones=[{"label": label, "number": number} for label, number in phones if number],
+                       mobile=phones[0][1], work=phones[1][1], address=" ".join(str(getattr(item, "BusinessAddress", "") or "").split()))
+        return row
+
+    def keep(self, payload: dict) -> dict:
+        request = clean_keep_request(payload)
+        try:
+            return self._do(self._keep_thing, request, timeout=SEND_SECONDS, first=True)
+        except OutlookBusy as error:
+            if error.started:
+                raise MailError("Outlook is taking a long time with this. Look in Outlook before you try it again, so it is not there twice.")
+            raise MailError("Outlook on your PC is busy, so nothing was changed." + error.why() + " Try again in a moment.")
+        finally:
+            with self._lock:
+                for key in [key for key in self._answers if key[0] == "things" and key[1] == request["kind"]]:
+                    del self._answers[key]
+
+    @staticmethod
+    def _set_day(item, name: str, day) -> None:
+        """Set a date-only field (a task's due date) and read it back. Outlook may take the time as written
+        on another clock: noon stays on its day either way, and should it not, the day next to it is tried."""
+        if day is None:
+            setattr(item, name, NO_DAY)
+            return
+        for shift in (0, 1, -1):
+            setattr(item, name, dt.datetime(day.year, day.month, day.day, 12) + dt.timedelta(days=shift))
+            got = getattr(item, name)
+            if (got.year, got.month, got.day) == (day.year, day.month, day.day):
+                return
+        raise MailError("Outlook did not take that day. Set it in Outlook itself.")
+
+    def _keep_thing(self, request: dict) -> dict:
+        kind, what = request["kind"], request["what"]
+        if what == "remove":
+            self._of_kind(kind, request["id"]).Delete()  # to Deleted Items
+            return {"ok": True, "removed": True}
+        if what in ("done", "undone"):
+            item = self._of_kind(kind, request["id"])
+            if what == "done":
+                item.MarkComplete()
+            else:
+                item.Complete = False
+                item.Save()
+            return {"ok": True, "done": what == "done"}
+        created = not request["id"]
+        item = self._app.CreateItem(THINGS[kind][1]) if created else self._of_kind(kind, request["id"])
+        try:
+            if kind == "notes":
+                item.Body = request["body"]
+            else:
+                if created or " ".join(request["body"].split()) != " ".join((getattr(item, "Body", "") or "").split()):
+                    item.Body = request["body"]  # untouched, it keeps the formatting it has in Outlook
+                if kind == "tasks":
+                    item.Subject = request["title"]
+                    item.Importance = 2 if request["important"] else 1
+                    self._set_day(item, "DueDate", request["due"])
+                else:
+                    item.FullName = request["title"]
+                    item.CompanyName = request["company"]
+                    item.JobTitle = request["job"]
+                    if created or request["email"] != (str(getattr(item, "Email1Address", "") or "") if "@" in str(getattr(item, "Email1Address", "") or "") else ""):
+                        item.Email1Address = request["email"]  # one Outlook knows by an internal name stays untouched
+                    item.MobileTelephoneNumber = request["mobile"]
+                    item.BusinessTelephoneNumber = request["phone"]
+            item.Save()
+            return {"ok": True, "saved": True}
+        except Exception:
+            if created:
+                try:
+                    item.Close(OL_DISCARD)
+                except Exception:
+                    pass
+            raise
 
     def signature(self) -> dict:
         """The text Outlook signs a new mail and an answer with. Read once, from files: Outlook is not asked."""
@@ -2461,6 +2725,21 @@ class DemoMailbox:
                 entry.update(mine=False, invited=False, other=True)
             self.other_calendars[calendar["id"]] = {"name": calendar["name"], "group": calendar.get("group", ""), "events": entries}
         self.rule_list = [dict(rule) for rule in data.get("rules", [])]
+        self.away = False
+        self.pages = {"tasks": [], "notes": [], "contacts": []}  # the invented tasks, notes and contacts
+        for index, task in enumerate(data.get("tasks", [])):
+            due = (dt.date.today() + dt.timedelta(days=task["dueInDays"])).isoformat() if "dueInDays" in task else ""
+            self.pages["tasks"].append({"id": f"demo.{index + 0x7A00:016X}", "kind": "tasks", "title": task["title"], "due": due,
+                                        "done": bool(task.get("done")), "important": bool(task.get("important")), "body": task.get("body", "")})
+        for index, note in enumerate(data.get("notes", [])):
+            when = now - dt.timedelta(minutes=note.get("minutesAgo", 0))
+            self.pages["notes"].append({"id": f"demo.{index + 0x7B00:016X}", "kind": "notes", "body": note["body"], "time": when.strftime("%Y-%m-%dT%H:%M:%SZ")})
+        for index, contact in enumerate(data.get("contacts", [])):
+            self.pages["contacts"].append({
+                "id": f"demo.{index + 0x7C00:016X}", "kind": "contacts", "title": contact["name"], "company": contact.get("company", ""),
+                "job": contact.get("job", ""), "email": contact.get("email", ""), "mobile": contact.get("mobile", ""), "work": contact.get("phone", ""),
+                "address": contact.get("address", ""), "body": contact.get("body", ""),
+            })
         self.mail: list[dict] = []
         for index, mail in enumerate(data["mail"]):
             when = now - dt.timedelta(minutes=mail.pop("minutesAgo"))
@@ -2480,7 +2759,7 @@ class DemoMailbox:
 
     def state(self) -> dict:
         counts = {name: sum(1 for mail in self.mail if mail["folder"] == name) for name in (*FOLDERS, "outbox")}
-        return {"ok": True, "demo": True, "account": self.me["address"], "name": self.me["name"], "counts": counts}
+        return {"ok": True, "demo": True, "account": self.me["address"], "name": self.me["name"], "counts": counts, "away": self.away}
 
     quick_state = state
 
@@ -2616,7 +2895,7 @@ class DemoMailbox:
                     raise MailError(f"Outlook does not know: {address}. Use a full e-mail address.")
             if request["mode"] == "draft":
                 self.mail.remove(source)
-            folder = "drafts" if request["action"] == "draft" else "sent"
+            folder = "drafts" if request["action"] == "draft" else "outbox" if request["later"] else "sent"
             self.mail.append({
                 "id": f"demo.{len(self.mail) + 100:016X}{len(body):04X}",
                 "folder": folder,
@@ -2636,7 +2915,76 @@ class DemoMailbox:
                 "html": text_to_html(body, True) if request["marks"] else "",
                 "categories": [],
             })
+        if folder == "outbox":
+            return {"ok": True, "sent": True, "later": True}
         return {"ok": True, "saved": True} if folder == "drafts" else {"ok": True, "sent": True}
+
+    @staticmethod
+    def _page_row(one: dict) -> dict:
+        if one["kind"] == "notes":
+            first, _, rest = one["body"].strip().partition("\n")
+            return {"id": one["id"], "kind": "notes", "title": first.strip()[:120] or "(empty note)", "preview": " ".join(rest.split())[:180], "time": one["time"]}
+        if one["kind"] == "tasks":
+            return {name: one[name] for name in ("id", "kind", "title", "due", "done", "important")}
+        return {"id": one["id"], "kind": "contacts", "title": one["title"], "company": one["company"], "email": one["email"], "phone": one["mobile"] or one["work"]}
+
+    def things(self, kind: str, query: str = "", done: bool = False) -> dict:
+        if kind not in THINGS:
+            raise MailError("Unknown page.")
+        needle = " ".join(str(query or "").split()).lower()
+        with self.lock:
+            rows = [self._page_row(one) for one in self.pages[kind] if kind != "tasks" or one["done"] == bool(done)]
+        rows = [row for row in rows if not needle or needle in " ".join(str(value) for value in row.values()).lower()]
+        if kind == "tasks":
+            rows.sort(key=lambda row: row["due"] or "9999")
+        elif kind == "notes":
+            rows.sort(key=lambda row: row["time"], reverse=True)
+        else:
+            rows.sort(key=lambda row: row["title"].lower())
+        return {"kind": kind, "things": rows, "more": False}
+
+    def _page_one(self, kind: str, thing_id: str) -> dict:
+        for one in self.pages.get(kind, []):
+            if one["id"] == thing_id:
+                return one
+        raise MailError("That is not what it was when the list was read. Refresh the list.")
+
+    def thing(self, kind: str, thing_id: str) -> dict:
+        if kind not in THINGS:
+            raise MailError("Unknown page.")
+        with self.lock:
+            one = self._page_one(kind, thing_id)
+            full = {**self._page_row(one), "body": one["body"]}
+            if kind == "contacts":
+                phones = [("Mobile", one["mobile"]), ("Work", one["work"])]
+                full.update(emails=[one["email"]] if one["email"] else [], job=one["job"], mobile=one["mobile"], work=one["work"], address=one["address"],
+                            phones=[{"label": label, "number": number} for label, number in phones if number])
+            return full
+
+    def keep(self, payload: dict) -> dict:
+        request = clean_keep_request(payload)
+        kind, what = request["kind"], request["what"]
+        with self.lock:
+            if what == "remove":
+                self.pages[kind].remove(self._page_one(kind, request["id"]))
+                return {"ok": True, "removed": True}
+            if what in ("done", "undone"):
+                self._page_one(kind, request["id"])["done"] = what == "done"
+                return {"ok": True, "done": what == "done"}
+            if request["id"]:
+                one = self._page_one(kind, request["id"])
+            else:
+                one = {"id": f"demo.{len(self.pages[kind]) + 0x7D00 + list(THINGS).index(kind) * 256:016X}", "kind": kind, "done": False, "address": ""}
+                self.pages[kind].append(one)
+            one["body"] = request["body"]
+            if kind == "notes":
+                one["time"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            elif kind == "tasks":
+                one.update(title=request["title"], due=request["due"].isoformat() if request["due"] else "", important=request["important"])
+            else:
+                one.update(title=request["title"], company=request["company"], job=request["job"], email=request["email"],
+                           mobile=request["mobile"], work=request["phone"])
+            return {"ok": True, "saved": True}
 
     def folders(self) -> dict:
         with self.lock:
@@ -2744,6 +3092,9 @@ class DemoMailbox:
                     raise MailError(f"There is a category \u201c{request['name']}\u201d already.")
                 self.categories.append(request["name"])
                 return {"ok": True, "name": request["name"]}
+            if what == "away":
+                self.away = request["on"]
+                return {"ok": True, "away": self.away}
             if what == "rule":
                 for rule in self.rule_list:
                     if rule["name"] == request["name"]:

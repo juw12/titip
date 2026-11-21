@@ -51,6 +51,9 @@
   <a href="#/deleted" data-folder="deleted">Deleted</a>
   <a href="#/junk" data-folder="junk">Junk</a>
   <a href="#/calendar" data-folder="calendar">Calendar</a>
+  <a href="#/tasks" data-folder="tasks">Tasks</a>
+  <a href="#/notes" data-folder="notes">Notes</a>
+  <a href="#/contacts" data-folder="contacts">Contacts</a>
   <p class="menuNote" id="ownNote" hidden></p>
   <div id="ownFolders"></div>
   <div class="menuDo" id="folderDo" hidden>
@@ -58,6 +61,7 @@
     <button type="button" id="folderRename" hidden>Rename this folder</button>
     <button type="button" id="folderGone" hidden>Take out this folder</button>
     <button type="button" id="rulesOpen">Rules</button>
+    <button type="button" id="awayOpen" hidden>Automatic replies</button>
   </div>
 </nav>
 
@@ -69,6 +73,9 @@
 
 <p class="demo" id="demoNote" hidden>Demo with invented mail. Nothing is sent.</p>
 <p class="demo" id="savedNote" role="status" hidden></p>
+<p class="demo" id="awayNote" hidden><span>Automatic replies are on: people who write to you get your out-of-office answer.</span> <button type="button" class="link" id="awayOff">Switch off</button></p>
+<p class="demo" id="thingBar" hidden><span id="thingSay"></span> <button type="button" class="link" id="thingFlip"></button></p>
+<p class="demo" id="remindBar" hidden><span id="remindSay"></span> <button type="button" class="link" id="remindFlip"></button></p>
 <p class="demo" id="calBar" hidden><span id="calName">Your calendar</span> <button type="button" class="link" id="calPick">Other calendars</button></p>
 <p class="demo" id="outboxNote" hidden><span id="outboxText"></span> <a href="#/outbox">Show the Outbox</a></p>
 
@@ -178,6 +185,12 @@
     <label class="field grow"><span class="sr">Message</span>
       <textarea id="bodyInput" rows="8" placeholder="Write your message"></textarea>
     </label>
+    <div class="field hours2" id="laterField" hidden><span>Leaves</span>
+      <span class="pair">
+        <label class="sr" for="laterDay">Day it leaves</label><input id="laterDay" type="date">
+        <label class="sr" for="laterTime">Time it leaves</label><input id="laterTime" type="time">
+      </span>
+    </div>
     <ul class="files attached" id="attached" aria-label="Attached files" hidden></ul>
     <input class="sr" id="fileInput" type="file" multiple tabindex="-1" aria-hidden="true">
     <div class="composeFoot">
@@ -187,6 +200,7 @@
       <button type="button" id="saveDraft">Save as draft</button>
       <button type="button" id="important" aria-pressed="false">High importance</button>
       <button type="button" id="receipt" aria-pressed="false">Read receipt</button>
+      <button type="button" id="laterFlip" aria-pressed="false">Send later</button>
       <span class="footNote" id="footNote">Leaves from Outlook on your PC, from your own address.</span>
     </div>
   </form>
@@ -256,6 +270,45 @@
     </label>
     <div class="composeFoot">
       <span class="footNote" id="planFoot">Goes into Outlook's calendar on your PC.</span>
+    </div>
+  </form>
+</section>
+
+<section class="composer" id="thinger" role="dialog" aria-labelledby="thingTitleBar" hidden>
+  <form id="thingForm" novalidate>
+    <div class="composeBar">
+      <button type="button" class="link" id="thingCancel">Cancel</button>
+      <h2 id="thingTitleBar">New task</h2>
+      <button type="submit" class="primary" id="thingSave">Save</button>
+    </div>
+    <p class="error" id="thingError" role="alert" hidden></p>
+    <label class="field" data-kinds="tasks contacts"><span id="thingNameLabel">Task</span>
+      <input id="thingName" type="text" maxlength="255" autocomplete="off">
+    </label>
+    <label class="field" data-kinds="tasks"><span>Due</span>
+      <input id="thingDue" type="date">
+    </label>
+    <label class="tick" data-kinds="tasks" for="thingImportant"><input id="thingImportant" type="checkbox"> High importance</label>
+    <label class="field" data-kinds="contacts"><span>Company</span>
+      <input id="thingCompany" type="text" maxlength="255" autocomplete="off">
+    </label>
+    <label class="field" data-kinds="contacts"><span>Job</span>
+      <input id="thingJob" type="text" maxlength="255" autocomplete="off">
+    </label>
+    <label class="field" data-kinds="contacts"><span>E-mail</span>
+      <input id="thingEmail" type="email" inputmode="email" autocapitalize="off" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="field" data-kinds="contacts"><span>Mobile</span>
+      <input id="thingMobile" type="tel" inputmode="tel" maxlength="60" autocomplete="off">
+    </label>
+    <label class="field" data-kinds="contacts"><span>Work</span>
+      <input id="thingPhone" type="tel" inputmode="tel" maxlength="60" autocomplete="off">
+    </label>
+    <label class="field grow"><span class="sr">Text</span>
+      <textarea id="thingBody" rows="6" placeholder="Notes"></textarea>
+    </label>
+    <div class="composeFoot">
+      <span class="footNote" id="thingFoot">Kept in Outlook on your PC.</span>
     </div>
   </form>
 </section>

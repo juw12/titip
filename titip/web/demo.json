@@ -411,5 +411,86 @@
    "name": "Newsletters → Junk",
    "on": false
   }
+ ],
+ "tasks": [
+  {
+   "title": "Send the gasket drawing rev C to Okafor",
+   "dueInDays": 0,
+   "important": true,
+   "body": "With the Shore A note on it."
+  },
+  {
+   "title": "Book the drop tower for the corner drops",
+   "dueInDays": 1,
+   "body": ""
+  },
+  {
+   "title": "Read the torque report before the design review",
+   "dueInDays": 2,
+   "body": "Pages 3 to 7 are the ones that matter."
+  },
+  {
+   "title": "Order two more hinge samples",
+   "body": ""
+  },
+  {
+   "title": "Return the borrowed torque rig",
+   "dueInDays": -3,
+   "done": true,
+   "body": ""
+  }
+ ],
+ "notes": [
+  {
+   "minutesAgo": 50,
+   "body": "Hinge torque window\n0.40 ± 0.05 N·m over 10,000 cycles. Drawing rev C."
+  },
+  {
+   "minutesAgo": 2900,
+   "body": "Questions for Okafor\nLead time for 100 pieces first?\nShore A tolerance on the gasket?"
+  },
+  {
+   "minutesAgo": 9000,
+   "body": "Lab 2 door code changes on the first of the month."
+  }
+ ],
+ "contacts": [
+  {
+   "name": "Ada Okafor",
+   "company": "Okafor Supplies",
+   "job": "Sales",
+   "email": "orders@okafor-supplies.example",
+   "mobile": "+00 000 0142",
+   "phone": "+00 000 0140",
+   "body": "Quotes come back within two days."
+  },
+  {
+   "name": "Jonas Weber",
+   "company": "Lumenworks",
+   "job": "Test lab",
+   "email": "jonas.weber@lumenworks.example",
+   "mobile": "+00 000 0117"
+  },
+  {
+   "name": "Marek Novak",
+   "company": "Okafor Supplies",
+   "job": "Application engineer",
+   "email": "marek.novak@okafor-supplies.example",
+   "phone": "+00 000 0141"
+  },
+  {
+   "name": "Mateo Silva",
+   "company": "Lumenworks",
+   "job": "Mechanical engineer",
+   "email": "mateo.silva@lumenworks.example",
+   "mobile": "+00 000 0123"
+  },
+  {
+   "name": "Priya Nair",
+   "company": "Lumenworks",
+   "job": "Design lead",
+   "email": "priya.nair@lumenworks.example",
+   "mobile": "+00 000 0108"
+  }
  ]
 }

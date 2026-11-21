@@ -4,9 +4,13 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.10.3";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.11.0";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
-  var FOLDERS = { inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar" };
+  var FOLDERS = {
+    inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar",
+    tasks: "Tasks", notes: "Notes", contacts: "Contacts"
+  };
+  var PAGES = { tasks: true, notes: true, contacts: true };   // Outlook's other pages: lists of things that are not mail
   var TO_FOLDERS = { sent: true, drafts: true, outbox: true };   // listed by who the mail goes to
   var KEPT_FOLDERS = { inbox: true, sent: true, drafts: true };   // their first page is kept on this phone
   var PAGE = 40;
@@ -130,6 +134,9 @@
     plan: function (order) { return request("/api/plan", order); },
     folders: function () { return request("/api/folders"); },
     signature: function () { return request("/api/signature"); },
+    things: function (kind, query, done) { return request("/api/things?kind=" + kind + "&q=" + encodeURIComponent(query || "") + (done ? "&done=1" : "")); },
+    thing: function (kind, id) { return request("/api/thing?kind=" + kind + "&id=" + encodeURIComponent(id)); },
+    keep: function (order) { return request("/api/keep", order); },
     upload: function (piece) { return request("/api/upload", piece); },
     PIECE: 384000, LANES: 1, FILES_BYTES: 15000000   // a file goes over in pieces this large, one after the other
   };
@@ -177,6 +184,22 @@
         event.optional = event.optional || "";
         event.body = event.body || "";
       });
+      // tasks, notes and contacts, each with an id and the day or time it is given relative to now
+      data.pages = { tasks: [], notes: [], contacts: [] };
+      (data.tasks || []).forEach(function (task, index) {
+        var due = task.dueInDays === undefined ? "" : dayOf(new Date(midnight.getFullYear(), midnight.getMonth(), midnight.getDate() + task.dueInDays));
+        data.pages.tasks.push({ id: "demo.t" + index, kind: "tasks", title: task.title, due: due, done: !!task.done, important: !!task.important, body: task.body || "" });
+      });
+      (data.notes || []).forEach(function (note, index) {
+        data.pages.notes.push({ id: "demo.o" + index, kind: "notes", body: note.body, time: new Date(now - (note.minutesAgo || 0) * 60000).toISOString() });
+      });
+      (data.contacts || []).forEach(function (contact, index) {
+        data.pages.contacts.push({
+          id: "demo.k" + index, kind: "contacts", title: contact.name, company: contact.company || "", job: contact.job || "",
+          email: contact.email || "", mobile: contact.mobile || "", work: contact.phone || "", body: contact.body || ""
+        });
+      });
+      data.away = false;
       demoData = data;
       return data;
     });
@@ -212,6 +235,15 @@
       replyAll: { to: first.concat(others(to, taken)), cc: others(demoPeople(data, mail.cc), taken) }
     };
   }
+  function demoRow(one) {   // what the list shows of a task, a note or a contact
+    if (one.kind === "notes") {
+      var text = String(one.body || "").trim(), cut = text.indexOf("\n");
+      return { id: one.id, kind: "notes", title: (cut < 0 ? text : text.slice(0, cut)).trim() || "(empty note)",
+        preview: cut < 0 ? "" : text.slice(cut + 1).replace(/\s+/g, " ").trim().slice(0, 180), time: one.time };
+    }
+    if (one.kind === "tasks") return { id: one.id, kind: "tasks", title: one.title, due: one.due, done: !!one.done, important: !!one.important };
+    return { id: one.id, kind: "contacts", title: one.title, company: one.company, email: one.email, phone: one.mobile || one.work };
+  }
   function demoEvent(event) {
     var row = {};
     Object.keys(event).forEach(function (name) {
@@ -225,7 +257,7 @@
       return demoLoad().then(function (data) {
         var counts = { inbox: 0, sent: 0, drafts: 0, outbox: 0 };
         data.mail.forEach(function (mail) { if (mail.folder in counts) counts[mail.folder] += 1; });
-        return { ok: true, demo: true, account: data.me.address, name: data.me.name, counts: counts };
+        return { ok: true, demo: true, account: data.me.address, name: data.me.name, counts: counts, away: !!data.away };
       });
     },
     list: function (folder, offset, query, deep) {
@@ -290,12 +322,12 @@
         });
         if (payload.mode === "draft") data.mail.splice(data.mail.indexOf(source), 1);
         data.mail.push({
-          id: "demo.n" + Date.now(), folder: payload.action === "draft" ? "drafts" : "sent",
+          id: "demo.n" + Date.now(), folder: payload.action === "draft" ? "drafts" : payload.later ? "outbox" : "sent",
           from: data.me.name, fromAddress: data.me.address, to: to, cc: shown(payload.cc), bcc: shown(payload.bcc),
           subject: subject || "(no subject)", body: payload.body, time: new Date().toISOString(), attachments: files,
           important: payload.importance === "high", receipt: !!payload.receipt
         });
-        return payload.action === "draft" ? { ok: true, saved: true } : { ok: true, sent: true };
+        return payload.action === "draft" ? { ok: true, saved: true } : payload.later ? { ok: true, sent: true, later: true } : { ok: true, sent: true };
       });
     },
     upload: function (piece) {
@@ -332,6 +364,7 @@
           return { ok: true, removed: true };
         }
         if (order.what === "category") { data.categories.push(order.name); return { ok: true, name: order.name }; }
+        if (order.what === "away") { data.away = !!order.on; return { ok: true, away: data.away }; }
         if (order.what === "rule") {
           data.rules.forEach(function (rule) { if (rule.name === order.name) rule.on = !!order.on; });
           return { ok: true, on: !!order.on };
@@ -388,6 +421,52 @@
       });
     },
     signature: function () { return demoLoad().then(function (data) { return data.signature || { "new": "", reply: "" }; }); },
+    things: function (kind, query, done) {
+      return demoLoad().then(function (data) {
+        var needle = String(query || "").toLowerCase().trim();
+        var rows = data.pages[kind].filter(function (one) { return kind !== "tasks" || !!one.done === !!done; }).map(demoRow).filter(function (row) {
+          return !needle || Object.keys(row).map(function (name) { return String(row[name]); }).join(" ").toLowerCase().indexOf(needle) >= 0;
+        });
+        rows.sort(function (a, b) {
+          if (kind === "tasks") return (a.due || "9999") < (b.due || "9999") ? -1 : 1;
+          if (kind === "notes") return a.time < b.time ? 1 : -1;
+          return a.title.toLowerCase() < b.title.toLowerCase() ? -1 : 1;
+        });
+        return { kind: kind, things: rows, more: false };
+      });
+    },
+    thing: function (kind, id) {
+      return demoLoad().then(function (data) {
+        var one = data.pages[kind].filter(function (candidate) { return candidate.id === id; })[0];
+        if (!one) throw new Error("That is not what it was when the list was read. Refresh the list.");
+        var full = demoRow(one);
+        full.body = one.body || "";
+        if (kind === "contacts") {
+          full.emails = one.email ? [one.email] : [];
+          full.job = one.job || "";
+          full.mobile = one.mobile || "";
+          full.work = one.work || "";
+          full.address = "";
+          full.phones = [["Mobile", one.mobile], ["Work", one.work]].filter(function (pair) { return pair[1]; }).map(function (pair) { return { label: pair[0], number: pair[1] }; });
+        }
+        return full;
+      });
+    },
+    keep: function (order) {
+      return demoLoad().then(function (data) {
+        var list = data.pages[order.kind];
+        var one = order.id ? list.filter(function (candidate) { return candidate.id === order.id; })[0] : null;
+        if (order.id && !one) throw new Error("That is not what it was when the list was read. Refresh the list.");
+        if (order.what === "remove") { list.splice(list.indexOf(one), 1); return { ok: true, removed: true }; }
+        if (order.what === "done" || order.what === "undone") { one.done = order.what === "done"; return { ok: true, done: one.done }; }
+        if (!one) { one = { id: "demo.p" + Date.now(), kind: order.kind, done: false }; list.push(one); }
+        one.body = order.body || "";
+        if (order.kind === "notes") one.time = new Date().toISOString();
+        else if (order.kind === "tasks") { one.title = order.title; one.due = order.due || ""; one.important = !!order.important; }
+        else { one.title = order.title; one.company = order.company || ""; one.job = order.job || ""; one.email = order.email || ""; one.mobile = order.mobile || ""; one.work = order.phone || ""; }
+        return { ok: true, saved: true };
+      });
+    },
     plan: function (order) {
       return demoLoad().then(function (data) {
         var rows = order.id ? data.events.filter(function (candidate) { return candidate.id === order.id; }) : [];
@@ -542,6 +621,9 @@
     plan: function (order) { return farRequest("plan", order, true); },
     folders: function () { return farRequest("folders", {}); },
     signature: function () { return farRequest("signature", {}); },
+    things: function (kind, query, done) { return farRequest("things", { kind: kind, q: query || "", done: done ? "1" : "" }); },
+    thing: function (kind, id) { return farRequest("thing", { kind: kind, id: id }); },
+    keep: function (order) { return farRequest("keep", order, true); },
     upload: function (piece) { return farRequest("upload", piece); },   // the same piece twice does no harm
     PIECE: 96000, LANES: 3, FILES_BYTES: 5000000   // a question through the relay holds 200,000 characters once sealed
   };
@@ -551,7 +633,7 @@
 
   // The public page is updated before the PC has moved to the same version, and a PC can stay behind.
   // What 0.9.0 added is then said to be on its way, instead of asked of a PC that does not know the question.
-  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0";   // what came with 0.10.0 asks for that one
+  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0";   // what came with a version asks for that one
   function pcBehind(needs) {
     if (DEMO || !pcVersion) return false;
     var has = pcVersion.split("."), wants = (needs || NEEDS).split(".");
@@ -724,6 +806,7 @@
 
   function renderRows() {
     if (view.folder === "calendar") { renderEvents(); return; }
+    if (PAGES[view.folder]) { renderThings(); return; }
     var list = $("rows");
     list.textContent = "";
     var group = "";
@@ -871,6 +954,7 @@
       view.rows = append ? view.rows.concat(page.events) : page.events;
       view.days = offset + CAL_DAYS;
       if (!append) { view.from = page.from; view.at = Date.now(); view.stale = false; clearTimeout(staleTimer); }
+      if (!append && !shown.which) { remind.events = page.events; remind.at = Date.now(); }
       view.more = view.days < CAL_FURTHEST;
       renderEvents();
       if (!append) showSaved(page, "calendar");
@@ -888,6 +972,13 @@
 
   var loads = 0;   // only the newest list asked for is shown: a tap on another folder never waits for the one before
   function load(append, silent) {
+    if (PAGES[view.folder] && pcBehind(NEEDS_PAGES)) {
+      $("rows").textContent = "";
+      $("more").hidden = true;
+      showState("Not yet", behindText(NEEDS_PAGES));
+      return Promise.resolve();
+    }
+    if (PAGES[view.folder]) return loadThings(silent);
     if (!KEPT_FOLDERS[view.folder] && pcBehind()) {
       $("rows").textContent = "";
       $("more").hidden = true;
@@ -977,6 +1068,7 @@
       count.hidden = !state.counts.drafts;
       count.textContent = state.counts.drafts;
       showOutbox(state.counts.outbox || 0);
+      showAway(state.away);
       if (!signature.asked && !pcBehind()) {
         signature.asked = true;
         api.signature().then(function (got) {
@@ -1106,6 +1198,7 @@
   }
   function showEvent(event, id, full) {
     $("letter").classList.remove("opening");
+    $("letter").classList.remove("bare");
     $("subject").textContent = event.subject;
     paint($("face"), event.organizer || "?", "big");
     $("from").textContent = event.organizer || "";
@@ -1154,6 +1247,7 @@
 
   function openItem(id) {
     view.id = id;
+    $("letter").classList.remove("bare");
     markOpened(id);
     document.body.classList.add("reading");
     $("readerHint").hidden = true;
@@ -1724,10 +1818,11 @@
     var input = $(id);
     input.parentNode.addEventListener("click", function (event) { if (event.target === input.parentNode) input.focus(); });
     input.addEventListener("input", function () { settle(input, false); showPeople(input); });
-    input.addEventListener("focus", function () { showPeople(input); });
+    input.addEventListener("focus", function () { input.parentNode.classList.add("typing"); showPeople(input); });
     input.addEventListener("blur", function () {
       setTimeout(function () {   // a tap on a suggestion or a chip comes first
         if (document.activeElement === input) return;
+        input.parentNode.classList.remove("typing");   // only now: the line the empty box took goes, and what is below moves up
         settle(input, true);
         if (pick.input === input) hidePeople();
         rememberComposer();
@@ -1875,7 +1970,7 @@
       draft = {
         mode: mode, id: source ? source.id : "", title: TITLES[mode], note: composerNote(mode, source, !!plan),
         who: source ? source.from : "", exact: !!plan || (mode === "forward" && !!source.answer),
-        plan: plan ? { to: plan.to, cc: plan.cc } : null, important: false, signed: "", receipt: false, marks: false
+        plan: plan ? { to: plan.to, cc: plan.cc } : null, important: false, signed: "", receipt: false, marks: false, later: false
       };
       if (plan) { fields.to = plan.to; fields.cc = plan.cc; }
       // Outlook's signature, as text you can change or take out: under a new mail, or the one for answers
@@ -1905,6 +2000,8 @@
     $("bodyInput").value = fields.body;
     $("important").setAttribute("aria-pressed", String(!!draft.important));
     $("receipt").setAttribute("aria-pressed", String(!!draft.receipt));
+    $("laterFlip").hidden = pcBehind(NEEDS_PAGES);
+    showLater(!!draft.later);
     $("receipt").hidden = $("formatBar").hidden = pcBehind(NEEDS_MORE);
     $("formatNote").hidden = !draft.marks;
     drawFiles();
@@ -2006,6 +2103,11 @@
     if (draft.exact && draft.plan && samePeople(values.to, draft.plan.to) && samePeople(values.cc, draft.plan.cc) && !values.bcc.length) payload.kept = true;
     if (draft.important) payload.importance = "high";
     if (draft.receipt) payload.receipt = true;
+    if (draft.later && action === "send") {
+      var leaves = laterMoment();
+      if (!leaves || leaves.getTime() < Date.now() + 60000) { showComposeError("Pick a day and a time that are still to come, or press Send later again to send it now."); $("laterDay").focus(); return; }
+      payload.later = leaves.toISOString();
+    }
     if (draft.marks && /\*\*|__|\*\S|^\s*- /m.test(values.body)) payload.format = "marks";   // only when a mark is still in the text
     var dropped = values.carried.filter(function (file) { return file.off; });
     if (dropped.length) payload.drop = dropped.map(function (file) { return { index: file.index, name: file.name }; });
@@ -2040,7 +2142,8 @@
     }).then(function (result) {
       store.drop("titip.compose");
       written = null;
-      toast(result.saved ? "Saved to Drafts" : sentText(payload, values));
+      toast(result.saved ? "Saved to Drafts" : result.later ? "Leaves " + dayName(new Date(payload.later)) + ", " + clock(payload.later) + ". It waits in the Outbox until then."
+        : sentText(payload, values));
       refreshCounts();
       if (view.folder !== "inbox") load(false, true);
       if (payload.mode === "draft") location.hash = "#/" + view.folder;
@@ -2072,14 +2175,17 @@
     document.title = folderName(folder) + " \u00b7 Titip";
     $("folderName").textContent = folderName(folder);
     if (isOwnFolder(folder) && !own.known) askOwn().catch(function () { /* the list of mail says what is wrong */ });
-    $("write").lastChild.textContent = folder === "calendar" ? "New entry" : "New mail";
+    $("write").lastChild.textContent = { calendar: "New entry", tasks: "New task", notes: "New note", contacts: "New contact" }[folder] || "New mail";
     $("searchToggle").hidden = folder === "calendar";   // the calendar is looked through by day, not searched
+    $("deep").parentNode.hidden = !!PAGES[folder];
+    $("q").placeholder = PAGES[folder] ? "Search " + FOLDERS[folder].toLowerCase() : "Search subject or person";
+    showThingBar();
     $("refresh").setAttribute("aria-label", folder === "calendar" ? "Read the calendar again" : "Check for new mail");
     $("more").textContent = folder === "calendar" ? "Show later days" : "Show older mail";
     showOutbox();
     showCalendarBar();
     if (folderChanged) { view.rows = []; view.days = 0; load(false); }
-    if (id) (folder === "calendar" ? openEvent : openItem)(id);
+    if (id) (folder === "calendar" ? openEvent : PAGES[folder] ? openThing : openItem)(id);
     else closeItem();
   }
 
@@ -2230,6 +2336,7 @@
 
   // ---- other calendars: more of your own, and the ones people share with you. To read.
   function showCalendarBar() {
+    showRemindBar();
     $("calBar").hidden = view.folder !== "calendar" || pcBehind(NEEDS_MORE);
     $("calName").textContent = shown.which ? shown.name : "Your calendar";
   }
@@ -2247,6 +2354,324 @@
       load(false);
     }, { load: function () { return api.calendars(); } });
   }
+
+  // ------------------------------------------------------------ tasks, notes and contacts: Outlook's other pages
+  function showThingBar() {
+    var tasks = view.folder === "tasks";
+    $("thingBar").hidden = !tasks;
+    if (!tasks) { view.done = false; return; }
+    $("thingSay").textContent = view.done ? "Done tasks" : "Open tasks";
+    $("thingFlip").textContent = view.done ? "Show the open ones" : "Show the done ones";
+  }
+  function dueText(one) {
+    if (!one.due) return "No due date";
+    var today = dayOf(new Date());
+    var name = one.due === today ? "today" : one.due === dayOf(new Date(Date.now() + 86400000)) ? "tomorrow" : dayName(dayStart(one.due));
+    return "Due " + name + (!one.done && one.due < today ? " \u00b7 overdue" : "");
+  }
+  function renderThings() {
+    var list = $("rows");
+    var kind = view.folder;
+    list.textContent = "";
+    view.rows.forEach(function (one) {
+      var item = el("li");
+      var late = kind === "tasks" && !one.done && one.due && one.due < dayOf(new Date());
+      var row = el("button", "row" + (kind === "contacts" ? " contact" : " thing") + (late ? " unread" : "") + (one.done ? " off" : ""));
+      row.type = "button";
+      if (one.id === view.id) row.setAttribute("aria-current", "true");
+      if (kind === "contacts") row.appendChild(face(one.title));
+      var name = el("span", "who");
+      if (one.important) name.appendChild(el("span", "bang", "! "));
+      name.appendChild(document.createTextNode(one.title));
+      row.appendChild(name);
+      row.appendChild(el("span", "time", kind === "notes" ? shortTime(one.time) : ""));
+      var under = kind === "tasks" ? dueText(one) : kind === "notes" ? one.preview : [one.company, one.email || one.phone].filter(Boolean).join(" \u00b7 ");
+      row.appendChild(el("span", "preview", under || ""));
+      row.onclick = function () { location.hash = "#/" + kind + "/" + one.id; };
+      item.appendChild(row);
+      list.appendChild(item);
+    });
+    $("more").hidden = true;
+    if (view.rows.length) { showState(""); return; }
+    if (view.query) showState("No match", "Nothing in " + FOLDERS[kind] + " matches \u201c" + view.query + "\u201d.");
+    else if (kind === "tasks") showState(view.done ? "Nothing done yet" : "Nothing to do", view.done ? "Tasks you tick off show here." : "Outlook's tasks show here. New task makes one.");
+    else if (kind === "notes") showState("No notes", "Outlook's notes show here. New note makes one.");
+    else showState("No contacts", "Outlook's contacts show here. New contact makes one.");
+  }
+  function loadThings(silent) {
+    if (view.loading && silent) return Promise.resolve();
+    loads += 1;
+    var mine = loads;
+    var kind = view.folder;
+    view.loading = true;
+    if (!silent) {
+      showState("");
+      showSaved({});
+      if (!view.rows.length) skeleton();
+      $("more").hidden = true;
+      $("refresh").classList.add("busy");
+    }
+    return api.things(kind, view.query, kind === "tasks" && view.done).then(function (page) {
+      if (mine !== loads || view.folder !== kind) return;
+      view.rows = page.things || [];
+      view.more = false;
+      view.at = Date.now();
+      renderThings();
+    }).catch(function (error) {
+      if (mine !== loads || (silent && view.rows.length)) return;
+      $("rows").textContent = "";
+      showState("Can't show your " + FOLDERS[kind].toLowerCase(), error.message, true);
+    }).then(function () {
+      if (mine !== loads) return;
+      view.loading = false;
+      $("refresh").classList.remove("busy");
+    });
+  }
+  function openThing(id) {
+    var kind = view.folder;
+    view.id = id;
+    view.item = null;
+    document.body.classList.add("reading");
+    $("readerHint").hidden = true;
+    $("backLabel").textContent = FOLDERS[kind];
+    showMore(false);
+    renderThings();
+    var row = rowOf(id);
+    var letter = $("letter");
+    letter.classList.remove("opening");
+    letter.classList.add("bare");
+    $("subject").textContent = row ? row.title : "";
+    ["tags", "files", "viewRow", "invite", "remove", "moreToggle", "actions"].forEach(function (part) { $(part).hidden = true; });
+    $("body").textContent = "";
+    $("body").appendChild(el("p", "wait", "Opening\u2026"));
+    letter.hidden = false;
+    api.thing(kind, id).then(function (full) {
+      if (view.id !== id || view.folder !== kind) return;
+      showThing(kind, full);
+      $("reader").scrollTop = 0;
+      window.scrollTo(0, 0);
+    }).catch(function (error) {
+      if (view.id !== id) return;
+      toast(error.message);
+      location.hash = "#/" + kind;
+    });
+  }
+  function showThing(kind, full) {
+    $("subject").textContent = full.title;
+    var facts = kind === "tasks" ? [full.done ? "Done" : "", dueText(full), full.important ? "High importance" : ""]
+      : kind === "notes" ? [longTime(full.time)] : [full.job, full.company, full.address];
+    $("tags").textContent = facts.filter(Boolean).join(" \u00b7 ");
+    $("tags").hidden = !$("tags").textContent;
+    var ways = $("files");   // how a contact is reached: a tap writes a mail, or dials
+    ways.textContent = "";
+    if (kind === "contacts") {
+      (full.emails || []).forEach(function (address) {
+        var entry = el("li"), link = el("a", "", address);
+        link.href = "mailto:" + address;
+        link.onclick = function (event) { event.preventDefault(); writeTo(full.title, address); };
+        entry.appendChild(link);
+        ways.appendChild(entry);
+      });
+      (full.phones || []).forEach(function (phone) {
+        var entry = el("li"), link = el("a", "", phone.number);
+        link.href = "tel:" + phone.number.replace(/[^0-9+]/g, "");
+        link.appendChild(el("small", "", phone.label));
+        entry.appendChild(link);
+        ways.appendChild(entry);
+      });
+    }
+    ways.hidden = !ways.firstChild;
+    var box = $("body");
+    box.textContent = "";
+    var text = String(full.body || "").trim();
+    if (kind === "notes") {   // a note's first line is its title: the text under it is the rest
+      var cut = text.indexOf("\n");
+      text = cut < 0 ? "" : text.slice(cut + 1).trim();
+    }
+    if (text) box.appendChild(el("pre", "", text));
+    var actions = $("actions");
+    actions.textContent = "";
+    function act(label, primary, run) {
+      var button = el("button", primary ? "primary" : "", label);
+      button.type = "button";
+      button.onclick = run;
+      actions.appendChild(button);
+    }
+    if (kind === "tasks") act(full.done ? "Not done" : "Done", true, function () { tickThing(full, !full.done); });
+    if (kind === "contacts" && (full.emails || []).length) act("Write a mail", true, function () { writeTo(full.title, full.emails[0]); });
+    act("Change", kind === "notes" || (kind === "contacts" && !(full.emails || []).length), function () { openThinger(kind, full); });
+    act("Delete", false, function () { removeThing(kind, full); });
+    actions.hidden = false;
+  }
+  function writeTo(name, address) {
+    openComposer("new", null);
+    addChips($("toInput"), [{ name: name, address: address }]);
+    $("subjectInput").focus();
+  }
+  function afterThing(kind, said) {
+    toast(said);
+    if (view.folder !== kind) return;
+    if (view.id) location.hash = "#/" + kind;
+    view.rows = [];
+    load(false);
+  }
+  function tickThing(full, done) {
+    api.keep({ kind: "tasks", what: done ? "done" : "undone", id: full.id }).then(function () {
+      afterThing("tasks", done ? "Done" : "Open again");
+    }).catch(function (error) { toast((error.unsure ? "" : "Not changed. ") + error.message); });
+  }
+  function removeThing(kind, full) {
+    later("Deleting", function () {
+      toast("Deleting\u2026", "", null, true);
+      api.keep({ kind: kind, what: "remove", id: full.id }).then(function () {
+        afterThing(kind, "Moved to Deleted");
+      }).catch(function (error) { toast((error.unsure ? "" : "Not deleted. ") + error.message); });
+    });
+  }
+  var NAMES = { tasks: "task", notes: "note", contacts: "contact" };
+  var editing = null;   // the task, note or contact in the form: {kind, id}
+  function showThinger(on) {
+    $("thinger").hidden = !on;
+    document.body.classList.toggle("composing", on);
+    if (!on) editing = null;
+  }
+  function openThinger(kind, full) {
+    editing = { kind: kind, id: full ? full.id : "" };
+    $("thingTitleBar").textContent = (full ? "Change the " : "New ") + NAMES[kind];
+    Array.prototype.forEach.call(document.querySelectorAll("#thingForm [data-kinds]"), function (field) {
+      field.hidden = field.getAttribute("data-kinds").split(" ").indexOf(kind) < 0;
+    });
+    $("thingNameLabel").textContent = kind === "contacts" ? "Name" : "Task";
+    $("thingName").placeholder = kind === "contacts" ? "First and last name" : "What is to be done";
+    $("thingName").value = full && kind !== "notes" ? full.title : "";
+    $("thingDue").value = full ? full.due || "" : "";
+    $("thingImportant").checked = !!(full && full.important);
+    $("thingCompany").value = full ? full.company || "" : "";
+    $("thingJob").value = full ? full.job || "" : "";
+    $("thingEmail").value = full ? full.email || "" : "";   // the first address, the one that is saved: not a second one in its place
+    $("thingMobile").value = full ? full.mobile || "" : "";
+    $("thingPhone").value = full ? full.work || "" : "";
+    $("thingBody").value = full ? full.body || "" : "";
+    $("thingBody").placeholder = kind === "notes" ? "Write the note. Its first line is its title." : "Notes";
+    $("thingFoot").textContent = "Kept in Outlook's " + FOLDERS[kind].toLowerCase() + " on your PC.";
+    $("thingError").hidden = true;
+    showThinger(true);
+    (kind === "notes" ? $("thingBody") : $("thingName")).focus();
+  }
+  function submitThing() {
+    var job = editing;
+    var kind = job.kind;
+    var order = {
+      kind: kind, what: "save", id: job.id, title: $("thingName").value.trim(), body: $("thingBody").value, due: $("thingDue").value,
+      important: $("thingImportant").checked, company: $("thingCompany").value.trim(), job: $("thingJob").value.trim(),
+      email: $("thingEmail").value.trim(), mobile: $("thingMobile").value.trim(), phone: $("thingPhone").value.trim()
+    };
+    function refuse(text, field) { $("thingError").textContent = text; $("thingError").hidden = false; $(field).focus(); }
+    if (kind === "notes" && !order.body.trim()) { refuse("Write the note first.", "thingBody"); return; }
+    if (kind === "tasks" && !order.title) { refuse("Say what is to be done first.", "thingName"); return; }
+    if (kind === "contacts" && !order.title) { refuse("Give it a name first.", "thingName"); return; }
+    if (kind === "contacts" && order.email && !ADDRESS.test(order.email)) { refuse("That e-mail address is not complete.", "thingEmail"); return; }
+    showThinger(false);
+    toast("Saving\u2026", "", null, true);
+    api.keep(order).then(function () {
+      if (kind === "contacts" && order.email) addPerson(order.title, order.email);
+      afterThing(kind, "Saved");
+    }).catch(function (error) {
+      editing = job;
+      showThinger(true);
+      $("thingError").textContent = (error.unsure ? "" : "Not saved. ") + error.message;
+      $("thingError").hidden = false;
+    });
+  }
+
+  // ---- a mail that leaves later: it waits in Outlook's Outbox until the time picked
+  function showLater(on) {
+    $("laterField").hidden = !on;
+    $("laterFlip").setAttribute("aria-pressed", String(on));
+    $("send").textContent = on ? "Send later" : "Send";
+    if (!on || $("laterDay").value) return;
+    var morning = new Date(Date.now() + 86400000);   // tomorrow at eight, to start from
+    $("laterDay").value = dayOf(morning);
+    $("laterTime").value = "08:00";
+  }
+  function laterMoment() {
+    var day = $("laterDay").value, time = $("laterTime").value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{2}:\d{2}/.test(time)) return null;
+    var first = dayStart(day);
+    return new Date(first.getFullYear(), first.getMonth(), first.getDate(), Number(time.slice(0, 2)), Number(time.slice(3, 5)));
+  }
+
+  // ---- automatic replies (out of office): the switch. The text of the reply is the one set in Outlook.
+  var away = null;   // true, false, or null when the mailbox does not say
+  function showAway(state) {
+    away = state === true || state === false ? state : null;
+    $("awayNote").hidden = away !== true;
+    $("awayOpen").hidden = away === null || pcBehind(NEEDS_PAGES);
+    $("awayOpen").textContent = "Automatic replies: " + (away ? "on" : "off");
+  }
+  function switchAway(on) {
+    arrange({ what: "away", on: on }, on ? "Automatic replies are on" : "Automatic replies are off", function () { showAway(on); refreshCounts(); });
+  }
+  function pickAway() {
+    pickFrom("Automatic replies", "They are " + (away ? "on" : "off") + ". The text people get is the one set in Outlook.", false, function () {
+      return [{ id: away ? "off" : "on", name: away ? "Switch off" : "Switch on", note: away ? "" : "People who write to you get your out-of-office answer" }];
+    }, function (picked) { switchAway(picked.id === "on"); }, { load: function () { return Promise.resolve(); } });
+  }
+
+  // ---- reminders on this phone: while Titip is open, an entry that is due says so here and rings
+  var REMIND_EVERY = 30000, REMIND_READ = 1800000;
+  var remind = { on: store.get("titip.remind") === "1", events: [], at: 0, told: [] };
+  try { remind.told = JSON.parse(store.get("titip.reminded") || "[]"); } catch (error) { remind.told = []; }
+  function showRemindBar() {
+    $("remindBar").hidden = view.folder !== "calendar" || pcBehind(NEEDS_PAGES);
+    $("remindSay").textContent = remind.on ? "Reminders ring on this phone while Titip is open." : "Reminders do not ring on this phone.";
+    $("remindFlip").textContent = remind.on ? "Switch off" : "Switch on";
+  }
+  function flipRemind() {
+    remind.on = !remind.on;
+    store.set("titip.remind", remind.on ? "1" : "0");
+    if (remind.on && window.Notification && Notification.permission === "default") {
+      try { Notification.requestPermission(); } catch (error) { /* said on the page all the same */ }
+    }
+    showRemindBar();
+    if (remind.on) checkReminders();
+  }
+  function ring(due) {   // one line for everything that is due now: two entries at the same time are both said
+    var text = "Coming up: " + due.map(function (event) {
+      return event.subject + ", " + (event.allDay ? "all day" : clock(event.start)) + (event.location ? ", " + event.location : "");
+    }).join(" \u00b7 ");
+    toast(text, "Show", function () { hideToast(); location.hash = "#/calendar" + (due.length === 1 ? "/" + eventKey(due[0]) : ""); }, true);
+    try {   // two short notes; a phone on silent stays silent
+      var Sound = window.AudioContext || window.webkitAudioContext;
+      var sound = new Sound(), tone = sound.createOscillator(), level = sound.createGain();
+      tone.frequency.value = 880;
+      level.gain.value = 0.08;
+      tone.connect(level);
+      level.connect(sound.destination);
+      tone.start();
+      tone.stop(sound.currentTime + 0.35);
+    } catch (error) { /* no sound on this phone */ }
+    try { if (window.Notification && Notification.permission === "granted") new Notification("Titip", { body: text }); } catch (error) { /* shown on the page */ }
+  }
+  function checkReminders() {
+    if (!remind.on || document.hidden || pcBehind(NEEDS_PAGES)) return;
+    var now = Date.now();
+    if (now - remind.at > REMIND_READ && !view.loading) {   // the PC keeps the calendar ten minutes: this asks seldom
+      remind.at = now;
+      api.calendar(0, CAL_DAYS, "", false).then(function (page) { remind.events = page.events || []; checkReminders(); }).catch(function () { remind.at = now - REMIND_READ + 300000; });
+      return;
+    }
+    var due = remind.events.filter(function (event) {
+      if (event.reminder === null || event.reminder === undefined || event.canceled || event.response === "declined") return false;
+      var from = new Date(event.start).getTime() - event.reminder * 60000;
+      return now >= from && now <= new Date(event.end).getTime() && remind.told.indexOf(eventKey(event)) < 0;
+    });
+    if (!due.length) return;
+    remind.told = remind.told.concat(due.map(eventKey)).slice(-60);   // said once, also after the page is opened again
+    store.set("titip.reminded", JSON.stringify(remind.told));
+    ring(due);
+  }
+  setInterval(checkReminders, REMIND_EVERY);
 
   // ---- rules: Outlook's own, each switched on or off
   function openRules() {
@@ -2345,7 +2770,8 @@
   $("more").onclick = function () { load(true); };
   $("back").onclick = function () { location.hash = "#/" + view.folder; };
   $("write").onclick = function () {
-    if (view.folder === "calendar" && !pcBehind()) openPlanner(null);
+    if (PAGES[view.folder] && !pcBehind(NEEDS_PAGES)) openThinger(view.folder, null);
+    else if (view.folder === "calendar" && !pcBehind()) openPlanner(null);
     else openComposer("new", null);
   };
   $("planCancel").onclick = function () { planned = null; showPlanner(false); $("write").focus(); };
@@ -2381,6 +2807,23 @@
     button.onmousedown = function (event) { event.preventDefault(); };   // the text keeps its selection
     button.onclick = function () { mark(button.getAttribute("data-mark")); };
   });
+  $("laterFlip").onclick = function () {
+    if (!draft) return;
+    draft.later = !draft.later;
+    showLater(draft.later);
+    showComposeError("");
+    rememberComposer();
+  };
+  $("thingCancel").onclick = function () { showThinger(false); $("write").focus(); };
+  $("thingForm").onsubmit = function (event) { event.preventDefault(); submitThing(); };
+  $("thingForm").oninput = function () { $("thingError").hidden = true; };
+  $("thingForm").addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && event.target.tagName === "INPUT") event.preventDefault();
+  });
+  $("thingFlip").onclick = function () { view.done = !view.done; view.rows = []; showThingBar(); load(false); };
+  $("awayOpen").onclick = function () { showFolders(false); pickAway(); };
+  $("awayOff").onclick = function () { switchAway(false); };
+  $("remindFlip").onclick = flipRemind;
   $("receipt").onclick = function () {
     if (!draft) return;
     draft.receipt = !draft.receipt;
@@ -2446,6 +2889,7 @@
     if (!$("moreMenu").hidden) { showMore(false); $("moreToggle").focus(); return; }
     if (!$("folderMenu").hidden) { showFolders(false); $("folderPick").focus(); return; }
     if (!$("planner").hidden) { planned = null; showPlanner(false); return; }
+    if (!$("thinger").hidden) { showThinger(false); return; }
     if (!$("composer").hidden) { rememberComposer(); closeComposer(false); toast("Kept on this phone. Tap New mail to continue.", "Open", reopenSaved); }
   });
 
