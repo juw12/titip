@@ -1846,19 +1846,26 @@ class OutlookMailbox:
                 self._calendars.clear()
 
     @staticmethod
-    def _set_time(item, name: str, wanted: dt.datetime) -> None:
+    def _set_time(item, name: str, wanted: dt.datetime, shift: dt.timedelta = dt.timedelta(0)) -> dt.timedelta:
         """Set Start or End and read it back. Outlook wants the time of this PC's clock; should what
-        comes back be shifted (a time zone applied on the way in), it is set again by that much less."""
+        comes back be shifted (a time zone applied on the way in), it is set again by that much less.
+
+        What comes back is by how much Outlook shifted it. End is set with the shift Start showed:
+        set plainly it would land before the Start just put right, and an entry that ends before it
+        starts Outlook refuses outright ("The object does not support this method").
+        """
         def read() -> dt.datetime:
             value = getattr(item, name)
             return dt.datetime(value.year, value.month, value.day, value.hour, value.minute)
 
-        setattr(item, name, wanted)
+        setattr(item, name, wanted - shift)
         got = read()
         if got != wanted:
-            setattr(item, name, wanted - (got - wanted))
+            shift += got - wanted
+            setattr(item, name, wanted - shift)
             if read() != wanted:
                 raise MailError("Outlook did not take the time of this entry. Make it in Outlook itself.")
+        return shift
 
     def _own_entry(self, event_id: str, scope: str = "", occurrence: dt.datetime | None = None):
         """An entry of your own, to change or take out. Of one that repeats: the series, or the one time named."""
@@ -1955,8 +1962,8 @@ class OutlookMailbox:
             item.Location = request["location"]
             if not series:  # when a series takes place is changed in Outlook: here only what it is called, where, and its text
                 item.AllDayEvent = request["allDay"]
-                self._set_time(item, "Start", request["start"])
-                self._set_time(item, "End", request["end"])
+                shift = self._set_time(item, "Start", request["start"])
+                self._set_time(item, "End", request["end"], shift)
             if created or " ".join(request["body"].split()) != " ".join((getattr(item, "Body", "") or "").split()):
                 item.Body = request["body"]  # untouched, the text keeps the formatting it has in Outlook
             if request["reminder"] is not None:

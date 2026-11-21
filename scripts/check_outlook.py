@@ -215,11 +215,14 @@ def main() -> int:
         attempt("a calendar entry that repeats", entry_that_repeats)
 
         def folder_and_category():
+            renamed = "Titip check renamed (deletes itself)"  # no comma: Titip does not take one in a folder's name
             made = box.arrange({"what": "folder", "name": "Titip check (deletes itself)"})
-            box.arrange({"what": "rename", "id": made["id"], "name": "Titip check, renamed (deletes itself)"})
-            listed = [folder for folder in box._do(box._folders_now, timeout=300)["folders"] if folder["id"] == made["id"]]
-            box.arrange({"what": "unfolder", "id": made["id"]})
-            if [folder["name"] for folder in listed] != ["Titip check, renamed (deletes itself)"]:
+            try:
+                box.arrange({"what": "rename", "id": made["id"], "name": renamed})
+                listed = [folder for folder in box._do(box._folders_now, timeout=300)["folders"] if folder["id"] == made["id"]]
+            finally:
+                box.arrange({"what": "unfolder", "id": made["id"]})  # also when a step before failed: no folder is left behind
+            if [folder["name"] for folder in listed] != [renamed]:
                 raise MailError("the folder was not listed under its new name")
             return "a folder made next to the Inbox, renamed, listed, taken out (it ends in Deleted Items)"
 

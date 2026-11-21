@@ -892,3 +892,51 @@ the Mac again, before 0.9.0 had been checked on the PC: see Not verified.
   text for a mark with a finger.
 
 stop: run 12 ended with 0.10.0 merged to `main`; the PC moves to it by itself.
+
+## Run 13 (2026-11-21): 0.9.0 and 0.10.0 against the real Outlook, on the PC (0.10.1)
+
+Asked for: the handoff of Run 11 and 12, `scripts/check_outlook.py` on the ASUS, where Outlook is
+(Outlook 16.0, pywin32 312, Python 3.13, the PC's clock at UTC+7). Not a judged round.
+
+### What the real Outlook said
+
+- Reading only: every line `ok`, PASS. Inbox 10 rows with times, flag and importance; a search in
+  the text of mail; an answer to all addressed to 3 and 3 with Titip's list the same; 57 folders of
+  your own and 6 categories; 14 calendar entries in 14 days, "dates asked as this PC writes dates";
+  3 other calendars; 10 rules.
+- With `--write`, 0.10.0 failed 3 of 4 steps:
+  - "a calendar entry for yourself" and "a calendar entry that repeats": `The object does not
+    support this method.` No calendar entry could be made from the phone at all on this PC.
+  - "a folder of your own": `Give it a name, without \ / ; or a comma.` That one was the check
+    script's own mistake, and it left its folder behind next to the Inbox.
+
+### Why, and what changed
+
+- Outlook takes a time 7 hours early on this PC (03:00 comes back as 20:00 the day before).
+  `_set_time` saw that and put Start right. End was then set plainly, landed 7 hours early too,
+  which is before the Start just corrected, and an entry that ends before it starts Outlook refuses
+  with exactly that sentence. `_set_time` now returns the shift it measured and End is set with it
+  at the first try. The fake Outlook of the tests shifted times but took any End; a strict one that
+  refuses an End before Start is added (`test_the_end_is_never_set_before_the_start_which_outlook_refuses`).
+- The check script renamed its folder to a name with a comma, which Titip refuses by its own rule.
+  The name has no comma now, and the folder is taken out in a `finally`, so a failed step cannot
+  leave it behind. The folder 0.10.0's run left was taken out by hand (empty, in Deleted Items).
+
+### Hard gates (code-checked)
+
+- 370 unit and server tests (369 before).
+- `python scripts/check_outlook.py --write` from this version against the real Outlook: every line
+  `ok`, PASS. "made for 3 days with a reminder, one time of it changed, the series deleted", "a
+  folder made next to the Inbox, renamed, listed, taken out", "made at the right time, read back,
+  deleted", "saved with its file and high importance, flagged True, moved to Deleted Items".
+
+### Not verified
+
+- Making a rule for a sender and taking people off a meeting: the check script does not do either
+  (there was no meeting of your own in the next 14 days to look at).
+- Outlook's window stalled for 10 to 60 seconds several times while the checks ran and once made
+  the check give up with "Outlook on your PC is busy"; the second try went through. Whether
+  Titip's reading or something else in Outlook held it was not found out.
+- A real phone, as before.
+
+stop: run 13 ended with 0.10.1 merged to `main`; the PC moves to it by itself.

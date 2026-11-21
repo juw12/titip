@@ -253,6 +253,24 @@ class CalendarEntries(unittest.TestCase):
             self.box(hours=hours)._plan(clean_plan_request(self.order()))
             self.assertEqual((self.made[0].Start, self.made[0].End), (at(24, 14), at(24, 14, 45)), hours)
 
+    def test_the_end_is_never_set_before_the_start_which_outlook_refuses(self):
+        """Seen on the real Outlook (UTC+7): a time comes back 7 hours early, Start is put right, and End set
+        plainly would land before it. Outlook answers that with "The object does not support this method"."""
+        outer = self
+
+        class Strict(Shifting):
+            def __setattr__(self, name, value):
+                super().__setattr__(name, value)
+                if name == "End" and "Subject" in self.__dict__ and self.End < self.Start:
+                    raise RuntimeError("The object does not support this method.")
+
+        for hours in (-7, 9):
+            box = self.box()
+            box._app.CreateItem = lambda kind: outer.made.append(planned(Strict(hours))) or outer.made[-1]
+            self.made.clear()
+            self.assertEqual(box._plan(clean_plan_request(self.order())), {"ok": True, "saved": True, "told": False})
+            self.assertEqual((self.made[0].Start, self.made[0].End, self.made[0].calls), (at(24, 14), at(24, 14, 45), ["save"]), hours)
+
     def test_all_day(self):
         self.box()._plan(clean_plan_request({"what": "save", "subject": "Trade fair", "allDay": True, "day": "2026-11-24", "days": 2}))
         entry = self.made[0]

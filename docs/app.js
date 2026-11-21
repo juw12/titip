@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.10.0";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.10.1";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = { inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar" };
   var TO_FOLDERS = { sent: true, drafts: true, outbox: true };   // listed by who the mail goes to
