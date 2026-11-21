@@ -522,7 +522,7 @@ class Calendar(unittest.TestCase):
         page = self.box(broken, Appointment("AD", "Fine", at(21, 9), at(21, 10)))._calendar(0, 14)
         self.assertEqual([event["subject"] for event in page["events"]], ["Fine"])
 
-    def test_the_page_is_kept_a_minute_and_shown_marked_when_outlook_is_busy(self):
+    def test_the_page_is_kept_ten_minutes_and_shown_marked_when_outlook_is_busy(self):
         box = OutlookMailbox(read_ahead=False)
         asked = []
 
@@ -602,8 +602,13 @@ class AnsweringAnInvitation(unittest.TestCase):
         message.GetAssociatedAppointment = invitation.GetAssociatedAppointment
         box._item = lambda mail_id: message
         got = box._get(ID)
-        self.assertEqual((got["kind"], got["invite"]["day"], got["invite"]["response"], got["invite"]["invited"]), ("meeting", "2026-11-24", "none", True))
+        self.assertEqual((got["kind"], got["invite"], got["inviteAsk"], invitation.added), ("meeting", None, True, []),
+                         "reading a mail ahead does not make Outlook look for the meeting: that is asked when it is opened")
+        invite = box._invite_of(ID)
+        self.assertEqual((invite["day"], invite["response"], invite["invited"]), ("2026-11-24", "none", True))
         self.assertEqual(invitation.added, [False])
+        box._item = lambda mail_id: Message()
+        self.assertIsNone(box._invite_of(ID))
 
 
 class Deletable(Message):

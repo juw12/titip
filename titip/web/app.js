@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.10.2";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.10.3";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = { inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar" };
   var TO_FOLDERS = { sent: true, drafts: true, outbox: true };   // listed by who the mail goes to
@@ -118,7 +118,10 @@
     people: function () { return request("/api/people"); },
     lookup: function (typed) { return request("/api/people?q=" + encodeURIComponent(typed)); },
     fileUrl: function (id, index) { return "/api/attachment?id=" + encodeURIComponent(id) + "&index=" + index; },
-    calendar: function (offset, days, which) { return request("/api/calendar?offset=" + offset + "&days=" + days + (which ? "&which=" + encodeURIComponent(which) : "")); },
+    calendar: function (offset, days, which, fresh) {
+      return request("/api/calendar?offset=" + offset + "&days=" + days + (which ? "&which=" + encodeURIComponent(which) : "") + (fresh ? "&fresh=1" : ""));
+    },
+    invite: function (id) { return request("/api/invite?id=" + encodeURIComponent(id)); },
     calendars: function () { return request("/api/calendars"); },
     rules: function () { return request("/api/rules"); },
     arrange: function (order) { return request("/api/arrange", order); },
@@ -488,10 +491,10 @@
     if (error.why === "unreadable") return "The answer from your PC could not be opened on this phone." + again;
     return "The connection dropped on the way. Try again.";
   }
-  function farRequest(route, params, sending, since, tries) {
+  function farRequest(route, params, sending, since, tries, quiet) {
     var started = since || Date.now();
     return relay.ask(route, params, sending ? FAR_SEND_WAIT : FAR_READ_WAIT).then(function (answer) {
-      if (answer.status === 503 && answer.data.busy && !sending && Date.now() - started < BUSY_WAIT) {
+      if (answer.status === 503 && answer.data.busy && !sending && !quiet && Date.now() - started < BUSY_WAIT) {
         toast(BUSY_TEXT);
         return new Promise(function (resolve) { setTimeout(resolve, 3000); }).then(function () {
           return farRequest(route, params, false, started, tries);
@@ -527,12 +530,15 @@
     lookup: function (typed) { return farRequest("people", { q: typed }); },
     fileUrl: function () { return ""; },
     file: function (id, index) { return farRequest("attachment", { id: id, index: index }); },
-    calendar: function (offset, days, which) { return farRequest("calendar", { offset: offset, days: days, which: which || "" }); },
+    calendar: function (offset, days, which, fresh) { return farRequest("calendar", { offset: offset, days: days, which: which || "", fresh: fresh ? "1" : "" }); },
+    invite: function (id) { return farRequest("invite", { id: id }); },
     calendars: function () { return farRequest("calendars", {}); },
     rules: function () { return farRequest("rules", {}); },
     arrange: function (order) { return farRequest("arrange", order, true); },
     event: function (id) { return farRequest("event", { id: id }); },
-    act: function (order) { return farRequest("act", order, order.what !== "read"); },   // like a send: never made twice (marking as read may be)
+    act: function (order) {   // like a send: never made twice. Marking as read happens behind a tap: tried once, quietly
+      return order.what === "read" ? farRequest("act", order, false, 0, FAR_TRIES, true) : farRequest("act", order, true);
+    },
     plan: function (order) { return farRequest("plan", order, true); },
     folders: function () { return farRequest("folders", {}); },
     signature: function () { return farRequest("signature", {}); },
@@ -851,10 +857,16 @@
     if (!append && !silent) {
       showState("");
       showSaved({});
-      if (!view.rows.length) { skeleton(); $("more").hidden = true; }
+      if (!view.rows.length) {
+        $("rows").textContent = "";
+        $("more").hidden = true;
+        showState("Reading your calendar\u2026", "The first time can take Outlook a minute or two. After that it is kept for ten minutes.");
+      }
     }
     if (!silent) $("refresh").classList.add("busy");
-    return api.calendar(offset, CAL_DAYS, shown.which).then(function (page) {
+    var anew = !!view.anew && !append;   // the Refresh button: read it again now, not from what the PC kept
+    view.anew = false;
+    return api.calendar(offset, CAL_DAYS, shown.which, anew).then(function (page) {
       if (mine !== loads || view.folder !== "calendar") return;
       view.rows = append ? view.rows.concat(page.events) : page.events;
       view.days = offset + CAL_DAYS;
@@ -1177,6 +1189,14 @@
       $("bcc").textContent = item.bcc || "";
       $("when").textContent = longTime(item.time);
       showInvite(item.invite || null, item.id);
+      // what an invitation is for is looked up now, not for every mail the PC reads ahead: it can take Outlook a while
+      if (item.inviteAsk && !item.invite) {
+        api.invite(item.id).then(function (got) {
+          if (!got.invite) return;
+          item.invite = got.invite;
+          if (view.id === item.id) showInvite(item.invite, item.id);
+        }).catch(function () { /* the mail itself is readable without it */ });
+      }
       showTags(item);
       // read here is read in Outlook, as in Outlook's own phone app. Nobody waits for it, and a mail that
       // asks for a read receipt is left unread there: that question belongs on the PC.
@@ -2321,7 +2341,7 @@
     applyTheme(next);
   };
 
-  $("refresh").onclick = function () { load(false); refreshCounts(); };
+  $("refresh").onclick = function () { view.anew = true; load(false); refreshCounts(); };
   $("more").onclick = function () { load(true); };
   $("back").onclick = function () { location.hash = "#/" + view.folder; };
   $("write").onclick = function () {

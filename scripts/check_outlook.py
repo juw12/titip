@@ -88,7 +88,7 @@ def main() -> int:
             message.update(box._do(box._get, newest["id"], timeout=120))
             people = message["people"]
             return "to %d, cc %d, flagged %s, categories %d, invitation %s" % (
-                len(people["to"]), len(people["cc"]), message["flagged"], len(message["categories"]), bool(message["invite"]))
+                len(people["to"]), len(people["cc"]), message["flagged"], len(message["categories"]), bool(message.get("inviteAsk")))
 
         attempt("the newest mail opens with who it went to", read)
 

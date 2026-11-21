@@ -377,6 +377,24 @@ class MoreOfOutlook(ServerCase):
         self.assertEqual((status, answer["error"]), (400, "Give it a title first."))
         self.assertEqual(self.post("/api/plan", order, cookie=False)[0], 401)
 
+    def test_what_an_invitation_is_for_is_asked_on_its_own_and_refresh_reads_the_calendar_anew(self):
+        _, page = self.get("/api/mail?folder=inbox&limit=100")
+        invitation = next(mail for mail in page["mail"] if mail["kind"] == "meeting")
+        reply, got = self.get("/api/invite?id=" + invitation["id"])
+        self.assertEqual((reply.status, got["invite"]["subject"]), (200, "Drop test, corner drops"))
+        self.assertEqual(self.get("/api/invite?id=" + page["mail"][0]["id"])[1], {"invite": None})
+        self.assertEqual(self.app.mail_call("invite", {"id": invitation["id"]}), (200, got))  # what the relay is answered with
+        self.assertEqual(self.phone("GET", "/api/invite?id=" + invitation["id"])[0].status, 401)
+        asked = []
+        real = self.app.mailbox.calendar
+        self.app.mailbox.calendar = lambda *args, **more: asked.append((args, more)) or real(*args, **more)
+        try:
+            self.get("/api/calendar?offset=0&days=14")
+            self.get("/api/calendar?offset=0&days=14&fresh=1")
+        finally:
+            self.app.mailbox.calendar = real
+        self.assertEqual(asked, [((0, 14), {}), ((0, 14), {"fresh": True})])
+
     def test_other_calendars_rules_and_what_is_made_or_renamed(self):
         reply, got = self.get("/api/calendars")
         shared = got["calendars"][0]

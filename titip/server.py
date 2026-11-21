@@ -219,7 +219,7 @@ class PhoneHandler(_Handler):
                 return self._error(HTTPStatus.BAD_GATEWAY, str(error))
             except ValueError:
                 return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
-        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules"):
+        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite"):
             return self._json(*self.app.mail_call(route[5:], query))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -467,7 +467,10 @@ class Titip:
                 return 200, self.mailbox.get(str(params.get("id", "")))
             if route == "calendar":
                 which = str(params.get("which") or "")
-                return 200, self.mailbox.calendar(int(params.get("offset", 0)), int(params.get("days", 14)), *((which,) if which else ()))
+                more = {"fresh": True} if str(params.get("fresh", "")) in ("1", "True", "true") else {}  # the phone's Refresh
+                return 200, self.mailbox.calendar(int(params.get("offset", 0)), int(params.get("days", 14)), *((which,) if which else ()), **more)
+            if route == "invite":  # what an invitation is for, asked when the mail is opened
+                return 200, self.mailbox.invite(str(params.get("id", "")))
             if route == "event":
                 return 200, self.mailbox.event(str(params.get("id", "")))
             if route == "people":

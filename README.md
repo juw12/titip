@@ -228,7 +228,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.10.2`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.10.3`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page.
 
@@ -368,7 +368,21 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Marks become formatting only when the keys over the text were used in that mail and a mark is
   still in it. A mark needs text right inside it: `2 * 3 * 4` and `snake__case` stay as typed.
 - The Outbox, Deleted, Junk, your own folders and the calendar are not read ahead: they are asked
-  for when you open them. The calendar is kept for a minute, and read again after you answered an invitation.
+  for when you open them. The calendar is kept for ten minutes, read again after you answered an
+  invitation or changed an entry, and read anew when you press Refresh.
+- Some questions take Outlook long: the calendar of a large mailbox from 40 seconds to minutes,
+  the folders of several data files, another person's calendar. Such a question is put to Outlook
+  once, however often the phone asks meanwhile, and its answer is kept even when the phone had
+  stopped waiting, so the next try has it. (Before 0.10.3 each try set Outlook to read it all
+  again, the answer never came, and a mail sent meanwhile was told "Outlook is busy".)
+- A long reading stops between two steps when a send is waiting, and is asked for again afterwards.
+  A send that still could not wait says what kept Outlook: "Outlook has been reading the calendar
+  for 95 seconds."
+- A call Outlook turns away because a window of its own is in the way is made again three times,
+  a second and a half apart, before the phone is told. A call turned away was not carried out, so
+  nothing can happen twice.
+- What an invitation is for (when, where, your answer) is looked up when you open the mail, not
+  for every mail read ahead.
 - Calendar dates are asked of Outlook in the way your PC writes dates (Windows' short date), a day
   more on each side, and every entry is then checked against the real days. If what comes back is
   mostly from other days, Outlook read the dates another way: they are asked again year first, then
