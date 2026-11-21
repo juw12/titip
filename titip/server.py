@@ -41,10 +41,11 @@ from .pairing import (
 from .remote import Remote
 from .tls import ensure_certificate, server_context
 from .update import Updater
+from .uploads import FilesGone, Uploads
 
 PHONE_PORT = 47779
 DESK_PORT = 47780
-MAX_POST = 1_000_000
+MAX_POST = 1_000_000  # also what one piece of an attached file must fit in (see titip/uploads.py)
 MAX_FAR_FILE = 1_000_000  # an attachment this size still fits through the relay once it is sealed
 HEADER = "X-Titip"  # a custom header a cross-site form cannot send: blocks forged POSTs
 
@@ -218,7 +219,7 @@ class PhoneHandler(_Handler):
                 return self._error(HTTPStatus.BAD_GATEWAY, str(error))
             except ValueError:
                 return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
-        if route in ("/api/state", "/api/mail", "/api/item", "/api/people"):
+        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature"):
             return self._json(*self.app.mail_call(route[5:], query))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -243,8 +244,8 @@ class PhoneHandler(_Handler):
             return self._error(HTTPStatus.UNAUTHORIZED, NOT_PAIRED)
         if route == "/api/auto":
             return self._auto_order(body)
-        if route == "/api/send":
-            return self._json(*self.app.mail_call("send", body))
+        if route in ("/api/send", "/api/upload", "/api/act", "/api/plan"):
+            return self._json(*self.app.mail_call(route[5:], body))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
 
@@ -334,6 +335,7 @@ class Titip:
         self.updater.busy = self.busy
         self.updater.restart = self.restart_for_update
         self.restarting = False
+        self.uploads = Uploads()  # files the phone attaches, until the mail they belong to is sent
         self._calls = 0
         self._calls_lock = threading.Lock()
         self.devices = DeviceStore(self.home / "devices.json")
@@ -415,9 +417,33 @@ class Titip:
         try:
             if route == "send":
                 try:
-                    return 200, self.mailbox.send(params)
+                    # the phone names the files it handed over piece by piece; the mailbox gets their bytes
+                    return 200, self.mailbox.send({**params, "files": self.uploads.take(params.get("files"))})
+                except FilesGone as error:
+                    return 400, {"error": str(error), "filesGone": True}
                 except MailError as error:
                     return 400, {"error": str(error)}
+            if route == "upload":  # one piece of a file that will be attached
+                try:
+                    return 200, self.uploads.put(params)
+                except MailError as error:
+                    return 400, {"error": str(error)}
+            if route == "act":  # delete, move, flag or mark a message, answer an invitation
+                try:
+                    return 200, self.mailbox.act(params)
+                except OutlookBusy:
+                    raise  # only marking as read comes back this way: nothing was done, and nobody waits for it
+                except MailError as error:
+                    return 400, {"error": str(error)}
+            if route == "plan":  # make, change or take out a calendar entry
+                try:
+                    return 200, self.mailbox.plan(params)
+                except MailError as error:
+                    return 400, {"error": str(error)}
+            if route == "folders":  # your own folders and the categories
+                return 200, self.mailbox.folders()
+            if route == "signature":
+                return 200, self.mailbox.signature()
             if route == "state":  # last known counts when Outlook is busy: lists and messages do not wait for them
                 return 200, {**self.mailbox.quick_state(), "version": __version__}
             if route == "mail":
@@ -426,9 +452,14 @@ class Titip:
                     int(params.get("limit", 40)),
                     int(params.get("offset", 0)),
                     str(params.get("q", "")),
+                    *((True,) if str(params.get("deep", "")) in ("1", "True", "true") else ()),  # also in the text of the mail
                 )
             if route == "item":
                 return 200, self.mailbox.get(str(params.get("id", "")))
+            if route == "calendar":
+                return 200, self.mailbox.calendar(int(params.get("offset", 0)), int(params.get("days", 14)))
+            if route == "event":
+                return 200, self.mailbox.event(str(params.get("id", "")))
             if route == "people":
                 typed = str(params.get("q", "")).strip()
                 if typed:  # a name being typed: Outlook's address book is asked for it
@@ -443,6 +474,10 @@ class Titip:
             return 502, {"error": str(error)}
         except (ValueError, TypeError):
             return 400, {"error": "Bad request."}
+        except Exception as error:  # something no part of Titip expected: the phone still gets an answer, in words
+            if route in ("send", "act", "plan"):
+                return 502, {"error": f"Something went wrong on your PC while doing that ({type(error).__name__}). Look in Outlook before you try it again."}
+            return 502, {"error": f"Titip on your PC could not read that ({type(error).__name__})."}
         finally:
             with self._calls_lock:
                 self._calls -= 1
@@ -464,8 +499,12 @@ class Titip:
 
     # -------------------------------------------------- updating itself
     def busy(self) -> bool:
-        """True while a restart would cut something short: Autopilot at work, or a mail request under way."""
-        return bool(self.autopilot.snapshot().get("busy")) or self._calls > 0 or self.remote.working > 0
+        """True while a restart would cut something short: Autopilot at work, a mail request under way,
+        or a file on its way into a mail."""
+        return (
+            bool(self.autopilot.snapshot().get("busy")) or self._calls > 0 or self.remote.working > 0
+            or self.uploads.active()
+        )
 
     def restart_for_update(self) -> None:
         self.restarting = True

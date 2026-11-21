@@ -79,7 +79,7 @@ button { cursor: pointer; }
 body.mail { background: var(--paper); }
 :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
 /* small facts in the notebook's hand: dates, counts, the names of fields */
-.day, .row .time, .count, .build, .field > span, .field > label, .entry time, .choice legend, .files small { font-family: var(--mono); }
+.day, .row .time, .hours, .count, .build, .field > span, .field > label, .entry time, .choice legend, .files small { font-family: var(--mono); }
 .bar :focus-visible { outline-color: var(--on-head); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
@@ -121,6 +121,38 @@ body.mail { background: var(--paper); }
   font: 400 26px/1.1 var(--serif); letter-spacing: 0.005em; white-space: nowrap;
 }
 .brand img { display: block; border-radius: 6px; }
+/* the folder's name opens the list of every folder */
+.brand button {
+  display: inline-flex; align-items: center; gap: var(--s1); min-height: var(--tap); padding: 0;
+  background: none; border: 0; color: inherit; font: inherit; letter-spacing: inherit;
+}
+.brand button svg { width: 18px; height: 18px; opacity: 0.8; }
+.brand button[aria-expanded="true"] svg { transform: rotate(180deg); }
+.folderMenu {
+  position: fixed; top: calc(var(--tap) + 9px + env(safe-area-inset-top)); left: var(--s2); z-index: 6;
+  min-width: 232px; max-height: calc(100dvh - 140px); overflow: auto; padding: var(--s1) 0;
+  background: var(--paper); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  box-shadow: 0 6px 16px rgb(0 0 0 / 0.16);
+}
+.folderMenu a {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+  min-height: var(--tap); padding: 0 var(--s4); color: var(--ink); text-decoration: none;
+}
+.folderMenu a:hover { background: var(--wash); }
+.folderMenu a[aria-current="page"] { font-weight: 600; }
+.menuNote { padding: var(--s3) var(--s4) var(--s1); border-top: 1px solid var(--line); margin-top: var(--s1); color: var(--muted); font: 500 12px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.ownName { min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.ownName small { color: var(--muted); font-size: 13px; }
+/* what can be done with the message that is open: the same kind of list, at the other edge */
+.doMenu { position: absolute; top: auto; left: auto; right: var(--s4); margin-top: calc(-1 * var(--s1)); }
+.doMenu button {
+  display: flex; align-items: center; width: 100%; min-height: var(--tap); padding: 0 var(--s4);
+  background: none; border: 0; text-align: left;
+}
+.doMenu button:hover { background: var(--wash); }
+.tick { display: flex; align-items: center; gap: var(--s2); min-height: 44px; color: var(--ink-2); font-size: 14px; }
+.tick input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.folderMenu a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; background: var(--signal); }
 .tools { margin-left: auto; display: flex; }
 .icon {
   width: var(--tap); height: var(--tap);
@@ -146,6 +178,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .tabs a[data-folder="inbox"] { --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 13l3-8h12l3 8v6H3z'/%3E%3Cpath d='M3 13h5l1 3h6l1-3h5'/%3E%3C/svg%3E"); }
 .tabs a[data-folder="sent"] { --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 3L3 10.5l7 2.5 2.5 7z'/%3E%3Cpath d='M10 13L21 3'/%3E%3C/svg%3E"); }
 .tabs a[data-folder="drafts"] { --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20l4-1 11-11-3-3L5 16z'/%3E%3Cpath d='M14 6l3 3'/%3E%3C/svg%3E"); }
+.tabs a[data-folder="calendar"] { --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h16v14H4z'/%3E%3Cpath d='M4 10h16M8 3v4M16 3v4'/%3E%3C/svg%3E"); }
 .tabs a[href="auto.html"] { --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 3L5 13h6l-1 8 8-10h-6z'/%3E%3C/svg%3E"); }
 .tabs a[href="./"] { --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 6h18v12H3z'/%3E%3Cpath d='M3 7l9 7 9-7'/%3E%3C/svg%3E"); }
 .tabs a[aria-current="page"] { color: var(--ink); }
@@ -155,7 +188,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 }
 
 .search { padding: var(--s2) var(--s4); border-bottom: 1px solid var(--line); background: var(--ground); }
-.search input {
+.search input[type="search"] {
   width: 100%; min-height: var(--tap); padding: var(--s2) var(--s3);
   background: var(--paper); border: 1px solid var(--line-strong); border-radius: var(--radius);
 }
@@ -164,6 +197,9 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   padding: var(--s2) var(--s4); font-size: 13px; color: var(--ink-2);
   background: var(--ground); border-bottom: 1px solid var(--line);
 }
+.demo a { color: var(--link); font-weight: 600; white-space: nowrap; }
+#outboxNote { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding-top: 0; padding-bottom: 0; }
+#outboxNote a { flex: none; display: inline-flex; align-items: center; min-height: 44px; }
 
 /* ---------- list */
 .panes { display: block; }
@@ -201,11 +237,20 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .row .clip { width: 14px; height: 14px; margin-right: 4px; vertical-align: -2px; }
+.row .flag { color: var(--signal-ink); }
+.row .bang { color: var(--stamp); font-weight: 700; }
 /* unread, where Outlook marks it, in the one signal colour: an orange edge, a bold name and subject, an orange time */
 .row.unread::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--signal); }
 .row.unread .who { font-weight: 700; }
 .row.unread .subject { font-weight: 600; }
 .row.unread .time, .row[aria-current="true"].unread .time { color: var(--signal-ink); font-weight: 500; }
+/* the calendar: the hours where a mail has its sender's initials, the answer where it has its time */
+.row.event { grid-template-columns: 64px minmax(0, 1fr) auto; }
+.hours { grid-row: 1 / span 2; display: flex; flex-direction: column; font-size: 12px; line-height: 23px; letter-spacing: 0.02em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hours .until { color: var(--muted); line-height: 20px; }
+.row.event .who { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.row.event .preview { -webkit-line-clamp: 1; }
+.row.event.off .who { color: var(--muted); text-decoration: line-through; }
 .skeleton { padding: var(--s3) var(--s4); border-bottom: 1px solid var(--line); }
 .skeleton i { display: block; height: 12px; margin: 6px 0; border-radius: 6px; background: var(--wash); }
 .skeleton i:first-child { width: 38%; } .skeleton i:nth-child(2) { width: 72%; } .skeleton i:last-child { width: 90%; }
@@ -215,13 +260,30 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .hint, .wait { color: var(--muted); padding: var(--s6) 0; text-align: center; }
 .peek { padding-top: var(--s4); overflow-wrap: anywhere; }
 .peek + .wait { padding-top: var(--s4); }
-#letter.opening .meta, #letter.opening .files, #letter.opening .view, #letter.opening .actions { display: none; }
+#letter.opening .meta, #letter.opening .files, #letter.opening .view, #letter.opening .actions,
+#letter.opening .invite, #letter.opening #remove { display: none; }
 .back, .link {
   min-height: var(--tap); padding: 0 var(--s2) 0 0;
   display: inline-flex; align-items: center; gap: var(--s1);
   background: none; border: 0; color: var(--link); font-weight: 600;
 }
+.readerTop { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: var(--tap); }
+.readerDo { margin-left: auto; display: flex; gap: var(--s4); }
+.readerDo .link { padding: 0; }
+.link.danger { color: var(--stamp); }
+.reader { position: relative; }
+.tags { padding: var(--s2) 0; border-bottom: 1px solid var(--line); color: var(--ink-2); font: 500 12px/1.6 var(--mono); letter-spacing: 0.02em; }
 .reader h2 { font: 400 28px/1.15 var(--serif); margin: var(--s1) 0 var(--s3); }
+/* a meeting: when, where, what you answered, and the three answers */
+.invite { padding: var(--s3) 0; border-bottom: 1px solid var(--line); }
+.inviteWhen { font-weight: 600; }
+.inviteWhere, .inviteSaid { color: var(--muted); font-size: 14px; }
+.answers { display: flex; gap: var(--s2); margin-top: var(--s3); }
+.answers button {
+  flex: 1 1 0; min-width: 0; min-height: var(--tap); padding: 0 var(--s2);
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); font-weight: 600;
+}
+.answers button[aria-pressed="true"] { background: var(--pick); border-color: var(--line-strong); }
 #when { font: 12px/1.6 var(--mono); letter-spacing: 0.02em; }
 .meta {
   display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: var(--s3); align-items: start;
@@ -240,6 +302,16 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   color: var(--ink); text-decoration: none; font-size: 14px;
 }
 .files small { color: var(--muted); font-size: 13px; white-space: nowrap; }
+/* files that go along with a mail being written: a tap takes one out */
+.attached { margin: 0 0 var(--s2); }
+.attached li { max-width: 100%; }
+.fileChip {
+  min-height: 44px; padding: 0 var(--s3); max-width: 100%;
+  display: inline-flex; align-items: center; gap: var(--s2);
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); font-size: 14px;
+}
+.fileChip .clip { flex: none; width: 16px; height: 16px; color: var(--muted); }
+.fileName { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .view { display: flex; justify-content: flex-end; }
 .view .link { font-size: 14px; }
 .body { margin-top: var(--s2); }
@@ -296,7 +368,29 @@ button:disabled { opacity: 0.55; cursor: default; }
 .note, .composer .error { padding: var(--s2) 0; }
 .note { font-size: 14px; color: var(--muted); }
 .error { font-size: 14px; color: var(--stamp); font-weight: 600; }
-.composeFoot { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; padding-top: var(--s2); }
+#ccField { grid-template-columns: 64px minmax(0, 1fr) auto; }
+#bccToggle { min-height: 44px; padding: 0 0 0 var(--s3); font-size: 14px; }
+.composeFoot { display: flex; align-items: center; gap: var(--s2) var(--s3); flex-wrap: wrap; padding-top: var(--s2); }
+.composeFoot button { display: inline-flex; align-items: center; gap: 6px; }
+.composeFoot button svg { width: 18px; height: 18px; }
+.composeFoot button[aria-pressed="true"] { background: var(--pick); border-color: var(--line-strong); color: var(--stamp); }
+/* a calendar entry is written on the same sheet as a mail */
+.hours2 .pair { display: flex; align-items: center; gap: var(--s3); color: var(--muted); }
+.hours2 .pair input { width: auto; flex: 0 1 auto; }
+.field input[type="date"], .field input[type="time"] { font-variant-numeric: tabular-nums; }
+#planner .tick { border-bottom: 1px solid var(--line); }
+/* a list to pick from: folders to move a mail to, categories to tick */
+.picker { position: fixed; inset: 0; z-index: 12; display: flex; align-items: flex-end; justify-content: center; background: rgb(0 0 0 / 0.32); }
+.pickerBox {
+  width: 100%; max-width: 520px; max-height: 80dvh; overflow: auto; padding: var(--s1) var(--s4) max(var(--s4), env(safe-area-inset-bottom));
+  background: var(--paper); border-radius: var(--radius) var(--radius) 0 0; box-shadow: 0 -6px 20px rgb(0 0 0 / 0.2);
+}
+.pickOne {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3); width: 100%; min-height: 52px; padding: 6px 0;
+  background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left;
+}
+.tickBox { flex: none; width: 22px; height: 22px; border: 1.5px solid var(--line-strong); border-radius: 4px; }
+.pickOne[aria-checked="true"] .tickBox { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--paper); }
 .footNote { color: var(--muted); font-size: 13px; }
 
 /* ---------- the people a mail goes to: one rounded name each, the way Outlook shows them */
@@ -346,7 +440,7 @@ button:disabled { opacity: 0.55; cursor: default; }
     padding-bottom: env(safe-area-inset-bottom);
   }
   .tabs a {
-    flex: 1 1 0; min-width: 0; padding: 0 var(--s1); gap: 2px; white-space: nowrap;  /* four names on one line each, down to 320 px */
+    flex: 1 1 0; min-width: 0; padding: 0 2px; gap: 2px; white-space: nowrap;  /* five names on one line each, down to 320 px */
     flex-direction: column; justify-content: center; min-height: 56px; font-size: 12px; font-weight: 500;
   }
   /* where you are: ink instead of grey, and a short orange mark on the edge */
@@ -365,6 +459,11 @@ button:disabled { opacity: 0.55; cursor: default; }
 @media (min-width: 860px) {
   .bar { padding-left: var(--s5); padding-right: var(--s4); }
   .brand { min-width: 96px; }
+  .folderMenu { left: var(--s5); }
+  .doMenu { left: auto; right: var(--s6); }
+  .picker { align-items: center; }
+  .pickerBox { border-radius: var(--radius); }
+  .readerTop { min-height: 0; }
   .tabs { margin-left: var(--s4); }
   .tabs a { color: var(--on-head); opacity: 0.84; border-bottom: 3px solid transparent; border-top: 3px solid transparent; }
   .tabs a::before { display: none; }

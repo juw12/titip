@@ -88,7 +88,8 @@
     }
    ],
    "html": "<p>Hi Rin,</p><p>The second batch of hinge samples is back from the lab. All 12 pieces are inside the window.</p><table style=\"border-collapse:collapse;font-size:14px\"><tr><th style=\"border:1px solid #999;padding:4px 10px;text-align:left\">Measure</th><th style=\"border:1px solid #999;padding:4px 10px\">Target</th><th style=\"border:1px solid #999;padding:4px 10px\">Batch B</th></tr><tr><td style=\"border:1px solid #999;padding:4px 10px\">Opening torque (N·m)</td><td style=\"border:1px solid #999;padding:4px 10px\">0.40 ± 0.05</td><td style=\"border:1px solid #999;padding:4px 10px\">0.42</td></tr><tr><td style=\"border:1px solid #999;padding:4px 10px\">Cycles completed</td><td style=\"border:1px solid #999;padding:4px 10px\">10,000</td><td style=\"border:1px solid #999;padding:4px 10px\">5,000</td></tr></table><p>Two pieces show light scuffing on the cam after 5,000 cycles. Photos are attached. Do you want us to run the remaining 5,000 cycles before Friday's review, or stop here and section one?</p><p>Thanks,<br>Mateo</p>",
-   "unread": true
+   "unread": true,
+   "important": true
   },
   {
    "folder": "inbox",
@@ -113,6 +114,9 @@
      "name": "Q-2291.pdf",
      "size": 130551
     }
+   ],
+   "categories": [
+    "Supplier"
    ]
   },
   {
@@ -123,7 +127,8 @@
    "to": "Rin Aoki",
    "subject": "Drop test slot on Thursday?",
    "body": "The drop tower is free Thursday 14:00 to 16:00. I pencilled you in for the corner drops. Tell me if you need the high-speed camera as well.\n\nJonas",
-   "unread": true
+   "unread": true,
+   "flagged": true
   },
   {
    "folder": "inbox",
@@ -208,6 +213,158 @@
    "to": "Jonas Weber",
    "subject": "RE: Drop test slot on Thursday?",
    "body": "Thursday works. Yes please to the high-speed camera, and"
+  },
+  {
+   "folder": "inbox",
+   "minutesAgo": 5200,
+   "from": "Jonas Weber",
+   "fromAddress": "jonas.weber@lumenworks.example",
+   "to": "Rin Aoki",
+   "cc": "Priya Nair",
+   "subject": "Drop test, corner drops",
+   "body": "Corner drops from 1.2 m, both units. I book the high-speed camera if you confirm.\n\nJonas",
+   "invite": 2
+  },
+  {
+   "folder": "outbox",
+   "minutesAgo": 3,
+   "from": "Rin Aoki",
+   "fromAddress": "rin.aoki@lumenworks.example",
+   "to": "Okafor Supplies",
+   "subject": "RE: Quote Q-2291: silicone gasket, 500 pcs",
+   "body": "Dear Ada,\n\nThank you. 18 working days is fine. Please confirm that a first lot of 100 can ship earlier.\n\nRin"
+  },
+  {
+   "folder": "f.de30000000.00000000000000A1",
+   "minutesAgo": 7300,
+   "from": "Mateo Silva",
+   "fromAddress": "mateo.silva@lumenworks.example",
+   "to": "Rin Aoki",
+   "subject": "Hinge sample A: torque results",
+   "body": "Hi Rin,\n\nSample A is out: opening torque 0.31 N·m, under the window. The cam profile needs the extra 0.2 mm we talked about.\n\nMateo"
+  },
+  {
+   "folder": "f.de30000000.00000000000000A1",
+   "minutesAgo": 9100,
+   "from": "Priya Nair",
+   "fromAddress": "priya.nair@lumenworks.example",
+   "to": "Rin Aoki; Mateo Silva",
+   "subject": "Hinge: target torque window",
+   "body": "Both, the window we agreed with the customer is 0.40 ± 0.05 N·m over 10,000 cycles. Drawing rev C has it.\n\nPriya",
+   "categories": [
+    "Customer"
+   ]
+  },
+  {
+   "folder": "f.de30000000.00000000000000A2",
+   "minutesAgo": 11500,
+   "from": "Marek Novak",
+   "fromAddress": "marek.novak@okafor-supplies.example",
+   "to": "Rin Aoki",
+   "subject": "Shore A samples are on their way",
+   "body": "Dear Rin,\n\nThree gasket samples, 30, 40 and 50 Shore A, left today with the courier. Tracking follows.\n\nMarek"
   }
- ]
+ ],
+ "events": [
+  {
+   "subject": "Stand-up, hinge team",
+   "inDays": 0,
+   "at": "09:30",
+   "minutes": 20,
+   "location": "Lab 2",
+   "recurring": true,
+   "required": "Priya Nair; Mateo Silva",
+   "body": "What moved since yesterday, what is stuck, who needs the torque rig."
+  },
+  {
+   "subject": "Call with Okafor Supplies: gasket lead time",
+   "inDays": 0,
+   "at": "15:00",
+   "minutes": 45,
+   "location": "Online",
+   "required": "Okafor Supplies; Marek Novak",
+   "body": "Agree the lead time for 500 pieces and whether a first lot of 100 can ship early."
+  },
+  {
+   "subject": "Drop test, corner drops",
+   "inDays": 1,
+   "at": "14:00",
+   "minutes": 120,
+   "location": "Drop tower",
+   "organizer": "Jonas Weber",
+   "response": "none",
+   "required": "Rin Aoki",
+   "optional": "Priya Nair",
+   "body": "Corner drops from 1.2 m, both units. I book the high-speed camera if you confirm.\n\nJonas"
+  },
+  {
+   "subject": "Design review",
+   "inDays": 2,
+   "at": "10:00",
+   "minutes": 90,
+   "location": "Meeting room 3",
+   "organizer": "Priya Nair",
+   "response": "accepted",
+   "required": "Rin Aoki; Mateo Silva",
+   "body": "1. Hinge sample B results\n2. Gasket supplier and lead time\n3. Lens holder tolerance stack"
+  },
+  {
+   "subject": "Lab 2 closed: air conditioning service",
+   "inDays": 3,
+   "allDay": true,
+   "busy": "free",
+   "organizer": "Facilities",
+   "response": "accepted",
+   "required": "All staff",
+   "body": "Lab 2 is closed from 08:00 to 13:00. Take what you need out on Friday."
+  },
+  {
+   "subject": "One to one with Mateo",
+   "inDays": 6,
+   "at": "11:00",
+   "minutes": 30,
+   "location": "Mateo's desk",
+   "organizer": "Mateo Silva",
+   "response": "accepted",
+   "recurring": true,
+   "required": "Rin Aoki",
+   "body": ""
+  },
+  {
+   "subject": "Tooling review: lens holder",
+   "inDays": 9,
+   "at": "13:30",
+   "minutes": 60,
+   "location": "Meeting room 1",
+   "required": "Priya Nair; Priscilla Tan",
+   "body": "Go through the tolerance stack with tooling before the mould is ordered."
+  }
+ ],
+ "folders": [
+  {
+   "id": "f.de30000000.00000000000000A1",
+   "name": "Hinge project",
+   "in": "Inbox"
+  },
+  {
+   "id": "f.de30000000.00000000000000A2",
+   "name": "Suppliers",
+   "in": ""
+  },
+  {
+   "id": "f.de30000000.00000000000000A3",
+   "name": "Archive",
+   "in": ""
+  }
+ ],
+ "categories": [
+  "Customer",
+  "Supplier",
+  "To read",
+  "Waiting for answer"
+ ],
+ "signature": {
+  "new": "Rin Aoki\nHardware, Lumenworks\nrin.aoki@lumenworks.example",
+  "reply": "Rin"
+ }
 }
