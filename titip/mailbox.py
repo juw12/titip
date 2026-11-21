@@ -120,6 +120,11 @@ ORDER = {
 }
 OL_DISCARD = 1
 RPC_BUSY = (-2147418111, -2147417846)  # RPC_E_CALL_REJECTED, RPC_E_SERVERCALL_RETRYLATER
+PANE_WAIT, PANE_PAUSE = 2.0, 0.2  # how long Outlook is given to let go of a draft it shows in the reading pane
+IN_THE_PANE = (
+    "This draft is open in Outlook's reading pane on your PC, and while it is written there Outlook lets "
+    "nothing else send, delete or move it. On the PC, click another mail, then try again."
+)
 
 
 class MailError(Exception):
@@ -844,6 +849,8 @@ class OutlookMailbox:
                 detail = ""
                 if error.excepinfo and error.excepinfo[2]:
                     detail = str(error.excepinfo[2]).strip()
+                if "inline response" in detail.lower():  # Outlook's words for it; said the way the phone can act on
+                    raise MailError(IN_THE_PANE)
                 raise MailError(detail or "Outlook on your PC did not answer. Open Outlook and try again.")
 
     def _give_way(self) -> None:
@@ -1666,7 +1673,110 @@ class OutlookMailbox:
                 if request["mode"] == "draft":
                     self._drop_message(self._moved.get(request["id"], request["id"]))
 
+    # -------------------------------------------------- a draft Outlook has open in its reading pane
+    # A reply started in the reading pane, and a draft clicked in the list, is written right there
+    # ("inline response"). While it is, Outlook refuses Send, Delete and Move on it from anywhere
+    # else: "This method can't be used with an inline response mail item." The object model has no
+    # call that sends it all the same. What works is what a person does: look at something else
+    # first. So Titip takes the draft out of the pane, does what was asked, and puts the window back.
+    def _in_the_pane(self, entry_id: str, explorer) -> bool:
+        """Is this the draft that `explorer` (one Outlook window) has open for writing in its reading pane?"""
+        try:
+            inline = explorer.ActiveInlineResponse
+            other = "" if inline is None else str(getattr(inline, "EntryID", "") or "")
+            if not other:  # nothing is written there, or something that was never saved: not this draft
+                return False
+            return other.upper() == entry_id.upper() or bool(self._ns.CompareEntryIDs(entry_id, other))
+        except Exception as error:
+            if getattr(error, "hresult", None) in RPC_BUSY:
+                raise
+            return False  # an Outlook from before 2013 has no such pane
+
+    def _held_in_the_pane(self, mail_id: str) -> list:
+        """The Outlook windows that have this message open for writing in their reading pane."""
+        entry_id = self._moved.get(mail_id, mail_id).partition(".")[2]
+        try:
+            explorers = self._app.Explorers
+            windows = [explorers.Item(index) for index in range(1, explorers.Count + 1)]
+        except Exception as error:
+            if getattr(error, "hresult", None) in RPC_BUSY:
+                raise
+            return []
+        return [explorer for explorer in windows if entry_id and self._in_the_pane(entry_id, explorer)]
+
+    def _out_of_the_pane(self, mail_id: str, held: list, pause=time.sleep) -> list:
+        """Make every window in `held` let go of the draft. Three ways, the gentlest first: select
+        nothing, show another folder, open the draft in a window of its own. After each, Outlook is
+        asked whether the draft is still in the pane. What comes back: (window, folder it showed)
+        for each window that was made to show another folder, to be put back afterwards.
+        """
+        entry_id = self._moved.get(mail_id, mail_id).partition(".")[2]
+        back = []
+
+        def nothing_selected(explorer):
+            explorer.ClearSelection()
+
+        def another_folder(explorer):
+            was = explorer.CurrentFolder
+            sent = self._ns.GetDefaultFolder(OL_SENT)  # nothing in Sent is written in the pane
+            if self._ns.CompareEntryIDs(was.EntryID, sent.EntryID):
+                sent = self._ns.GetDefaultFolder(OL_INBOX)
+            back.append((explorer, was))
+            explorer.CurrentFolder = sent
+
+        def a_window_of_its_own(explorer):
+            explorer.ActiveInlineResponse.Display()
+
+        try:
+            for explorer in held:
+                for way in (nothing_selected, another_folder, a_window_of_its_own):
+                    try:
+                        way(explorer)
+                    except Exception as error:
+                        if getattr(error, "hresult", None) in RPC_BUSY:
+                            raise
+                        continue  # this Outlook, or this view, cannot do that: the next way
+                    waited = 0.0
+                    while self._in_the_pane(entry_id, explorer) and waited < PANE_WAIT:
+                        pause(PANE_PAUSE)
+                        waited += PANE_PAUSE
+                    if not self._in_the_pane(entry_id, explorer):
+                        break
+                else:
+                    raise MailError(IN_THE_PANE)
+        except Exception:
+            self._put_back(back)  # nothing is done to the draft: the windows show what they showed
+            raise
+        return back
+
+    @staticmethod
+    def _put_back(back: list) -> None:
+        """Show again the folder a window showed. Never an error: what was asked for is done by now."""
+        for explorer, folder in back:
+            try:
+                explorer.CurrentFolder = folder
+            except Exception:
+                pass
+
     def _send(self, request: dict) -> dict:
+        held = self._held_in_the_pane(request["id"]) if request["mode"] == "draft" else []
+        if not held:
+            return self._send_it(request)
+        # What the phone was shown is the draft as it was saved last. Leaving the pane makes Outlook
+        # save what was typed there since: text the phone did not change must not undo that.
+        try:
+            shown = self._item(request["id"]).Body or ""
+        except Exception as error:
+            if isinstance(error, MailError) or getattr(error, "hresult", None) in RPC_BUSY:
+                raise
+            shown = None
+        back = self._out_of_the_pane(request["id"], held)
+        try:
+            return self._send_it(request, shown)
+        finally:
+            self._put_back(back)
+
+    def _send_it(self, request: dict, shown: str | None = None) -> dict:
         mode = request["mode"]
         created = True
         if mode == "new":
@@ -1706,7 +1816,8 @@ class OutlookMailbox:
             block = text_to_html(request["body"], request["marks"])
             if mode == "draft":
                 # Sent as it was opened: keep Outlook's formatting, signature and pictures untouched.
-                if " ".join(request["body"].split()) != " ".join((mail.Body or "").split()):
+                typed = " ".join(request["body"].split())
+                if typed != " ".join((mail.Body or "").split()) and (shown is None or typed != " ".join(shown.split())):
                     mail.HTMLBody = f"<html><body>{block}</body></html>"
             else:
                 # No GetInspector here to pull in a signature: it would leave a hidden editor window
@@ -2607,6 +2718,16 @@ class OutlookMailbox:
                 self._drop_message(mail_id)
 
     def _act(self, request: dict) -> dict:
+        held = self._held_in_the_pane(request["id"]) if request["what"] in ("delete", "move") else []
+        if not held:
+            return self._act_on(request)
+        back = self._out_of_the_pane(request["id"], held)  # a draft written in the reading pane is not deleted or moved while it is there
+        try:
+            return self._act_on(request)
+        finally:
+            self._put_back(back)
+
+    def _act_on(self, request: dict) -> dict:
         item = self._item(request["id"])
         message_class = str(getattr(item, "MessageClass", "") or "")
         what = request["what"]

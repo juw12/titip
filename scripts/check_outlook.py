@@ -236,6 +236,24 @@ def main() -> int:
 
     attempt("a mail that leaves later", leaves_later)
 
+    def windows():
+        def look():
+            explorers = box._app.Explorers
+            writing = 0
+            for index in range(1, explorers.Count + 1):
+                try:
+                    writing += explorers.Item(index).ActiveInlineResponse is not None
+                except Exception:
+                    return explorers.Count, None
+            return explorers.Count, writing
+
+        count, writing = box._do(look, timeout=120)
+        if writing is None:
+            return "%d Outlook windows; this Outlook does not say what is written in its reading pane" % count
+        return "%d Outlook windows, %d of them with a reply or a draft being written in the reading pane" % (count, writing)
+
+    attempt("what Outlook's windows hold in the reading pane (a draft written there is taken out before Titip sends it)", windows)
+
     away = attempt("the automatic replies",
                    lambda: {True: "on", False: "off", None: "this mailbox does not say"}[box._do(box._away, timeout=120)])
     if switch_away and away in ("on", "off"):
