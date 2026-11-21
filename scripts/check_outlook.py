@@ -1,9 +1,9 @@
-"""Check what Titip 0.9.0 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0 and 0.10.0 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
-    python scripts/check_outlook.py --write    also makes one calendar entry for yourself and one draft with a
-                                               file, reads them back and deletes them again (the draft ends in
-                                               Deleted Items)
+    python scripts/check_outlook.py --write    also makes a calendar entry, one that repeats, a folder and a draft
+                                               with a file, reads them back and deletes them again (the draft and
+                                               the folder end in Deleted Items)
 
 The unit tests run against a stand-in that does what Microsoft's documentation says Outlook does. This
 asks the Outlook that is open here. It prints counts and yes or no, never a subject, a name or a text,
@@ -155,6 +155,32 @@ def main() -> int:
 
         attempt("one calendar entry opens in full", entry)
 
+    def other_calendars():
+        found = box._do(box._calendars_now, timeout=300)
+        if not found:
+            return "none besides your own"
+        page = box._do(box._calendar, 0, 14, found[0]["id"], timeout=300)
+        return "%d besides your own; the first one has %d entries in the next 14 days, none of them yours to change: %s" % (
+            len(found), len(page["events"]), not any(event["mine"] or event["invited"] for event in page["events"]))
+
+    attempt("the other calendars Outlook shows", other_calendars)
+
+    def rules():
+        found = box._do(box._rules_now, timeout=300)
+        return "%d rules, %d of them on" % (len(found), sum(1 for rule in found if rule["on"]))
+
+    attempt("Outlook's rules", rules)
+
+    if events:
+        def people():
+            own = [event for event in events if event["mine"] and event["meeting"]]
+            if not own:
+                return "no meeting of your own in the next 14 days to look at"
+            full = box._do(box._event, own[0]["id"], timeout=120)
+            return "a meeting of your own lists %d people invited, reminder %s" % (len(full["invitedPeople"]), full["reminder"])
+
+        attempt("who is invited to a meeting of your own", people)
+
     def signature():
         found = box.signature()
         return "new mail %d characters, answers %d characters" % (len(found["new"]), len(found["reply"]))
@@ -162,6 +188,43 @@ def main() -> int:
     attempt("the signature", signature)
 
     if write:
+        def entry_that_repeats():
+            begins = (dt.datetime.now() + dt.timedelta(days=2)).replace(hour=3, minute=0, second=0, microsecond=0)
+            utc = lambda moment: moment.astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+            name = "Titip check, repeating (deletes itself)"
+            box.plan({"what": "save", "subject": name, "start": utc(begins), "end": utc(begins + dt.timedelta(minutes=30)),
+                      "repeat": {"every": "day", "times": 3}, "reminder": 45})
+            box._calendars.clear()
+            made = [event for event in box._do(box._calendar, 2, 5, timeout=300)["events"] if event["subject"] == name]
+            try:
+                if len(made) != 3:
+                    raise MailError(f"{len(made)} times found of an entry made to take place 3 times")
+                if [event["reminder"] for event in made] != [45, 45, 45] or not all(event["recurring"] for event in made):
+                    raise MailError("the times it takes place do not have the reminder it was made with")
+                box.plan({"what": "save", "id": made[1]["id"], "scope": "one", "occurrence": made[1]["start"], "subject": name + ", changed",
+                          "start": made[1]["start"], "end": made[1]["end"]})
+                box._calendars.clear()
+                after = sorted(event["subject"] for event in box._do(box._calendar, 2, 5, timeout=300)["events"] if event["subject"].startswith(name))
+                if after != [name, name, name + ", changed"]:
+                    raise MailError("changing one time of it did not leave the two others as they were")
+            finally:
+                if made:
+                    box.plan({"what": "remove", "id": made[0]["id"], "scope": "series"})
+            return "made for 3 days with a reminder, one time of it changed, the series deleted"
+
+        attempt("a calendar entry that repeats", entry_that_repeats)
+
+        def folder_and_category():
+            made = box.arrange({"what": "folder", "name": "Titip check (deletes itself)"})
+            box.arrange({"what": "rename", "id": made["id"], "name": "Titip check, renamed (deletes itself)"})
+            listed = [folder for folder in box._do(box._folders_now, timeout=300)["folders"] if folder["id"] == made["id"]]
+            box.arrange({"what": "unfolder", "id": made["id"]})
+            if [folder["name"] for folder in listed] != ["Titip check, renamed (deletes itself)"]:
+                raise MailError("the folder was not listed under its new name")
+            return "a folder made next to the Inbox, renamed, listed, taken out (it ends in Deleted Items)"
+
+        attempt("a folder of your own", folder_and_category)
+
         def entry_for_yourself():
             begins = (dt.datetime.now() + dt.timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
             utc = lambda moment: moment.astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
@@ -180,8 +243,9 @@ def main() -> int:
 
         def draft_with_a_file():
             subject = "Titip check (deletes itself) %s" % dt.datetime.now().strftime("%H%M%S")
-            box.send({"mode": "new", "action": "draft", "to": [], "subject": subject, "body": "Made by scripts/check_outlook.py.",
-                      "files": [{"name": "titip-check.txt", "data": b"a file attached by Titip"}], "importance": "high"})
+            box.send({"mode": "new", "action": "draft", "to": [], "subject": subject, "body": "Made by **scripts/check_outlook.py**.\n- one\n- two",
+                      "files": [{"name": "titip-check.txt", "data": b"a file attached by Titip"}], "importance": "high",
+                      "format": "marks", "receipt": True})
             rows = [row for row in box._do(box._list, "drafts", 20, 0, "", timeout=120)["mail"] if row["subject"] == subject]
             if len(rows) != 1:
                 raise MailError(f"{len(rows)} drafts found after saving one")

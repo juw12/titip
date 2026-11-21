@@ -829,3 +829,66 @@ round. Written on a Mac, where there is no Outlook: see Not verified.
   and time fields of a calendar entry on an iPhone.
 
 stop: run 11 ended with 0.9.0 merged to `main`; the PC moves to it by itself.
+
+## Run 12 (2026-11-21): what 0.9.0 still left out (0.10.0)
+
+Asked for: go on with what was listed as not in Titip after 0.9.0. Not a judged round. Written on
+the Mac again, before 0.9.0 had been checked on the PC: see Not verified.
+
+### What was left out, and what was taken
+
+| Left out after 0.9.0 | 0.10.0 |
+| --- | --- |
+| Reminders | Taken for calendar entries: none, at the start, 5 minutes to a week before. Shown and changed. Nothing rings on the phone |
+| Rules | Taken: Outlook's rules listed and switched on or off; a rule made for the sender of a mail (mail from them goes to a folder) |
+| Shared calendars | Taken, to read: the calendars Outlook lists at the side of its own |
+| Asking for a read receipt | Taken: a button under the text |
+| Formatted text | Taken as marks: bold, italic, underlined, lists. No fonts, colours, tables or pictures |
+| Making folders and categories | Taken: a folder made, renamed, an empty one taken out; a category made |
+| Changing who is invited | Taken for the people a meeting requires. Optional guests and rooms stay |
+| Repeating entries | Taken: made (every day, week, month, year; a number of times or without an end), one time changed or deleted, the series renamed or deleted |
+| A reminder that rings on the phone, tasks, notes, contacts, out of office, delayed send | Not taken |
+
+### Changes kept
+
+- Formatting is marks in the text field, not an editor: the keys write `**`, `*`, `__` and `- `,
+  and the PC turns them into formatting only when the phone says the keys were used and a mark is
+  still in the text. What was typed is made safe for HTML first, so no mark can carry markup.
+- An entry that repeats is made with a number of times, never with an end date, so no date has to
+  pass through Outlook's reading of dates. One time of a series is asked for by its start, again
+  shifted by the PC's distance from UTC when Outlook takes it on another clock, and is only used
+  when what comes back starts at the right moment.
+- Who is invited goes the way an answer's recipients go: who is on both lists stays as Outlook has
+  them, the others are taken off, the new ones added. Yourself, optional guests and rooms are not
+  touched. A page that does not list the people (`withExact`) changes nobody.
+- Another calendar is read by the same steps as your own. Its entries are marked not yours, on the
+  PC and on the phone, and the PC refuses to change an entry that is not kept in your own calendar.
+- What 0.10.0 added asks for a PC on 0.10.0; on an older one the phone hides it or says so.
+- Found on the way: Outlook's documentation gives the organizer of a meeting kind 0 among its
+  recipients, and Titip's reading of recipients counts 0 as 1. The list of people invited therefore
+  leaves out yourself by address and by the organizer's name, whatever kind Outlook says.
+
+### Hard gates (code-checked)
+
+- 369 unit and server tests (335 before). The `tests` workflow runs them on Windows.
+- 211 browser steps (186 before), all pass, no console error. Added: a mail marked bold with a
+  list and a read receipt, read back formatted; a folder made, renamed and taken out; a rule
+  switched on and one made from a mail; a category made; a shared calendar read; an entry made to
+  repeat three times with a reminder, one time of it changed, the series deleted; somebody taken
+  off a meeting and somebody else invited.
+- `scripts/check_outlook.py` also reads the other calendars, the rules and who is invited, and with
+  `--write` makes an entry that repeats, changes one time of it, deletes the series, and makes,
+  renames and takes out a folder.
+
+### Not verified
+
+- Nothing of 0.10.0, and nothing of 0.9.0, has run against a real Outlook yet: the handoff that
+  asks the PC to run the check script had not been picked up when this was merged. Most at risk in
+  0.10.0: finding one time of a series, making a rule (Outlook must resolve the sender), the list
+  of other calendars (it reads Outlook's own window), and taking people off a meeting.
+- As before, every step Outlook refuses ends in a message on the phone, and a step that failed
+  has sent, moved or deleted nothing.
+- A real phone: the date, time and select fields of the entry form on an iPhone, and selecting
+  text for a mark with a finger.
+
+stop: run 12 ended with 0.10.0 merged to `main`; the PC moves to it by itself.

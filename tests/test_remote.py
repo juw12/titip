@@ -429,7 +429,7 @@ class MailFromAnywhere(unittest.TestCase):
         link = self.make()
         self.now += 5
         self.mailbox.reply = (200, {"ok": True})
-        routes = ("upload", "calendar", "event", "act", "plan", "folders", "signature")
+        routes = ("upload", "calendar", "event", "act", "plan", "folders", "signature", "calendars", "rules", "arrange")
         asked = [self.ask(link, route, {"id": "x"}) for route in routes]
         answers = self.round(link)
         self.assertEqual(sorted(route for route, _ in self.mailbox.calls), sorted(routes))
@@ -439,10 +439,11 @@ class MailFromAnywhere(unittest.TestCase):
         link = self.make()
         early = self.ask(link, "act", {"what": "delete", "id": "x"}, at=self.now - 30)
         entry = self.ask(link, "plan", {"what": "save", "subject": "x"}, at=self.now - 30)
+        folder = self.ask(link, "arrange", {"what": "folder", "name": "x"}, at=self.now - 30)
         piece = self.ask(link, "upload", {"upload": "x"}, at=self.now - 30)
         answers = self.round(link)
         self.assertEqual([route for route, _ in self.mailbox.calls], ["upload"])
-        for refused in (early, entry):
+        for refused in (early, entry, folder):
             self.assertEqual(answers[refused]["status"], 400)
             self.assertIn("nothing was changed", answers[refused]["data"]["error"])
         self.assertEqual(answers[piece]["status"], 200)
