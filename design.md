@@ -117,6 +117,8 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
   and what can be done (write, call) as rows.
 - Several mails picked at once are washed blue with a blue edge; what can be done with them is one
   line over the list, as words. In Deleted Items the word is "Delete for good", never just Delete.
+- A notice on the phone is the sender as its title and the subject as its text, as a mail app
+  shows it; a reminder says Reminder, then what and when. No sound of Titip's own, no badge count.
 - What cannot be undone asks once more, in a sheet whose only row says what will happen.
 - Send later is a button under the text like High importance; pressed, it shows a day and a time
   over the buttons, and the button at the top says Send later.

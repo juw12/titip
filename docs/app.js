@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.13.0";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.14.0";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = {
     inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar",
@@ -131,6 +131,8 @@
     rules: function () { return request("/api/rules"); },
     arrange: function (order) { return request("/api/arrange", order); },
     away: function () { return request("/api/away"); },
+    push: function (endpoint) { return request("/api/push?endpoint=" + encodeURIComponent(endpoint || "")); },
+    pushSet: function (order) { return request("/api/pushset", order); },
     event: function (id) { return request("/api/event?id=" + encodeURIComponent(id)); },
     act: function (order) { return request("/api/act", order); },
     plan: function (order) { return request("/api/plan", order); },
@@ -653,6 +655,8 @@
     rules: function () { return farRequest("rules", {}); },
     arrange: function (order) { return farRequest("arrange", order, true); },
     away: function () { return farRequest("away", {}); },
+    push: function (endpoint) { return farRequest("push", { endpoint: endpoint || "" }); },
+    pushSet: function (order) { return farRequest("pushset", order, true); },
     event: function (id) { return farRequest("event", { id: id }); },
     act: function (order) {   // like a send: never made twice. Marking as read happens behind a tap: tried once, quietly
       return order.what === "read" ? farRequest("act", order, false, 0, FAR_TRIES, true) : farRequest("act", order, true);
@@ -672,7 +676,7 @@
 
   // The public page is updated before the PC has moved to the same version, and a PC can stay behind.
   // What 0.9.0 added is then said to be on its way, instead of asked of a PC that does not know the question.
-  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0";   // what came with a version asks for that one
+  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0", NEEDS_PUSH = "0.14.0";   // what came with a version asks for that one
   function pcBehind(needs) {
     if (DEMO || !pcVersion) return false;
     var has = pcVersion.split("."), wants = (needs || NEEDS).split(".");
@@ -2407,6 +2411,8 @@
     $("folderRename").hidden = $("folderGone").hidden = !isOwnFolder(view.folder);
     $("emptyOpen").hidden = (view.folder !== "deleted" && view.folder !== "junk") || pcBehind(NEEDS_OPEN);
     $("emptyOpen").textContent = view.folder === "junk" ? "Empty Junk" : "Empty Deleted Items";
+    $("pushOpen").hidden = DEMO || pcBehind(NEEDS_PUSH);
+    $("pushOpen").textContent = "Notifications: " + (store.get("titip.push") === "1" ? "on" : "off");
     drawOwnFolders();
     if (!own.known && !pcBehind()) { $("ownNote").textContent = "Asking your PC for your folders\u2026"; $("ownNote").hidden = false; }
     askOwn().catch(function () { $("ownNote").textContent = "Your own folders could not be read just now."; $("ownNote").hidden = false; });
@@ -2873,6 +2879,96 @@
       if (chosen.id === "text") { openThinger("away", { id: "", body: known.text || "" }); return; }
       switchAway(chosen.id === "on");
     }, { load: function () { return pcBehind(NEEDS_OPEN) ? Promise.resolve({ on: away, text: null }) : api.away().catch(function () { return { on: away, text: null }; }); } });
+  }
+  // ---- notices while Titip is closed: new mail and Outlook's reminders, through the phone's own push service.
+  // The PC seals each notice for this phone; the push service passes it on and cannot read it (titip/push.py).
+  function pushCannot() {   // "" when this page can be told while it is closed, else why not, in words
+    if (!("serviceWorker" in navigator) || !window.isSecureContext) return "This browser cannot be told while Titip is closed.";
+    if (!("PushManager" in window) || !("Notification" in window)) {
+      return window.TitipFar && window.TitipFar.ios && !window.TitipFar.standalone
+        ? "On an iPhone, notices come to the Home Screen icon. Add Titip to the Home Screen (Share, Add to Home Screen), open it from there, and switch them on."
+        : "This browser cannot be told while Titip is closed.";
+    }
+    return "";
+  }
+  function keyBytes(text) {   // the PC's public key, as the browser wants it
+    var plain = atob(text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4));
+    var bytes = new Uint8Array(plain.length);
+    for (var index = 0; index < plain.length; index += 1) bytes[index] = plain.charCodeAt(index);
+    return bytes;
+  }
+  function pushWorker() {
+    return navigator.serviceWorker.register("sw.js").then(function () { return navigator.serviceWorker.ready; }).catch(function () {
+      throw new Error("Notices need the page that works on any network (switch on Mail from anywhere on the PC page and open Titip from its code). " +
+        "The page on your own network has no certificate a phone accepts for this.");
+    });
+  }
+  function pickPush() {
+    var cannot = pushCannot(), state = null;
+    pickFrom("Notifications", cannot, false, function (got) {
+      if (cannot) return [];
+      state = got;
+      var on = !!got.sub && got.on;
+      store.set("titip.push", on ? "1" : "0");
+      $("pickerNote").textContent = on ? "On. This phone is told about new mail and Outlook's reminders while Titip is closed."
+        : "Off. Switched on, this phone is told about new mail and Outlook's reminders while Titip is closed. Your PC seals each notice for this phone: " +
+          "the phone maker's push service passes it on and cannot read it.";
+      $("pickerNote").hidden = false;
+      return on ? [{ id: "test", name: "Send a test", note: "A notice from your PC, now" }, { id: "off", name: "Switch off", note: "" }]
+        : [{ id: "on", name: "Switch on", note: "The phone asks once whether Titip may send notices" }];
+    }, function (chosen) {
+      if (chosen.id === "on") switchPush(state);
+      else if (chosen.id === "off") {
+        var endpoint = state.sub.endpoint;
+        state.sub.unsubscribe().catch(function () { /* the PC is told all the same */ }).then(function () { return api.pushSet({ what: "off", endpoint: endpoint }); })
+          .then(function () { store.set("titip.push", "0"); toast("Notifications are off"); })
+          .catch(function (error) { toast("Switched off on this phone. " + error.message); });
+      } else {
+        toast("Asking your PC\u2026", "", null, true);
+        api.pushSet({ what: "test", endpoint: state.sub.endpoint }).then(function (result) {
+          toast(result.reached ? "A test is on its way to this phone." : "The test did not leave. " + result.why);
+        }).catch(function (error) { toast(error.message); });
+      }
+    }, { load: function () {
+      if (cannot) return Promise.resolve({});
+      return pushWorker().then(function (worker) { return worker.pushManager.getSubscription(); }).then(function (sub) {
+        return api.push(sub ? sub.endpoint : "").then(function (got) { got.sub = sub; return got; });
+      });
+    }, empty: cannot });
+  }
+  function switchPush(state) {
+    // asked for here, in the tap itself: a phone only shows the question when a finger asked
+    var asked;
+    try { asked = Notification.requestPermission(); } catch (error) { asked = Promise.reject(error); }
+    Promise.resolve(asked).then(function (answer) {
+      if (answer !== "granted") throw new Error("The phone did not allow it. Allow notifications for Titip in the phone's settings, then switch on again.");
+      toast("Switching on\u2026", "", null, true);
+      return navigator.serviceWorker.ready;
+    }).then(function (worker) {
+      // a sign-up from before (another PC key) is given up first: a browser keeps one, for one key
+      return Promise.resolve(state.sub ? state.sub.unsubscribe() : null).catch(function () { return null; }).then(function () {
+        return worker.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(state.key) });
+      });
+    }).then(function (made) {
+      return api.pushSet({ what: "on", subscription: made.toJSON() });
+    }).then(function (result) {
+      store.set("titip.push", "1");
+      toast(result.reached ? "Notifications are on. A test is on its way." : "Switched on, but the test did not leave. " + result.why);
+    }).catch(function (error) { toast("Not switched on. " + error.message); });
+  }
+  $("pushOpen").onclick = function () { showFolders(false); pickPush(); };
+  if ("serviceWorker" in navigator) {
+    // a tap on a notice while Titip is open: the worker says where it leads
+    navigator.serviceWorker.addEventListener("message", function (event) {
+      var said = event.data || {}, where = String(said.url || "").charAt(0) === "#" ? said.url : "";
+      if (said.titip === "open" && where) location.hash = where;
+      if (said.titip === "notice") {   // it arrived while Titip is open: said here as well, and the list looks for the mail
+        toast(String(said.title || "Titip") + (said.body ? ": " + said.body : ""), where ? "Show" : "", function () { hideToast(); location.hash = where; });
+        if (!document.hidden && !view.query && !view.show && firstPage() && $("composer").hidden) load(false, true);
+      }
+    });
+    // kept signed up: the worker is looked for again each time the page opens, so a new one replaces the old
+    if (store.get("titip.push") === "1") navigator.serviceWorker.register("sw.js").catch(function () { /* said when the sheet is opened */ });
   }
   // ---- everything in Deleted Items, for good; everything in Junk, to Deleted Items
   $("emptyOpen").onclick = function () {
