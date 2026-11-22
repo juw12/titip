@@ -292,6 +292,24 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .inviteWhen { font-weight: 600; }
 .inviteWhere, .inviteSaid { color: var(--muted); font-size: 14px; }
 .answers { display: flex; gap: var(--s2); margin-top: var(--s3); }
+#answerNote { width: 100%; min-height: 44px; margin-top: var(--s3); padding: 0 var(--s3); background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); }
+#optField { grid-template-columns: 76px minmax(0, 1fr); }   /* "Optional" is a longer word than the column the other names share */
+/* the sender's name opens what Outlook knows about that person */
+#from.tap { cursor: pointer; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+/* the list narrowed to what is unread or flagged: three words under the search box, the one in use pressed */
+.shows { display: flex; gap: var(--s2); margin-top: var(--s2); }
+.shows button { flex: 1; min-height: 44px; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); font-weight: 500; }
+.shows button[aria-pressed="true"] { background: var(--pick); border-color: var(--accent); }
+/* a row pushed aside with a finger: what it does is said behind it, in words. Dim until far enough to count. */
+#rows li.swiping { position: relative; overflow: hidden; background: #2f5b8c; }
+#rows li.swiping[data-side="delete"] { background: #b3261e; }
+#rows li.swiping::after {
+  content: attr(data-swipe); position: absolute; top: 0; bottom: 0; left: 0; display: flex; align-items: center;
+  padding: 0 var(--s4); color: #fffdf8; font-weight: 600; font-size: 14px; opacity: 0.55;
+}
+#rows li.swiping[data-side="delete"]::after { left: auto; right: 0; }
+#rows li.swiping.far::after { opacity: 1; }
+#rows li.swiping .row { z-index: 1; background: var(--paper); }
 .answers button {
   flex: 1 1 0; min-width: 0; min-height: var(--tap); padding: 0 var(--s2);
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); font-weight: 600;

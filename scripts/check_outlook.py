@@ -1,7 +1,7 @@
-"""Check what Titip 0.9.0, 0.10.0 and 0.11.0 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0 to 0.12.0 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
-    python scripts/check_outlook.py --write    also makes a calendar entry, one that repeats, a folder, a draft
+    python scripts/check_outlook.py --write    also makes calendar entries (one that repeats, one over two days), a folder, a draft
                                                with a file, a task, a note and a contact, reads them back and
                                                deletes them again (all but the calendar entries end in Deleted Items)
     python scripts/check_outlook.py --away     also switches the automatic replies (out of office) to the other
@@ -76,6 +76,31 @@ def main() -> int:
             len(rows), all(row["time"] for row in rows), "flagged" in rows[0], "important" in rows[0])
 
     attempt("the inbox is listed with the new columns", inbox)
+
+    def narrowed():
+        unread = box._do(box._list, "inbox", 20, 0, "", False, "unread", timeout=180)["mail"]
+        flagged = box._do(box._list, "inbox", 20, 0, "", False, "flagged", timeout=180)["mail"]
+        if not all(row["unread"] for row in unread):
+            raise MailError("a mail that is read came back among the unread ones")
+        if not all(row["flagged"] for row in flagged):
+            raise MailError("a mail without a flag came back among the flagged ones")
+        return "%d unread and %d flagged among the newest, and nothing else in either list" % (len(unread), len(flagged))
+
+    attempt("the inbox narrowed to what is unread, and to what is flagged", narrowed)
+
+    def one_person():
+        if not newest:
+            return "no mail to take a sender from"
+        address = box._do(box._get, newest["id"], timeout=120)["fromAddress"]
+        if not address:
+            return "the newest mail names no address"
+        card = box._do(box._person, address, timeout=120)
+        if not card["found"]:
+            raise MailError("Outlook does not find the sender of the newest mail by the address")
+        return "the sender of the newest mail is found: more than the address %s, job %s, department %s, office %s, %d numbers" % (
+            card["known"], bool(card["job"]), bool(card["department"]), bool(card["office"]), len(card["phones"]))
+
+    attempt("what Outlook knows of one person", one_person)
 
     for folder in ("outbox", "deleted", "junk"):
         attempt(f"{folder} is listed", lambda folder=folder: "%d rows" % len(box._do(box._list, folder, 10, 0, "", timeout=120)["mail"]))
@@ -323,6 +348,35 @@ def main() -> int:
             return "made at the right time, read back, deleted"
 
         attempt("a calendar entry for yourself", entry_for_yourself)
+
+        def entry_as_0_12_makes_it():
+            name = "Titip check, two days (deletes itself)"
+            begins = (dt.datetime.now() + dt.timedelta(days=3)).replace(hour=3, minute=0, second=0, microsecond=0)
+            utc = lambda moment: moment.astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+            box.plan({"what": "save", "subject": name, "start": utc(begins), "end": utc(begins + dt.timedelta(days=1, hours=2)),
+                      "busy": "free", "private": True, "repeat": {"every": "week", "interval": 2, "times": 3}})
+            box._calendars.clear()
+            made = [event for event in box._do(box._calendar, 3, 2, timeout=300)["events"] if event["subject"] == name]
+            try:
+                if len(made) != 1:
+                    raise MailError(f"{len(made)} entries found on its first days after making one")
+                first = made[0]
+
+                def pattern():
+                    series = box._item(first["id"]).GetRecurrencePattern()
+                    return int(series.RecurrenceType), int(series.Interval), int(series.Occurrences)
+
+                how = box._do(pattern, timeout=120)
+                right = (first["busy"], first["private"], first["start"], first["end"], how) == (
+                    "free", True, utc(begins), utc(begins + dt.timedelta(days=1, hours=2)), (1, 2, 3))
+            finally:
+                if made:
+                    box.plan({"what": "remove", "id": made[0]["id"], "scope": "series"})
+            if not right:
+                raise MailError(f"shows as {first['busy']}, private {first['private']}, repeats {how}: not as it was made")
+            return "over two days with hours, shown as free, private, every second week three times; read back and deleted"
+
+        attempt("a calendar entry over two days, private, every second week", entry_as_0_12_makes_it)
 
         def draft_with_a_file():
             subject = "Titip check (deletes itself) %s" % dt.datetime.now().strftime("%H%M%S")

@@ -69,6 +69,11 @@
   <label class="sr" for="q">Search this folder by subject or person</label>
   <input id="q" type="search" placeholder="Search subject or person" autocomplete="off" enterkeyhint="search">
   <label class="tick" for="deep"><input id="deep" type="checkbox"> Also look in the text of the mail (slower)</label>
+  <div class="shows" id="shows" role="group" aria-label="Show">
+    <button type="button" data-show="" aria-pressed="true">All</button>
+    <button type="button" data-show="unread" aria-pressed="false">Unread</button>
+    <button type="button" data-show="flagged" aria-pressed="false">Flagged</button>
+  </div>
 </form>
 
 <p class="demo" id="demoNote" hidden>Demo with invented mail. Nothing is sent.</p>
@@ -110,7 +115,7 @@
       <div class="meta">
         <span id="face"></span>
         <dl>
-          <div class="sender"><dt class="sr">From</dt><dd><strong id="from"></strong> <span id="fromAddress"></span></dd></div>
+          <div class="sender"><dt class="sr">From</dt><dd><strong id="from" role="button" tabindex="0"></strong> <span id="fromAddress"></span></dd></div>
           <div id="toRow"><dt id="toLabel">To:</dt><dd id="to"></dd></div>
           <div id="ccRow"><dt id="ccRowLabel">Cc:</dt><dd id="cc"></dd></div>
           <div id="bccRow" hidden><dt>Bcc:</dt><dd id="bcc"></dd></div>
@@ -122,6 +127,8 @@
         <p class="inviteWhen" id="inviteWhen"></p>
         <p class="inviteWhere" id="inviteWhere"></p>
         <p class="inviteSaid" id="inviteSaid"></p>
+        <label class="sr" for="answerNote">A note for the organizer, sent with your answer</label>
+        <input id="answerNote" type="text" maxlength="2000" autocomplete="off" placeholder="A note for the organizer (optional)" hidden>
         <div class="answers" id="answers">
           <button type="button" data-answer="accept">Accept</button>
           <button type="button" data-answer="tentative">Tentative</button>
@@ -221,6 +228,9 @@
     <label class="field"><span>Day</span>
       <input id="planDay" type="date" required>
     </label>
+    <label class="field" id="planEndField"><span>Ends</span>
+      <input id="planEndDay" type="date" required>
+    </label>
     <div class="field hours2" id="planHours"><span>Time</span>
       <span class="pair">
         <label class="sr" for="planFrom">From</label><input id="planFrom" type="time" required>
@@ -243,12 +253,25 @@
         <option value="10080">1 week before</option>
       </select>
     </label>
+    <label class="field" id="planBusyField"><span>Show as</span>
+      <select id="planBusy">
+        <option value="">As Outlook sets it</option>
+        <option value="busy">Busy</option>
+        <option value="free">Free</option>
+        <option value="tentative">Tentative</option>
+        <option value="away">Out of office</option>
+        <option value="elsewhere">Working elsewhere</option>
+      </select>
+    </label>
+    <label class="tick" id="planPrivateField" for="planPrivate"><input id="planPrivate" type="checkbox"> Private: others see only that the time is taken</label>
     <div class="field hours2" id="planRepeatField"><label for="planRepeat">Repeats</label>
       <span class="pair">
         <select id="planRepeat">
           <option value="">Never</option>
           <option value="day">Every day</option>
+          <option value="weekday" data-needs="full">Every working day</option>
           <option value="week">Every week</option>
+          <option value="week:2" data-needs="full">Every 2 weeks</option>
           <option value="month">Every month</option>
           <option value="year">Every year</option>
         </select>
@@ -263,6 +286,11 @@
     <div class="field" id="withField"><label for="withInput">With</label>
       <div class="chips">
         <input id="withInput" type="text" inputmode="email" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-controls="people" aria-expanded="false" placeholder="Nobody: an entry for yourself" data-hint="Nobody: an entry for yourself">
+      </div>
+    </div>
+    <div class="field" id="optField"><label for="optInput">Optional</label>
+      <div class="chips">
+        <input id="optInput" type="text" inputmode="email" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-controls="people" aria-expanded="false" placeholder="Invited, but need not come" data-hint="Invited, but need not come">
       </div>
     </div>
     <label class="field grow"><span class="sr">Notes</span>

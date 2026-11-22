@@ -39,11 +39,21 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   answered with **Accept**, **Tentative** or **Decline**, from the calendar or from the mail that
   brought it, and the organizer is told as if you had answered in Outlook.
 - **New entry** on the calendar makes an appointment, or with people in it a meeting, and Outlook
-  invites them. It can **repeat** every day, week, month or year, a number of times or without an
-  end, and **remind** you from a week before down to the minute it starts. An entry of your own
-  opens with **Change** and **Delete** (**Cancel the meeting** when people are invited, and they
-  are told). Change lists **who is invited**: take somebody off, put somebody on. Of an entry that
-  repeats you are asked: only this one, or the whole series.
+  invites them. It can **repeat** every day, working day, week, second week, month or year, a
+  number of times or without an end, and **remind** you from a week before down to the minute it
+  starts. It can end on a later day than it starts, with its hours. **Show as** says how the time
+  looks to others (busy, free, tentative, out of office, working elsewhere), and **Private** hides
+  what it is. An entry of your own opens with **Change** and **Delete** (**Cancel the meeting**
+  when people are invited, and they are told). Change lists **who is invited** and who is
+  **optional**: take somebody off, put somebody on. Of an entry that repeats you are asked: only
+  this one, or the whole series.
+- An invitation can be answered **with a note**: a line over the three answers, which the
+  organizer reads in the answer.
+- **Push a row aside** in a list of mail: to the left it is deleted (behind Undo, as always), to
+  the right it is marked read or unread. What it does is said in words behind the row.
+- **Tap the sender's name** in an open mail for what Outlook knows of that person: job, department,
+  company, office and numbers, from the company directory or your contacts, with **Write a mail**
+  and the numbers to call.
 - **Other calendars** on the calendar page: more of your own and the ones people share with you,
   as Outlook lists them. They are read; nothing in them is answered or changed from the phone.
 - **Reminders on this phone**, one line on the calendar page: switched on, an entry whose reminder
@@ -74,7 +84,9 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - Every send waits 3 seconds behind an **Undo** button, and so does a delete and an answer to an
   invitation. **Save as draft** puts it in Outlook's Drafts. If a send fails, the message comes back
   with your text, your files and the reason.
-- Search by subject or person, and with a tick also in the text of the mail. Light and dark. Works as a home-screen app.
+- Search by subject or person, and with a tick also in the text of the mail. Under the search box:
+  **All**, **Unread**, **Flagged**. Light and dark. Works as a home-screen app.
+- The subject of an answer or a forward is shown the way Outlook will write it, and can be changed.
 
 It stores no password, and on the PC it writes no mail to disk. A file you attach is the one
 exception, for a moment: it rests in Titip's memory, and is put in Windows' temporary folder only
@@ -240,7 +252,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.11.1`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.12.0`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page.
 
@@ -401,6 +413,21 @@ Titip opens a door from your network to your mailbox. Read this first.
   month first, and the way that worked is remembered.
 - Files that wait to be attached hold back a restart for an update for two minutes, and are
   dropped after fifteen when no mail came for them.
+- Unread and Flagged are asked of Outlook like a search, and are not kept on the phone.
+  A search then looks among those only. A search, an older page or a narrowed list that takes
+  Outlook longer than the phone waits is asked once, however often the phone asks meanwhile, and
+  the answer is kept ten seconds for the next try (before 0.12.0 every try started it over).
+- The subject of an answer that you leave as it is shown is not sent to the PC: Outlook writes its
+  own, which in another language may start with AW: or TR:. Only a subject you changed is set.
+- One person is looked up by the address the mail carries, in the company directory first, then in
+  your contacts. A name that fits several people is not guessed at. If Outlook is busy, nothing is
+  shown and nothing waits. With the directory out of reach (no network to the company), a colleague
+  shows with name and address only.
+- Guests who need not come are listed apart from the others and changed apart. A phone page from
+  before 0.12.0 does not list them, and leaves them as they are. Private is kept by Outlook for a
+  whole series, so it is not offered for one time of it.
+- A row has to be pushed about a quarter of the screen before it counts; let go earlier and nothing
+  happens. In Deleted nothing can be pushed away, and in Sent, Drafts and the Outbox only to the left.
 - A reply you started in Outlook's reading pane on the PC, or a draft that is clicked there, is
   being written in that pane, and Outlook then refuses to send, delete or move it for anyone else
   ("This method can't be used with an inline response mail item"). Before Titip sends, deletes or
@@ -455,11 +482,11 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Text you type is sent as plain paragraphs. A draft sent unchanged keeps its formatting; a draft you
   edit on the phone goes as plain text.
 - Search looks at subject and sender (recipient in Sent), and at the text only when you tick it.
-- The subject of an answer or a forward is Outlook's (RE:, FW:) and cannot be changed.
-- When a series takes place, an entry over several days with hours, optional guests and rooms are
-  changed in Outlook. An entry made to repeat on the phone repeats on the day or date it starts on,
-  every one of them (not every second week, not the last Friday). A repeating meeting is answered
-  as a whole series. Outlook takes a declined meeting out of the calendar.
+- When a series takes place, and rooms, are changed in Outlook. An entry made to repeat on the
+  phone repeats on the day or date it starts on (not the last Friday of a month, not on two days of
+  a week). A repeating meeting is answered as a whole series, and no other time can be proposed
+  from the phone. Outlook takes a declined meeting out of the calendar. An online meeting (Teams)
+  is made in Outlook: its link comes from an add-in Titip cannot drive.
 - Delete moves to Deleted Items. Nothing is removed for good from the phone, and Deleted Items is not emptied.
 - A folder that holds mail or folders is not taken out from the phone, and Outlook's own folders are
   never renamed or taken out. Categories have no colour chosen for them on the phone.
@@ -468,8 +495,8 @@ Titip opens a door from your network to your mailbox. Read this first.
 - A task has a name, a due day, high importance and a text. Its start day, how it repeats and
   whom it is assigned to are set in Outlook. A note has no colour. A contact has no picture.
 - Automatic replies: the switch, not the text and not a time span.
-- It is laid out like Outlook's phone app but is not it: no swipe to delete, and a reminder rings
-  only while the page is open.
+- It is laid out like Outlook's phone app but is not it: a reminder rings only while the page is
+  open, and new mail is not announced while it is closed. Several mails cannot be picked at once.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 
@@ -489,7 +516,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.11.0 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.12.0 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

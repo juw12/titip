@@ -219,7 +219,7 @@ class PhoneHandler(_Handler):
                 return self._error(HTTPStatus.BAD_GATEWAY, str(error))
             except ValueError:
                 return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
-        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite", "/api/things", "/api/thing"):
+        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite", "/api/things", "/api/thing", "/api/person"):
             return self._json(*self.app.mail_call(route[5:], query))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -472,6 +472,7 @@ class Titip:
                     int(params.get("offset", 0)),
                     str(params.get("q", "")),
                     *((True,) if str(params.get("deep", "")) in ("1", "True", "true") else ()),  # also in the text of the mail
+                    **({"show": str(params["show"])} if params.get("show") else {}),  # only what is unread, or flagged
                 )
             if route == "item":
                 return 200, self.mailbox.get(str(params.get("id", "")))
@@ -483,6 +484,8 @@ class Titip:
                 return 200, self.mailbox.invite(str(params.get("id", "")))
             if route == "event":
                 return 200, self.mailbox.event(str(params.get("id", "")))
+            if route == "person":  # one person, as the address book and the contacts know them
+                return 200, self.mailbox.person(str(params.get("q", "")))
             if route == "people":
                 typed = str(params.get("q", "")).strip()
                 if typed:  # a name being typed: Outlook's address book is asked for it
