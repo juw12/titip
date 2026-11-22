@@ -996,6 +996,10 @@ def main() -> None:
             page.click("#actions button:has-text('Change')")
             invited = page.locator("#withField .chip")
             check(invited.locator(".chipName").all_inner_texts() == ["Okafor Supplies", "Marek Novak"], "Change lists who is invited")
+            high = page.evaluate("""() => ['#withField .chip', '#planRemind', '#planBusy'].map(what => Math.round(document.querySelector(what).getBoundingClientRect().height))""")
+            look = page.evaluate("""() => { const chip = document.querySelector('#withField .chip'), style = getComputedStyle(chip);
+                return chip.getBoundingClientRect().height - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth); }""")
+            check(min(high) >= 48 and look == 32 and overflow(page) <= 0, f"a name and a list to pick from are a finger high; the name still looks 32 px high ({high})")
             invited.nth(1).click()
             page.locator("#withInput").press_sequentially("pri")
             page.locator("#people .person").first.click()

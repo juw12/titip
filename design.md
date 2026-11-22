@@ -66,7 +66,8 @@ the system face.
 
 - Spacing steps 4, 8, 12, 16, 24, 32. Radius 6 on everything that is not a round initial. Tap targets
   48 px, which is what Android asks for and more than the 44 an iPhone does (a recipient's label is
-  32 px to look at and 44 to tap). A name in a line of text that can be pressed keeps the line one
+  32 px to look at and 48 to tap: the rest is a border nobody sees). A list to pick from is drawn
+  by the page, with its own small arrow, so that it is 48 px high in every browser. A name in a line of text that can be pressed keeps the line one
   line high and is 48 px to the finger.
 - What a change costs is said on the sheet before it is saved, in the line under the bar, not in
   a question afterwards: new hours for a series say that single changed times are lost.

@@ -447,8 +447,12 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 .formatBar button:hover, .formatBar button:active { background: var(--wash); border-color: var(--line); }
 .formatBar .footNote { margin-left: var(--s2); min-width: 0; }
+/* a list to pick from is drawn here, not by the browser: one of them keeps its own 24 px height whatever it is told */
 .field select {
-  width: 100%; min-height: var(--tap); padding: var(--s2) 0; background: none; border: 0; color: inherit; font: inherit;
+  width: 100%; height: var(--tap); min-height: var(--tap); padding: 0 22px 0 0; border: 0; border-radius: 0; color: inherit; font: inherit;
+  -webkit-appearance: none; appearance: none;
+  background: linear-gradient(45deg, transparent 50%, currentColor 50%) calc(100% - 9px) 52% / 5px 5px no-repeat,
+    linear-gradient(135deg, currentColor 50%, transparent 50%) calc(100% - 4px) 52% / 5px 5px no-repeat;
 }
 .hours2 .pair select { width: 0; min-width: 0; flex: 1 1 0; text-overflow: ellipsis; }   /* as wide as is left, however long its longest choice */
 .hours2 .pair > span { flex: none; white-space: nowrap; }
@@ -498,14 +502,15 @@ button:disabled { opacity: 0.55; cursor: default; }
 /* not being typed in: the empty box must not take a line of its own under the names. The mark is
    taken off a moment after the box is left (app.js), not the instant it is: what is tapped next
    would move away under the finger, and the tap would miss it. */
-.chips:not(.typing) .chip ~ input { flex-basis: 24px; min-width: 24px; }
+.chips:not(.typing) .chip ~ input { flex-basis: 24px; min-width: 24px; }   /* narrow on purpose: a tap anywhere in the line lands in it */
+/* 32 px to look at, 48 px to the finger: the 8 px over and under it are a border nobody sees, in a line 44 px high */
 .chip {
   position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-  min-height: 32px; margin: 6px 0; padding: 0 10px 0 12px;
-  background: var(--pick); color: var(--ink); border: 0; border-radius: var(--radius); font-size: 14px;
+  min-height: 48px; margin: -2px 0; padding: 0 10px 0 12px; box-sizing: border-box;
+  background: var(--pick) padding-box; color: var(--ink); border: solid transparent; border-width: 8px 0;
+  border-radius: var(--radius) / calc(var(--radius) + 8px); font-size: 14px;
 }
-.chip::before { content: ""; position: absolute; inset: -6px 0; }   /* 44 px to tap, 32 px to look at */
-.chip.asName { background: var(--ground); box-shadow: inset 0 0 0 1px var(--line-strong); }   /* typed, not picked: Outlook looks the name up when it sends */
+.chip.asName { background: var(--ground) padding-box; box-shadow: inset 0 0 0 1px var(--line-strong); }   /* typed, not picked: Outlook looks the name up when it sends */
 .chipName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chipX { color: var(--muted); font-size: 16px; line-height: 1; }
 
