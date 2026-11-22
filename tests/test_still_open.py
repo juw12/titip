@@ -223,10 +223,10 @@ class WhatTheAutomaticReplySays(unittest.TestCase):
 
     def test_it_is_read_from_the_hidden_note_in_the_inbox(self):
         box, _, asked = self.box("Back on Monday.\r\nFor the lab call Jonas.\r\n")
-        self.assertEqual(box._away_now(), {"on": True, "text": "Back on Monday.\nFor the lab call Jonas."})
-        self.assertEqual(asked, [("IPM.Note.Rules.OofTemplate.Microsoft", 2)])
+        self.assertEqual(box._away_now(), {"on": True, "text": "Back on Monday.\nFor the lab call Jonas.", "outside": "Back on Monday.\nFor the lab call Jonas."})
+        self.assertEqual(asked, [("IPM.Note.Rules.OofTemplate.Microsoft", 2), ("IPM.Note.Rules.ExternalOofTemplate.Microsoft", 2)])
         box, _, _ = self.box(has_one=False)
-        self.assertEqual(box._away_now(), {"on": True, "text": None}, "a mailbox without one: the phone does not offer to change it")
+        self.assertEqual(box._away_now(), {"on": True, "text": None, "outside": None}, "a mailbox without one: the phone does not offer to change it")
 
     def test_it_is_written_and_read_back(self):
         box, kept, _ = self.box("Old text.")
@@ -263,7 +263,7 @@ class Demo(unittest.TestCase):
         self.assertEqual((emptied["left"], box.list("deleted")["mail"]), (0, []))
         self.assertIn("out of the office", box.away()["text"])
         box.arrange({"what": "awayText", "text": "Back on Monday."})
-        self.assertEqual(box.away(), {"on": False, "text": "Back on Monday."})
+        self.assertEqual(box.away(), {"on": False, "text": "Back on Monday.", "outside": ""})
 
 
 class OverTheWire(test_server.ServerCase):

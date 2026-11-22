@@ -125,7 +125,7 @@
       <div class="meta">
         <span id="face"></span>
         <dl>
-          <div class="sender"><dt class="sr">From</dt><dd><strong id="from" role="button" tabindex="0"></strong> <span id="fromAddress"></span></dd></div>
+          <div class="sender"><dt class="sr">From</dt><dd><strong id="from"></strong> <span id="fromAddress"></span></dd></div>
           <div id="toRow"><dt id="toLabel">To:</dt><dd id="to"></dd></div>
           <div id="ccRow"><dt id="ccRowLabel">Cc:</dt><dd id="cc"></dd></div>
           <div id="bccRow" hidden><dt>Bcc:</dt><dd id="bcc"></dd></div>
@@ -355,8 +355,11 @@
     <label class="field" data-kinds="contacts"><span>Work</span>
       <input id="thingPhone" type="tel" inputmode="tel" maxlength="60" autocomplete="off">
     </label>
-    <label class="field grow"><span class="sr">Text</span>
+    <label class="field grow" id="thingBodyField"><span class="sr" id="thingBodyLabel">Text</span>
       <textarea id="thingBody" rows="6" placeholder="Notes"></textarea>
+    </label>
+    <label class="field grow named" data-kinds="away" id="thingOutsideField"><span>People outside it are told</span>
+      <textarea id="thingOutside" rows="4" placeholder="Empty: they get no text of their own"></textarea>
     </label>
     <div class="composeFoot">
       <span class="footNote" id="thingFoot">Kept in Outlook on your PC.</span>
