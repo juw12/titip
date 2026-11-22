@@ -271,7 +271,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.16.0`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.16.1`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page. The page for any network keeps its own files on the
 phone (the page, never mail), so its icon opens without a connection too and says that the phone

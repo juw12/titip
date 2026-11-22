@@ -1557,3 +1557,36 @@ be asked from here, how it wants them could be found out first.
   tried, since a meeting would send real mail.
 
 stop: run 23 ended with 0.16.0 on `main`.
+
+## Run 24 (2026-11-22): the sheet for an entry, looked at as a phone (0.16.1)
+
+Asked for: the same. Tilik had been run on the list, the mail, the reply sheet, a task and the
+colours, not yet on the sheet for an entry that is there, with people in it. On 0.16.0 it found
+no fault there and three kinds of thing under a finger's size.
+
+### Changes kept
+
+- A list to pick from (Remind, Show as, Repeats) is drawn by the page, with its own small arrow.
+  Safari's engine kept the browser's own list 24 px high whatever height it was given.
+- A name in With, To, Cc is 48 px to the finger and still 32 px to look at: the 8 px over and
+  under it are a border nobody sees. Before, the larger area was a layer over the name, which a
+  finger found and a measure did not.
+- Tried and taken back: the box after the names, where the next one is typed, 48 px wide while
+  it waits (it is 24). Wider, it went to a line of its own under two long names, an empty line
+  on the sheet. A tap anywhere in that line lands in the box, so its own width is not what the
+  finger has to hit; Tilik still lists it, on the phones where two names leave it under 44 px.
+
+### Hard gates (code-checked)
+
+- 544 unit and server tests.
+- 358 browser steps, all pass (357 before): a name and a list to pick from 48 px high, the name
+  32 px to look at.
+- Tilik on 11 phones, light and dark, on the sheet of a series and of a meeting with people: no
+  fault; the lists and the names are no longer under a finger's size.
+
+### Not verified
+
+- 0.15.1, 0.16.0 and this on the real Outlook. The check is started and waits: since 10:00 UTC
+  the PC with the Outlook has not taken a job (earlier its network asked for a proxy sign-in).
+
+stop: run 24 ended with 0.16.1 on `main`.

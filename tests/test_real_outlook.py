@@ -187,6 +187,12 @@ class ThePageWithoutANetwork(unittest.TestCase):
         self.assertIn("--tap: 48px", looks)
         self.assertIn("#from.tap { display: inline-block; padding: 14px 0; margin: -14px 0; }", looks)
         self.assertNotIn('id="from" role="button"', (WEB / "index.html").read_text(encoding="utf-8"), "a name is a button only when it shows something")
+        chip = re.search(r"\n\.chip \{(.*?)\}", looks, re.S).group(1)
+        self.assertIn("min-height: 48px", chip)
+        self.assertIn("border-width: 8px 0", chip, "the 8 px over and under a name are a border nobody sees: 32 px to look at")
+        picked = re.search(r"\n\.field select \{(.*?)\}", looks, re.S).group(1)
+        self.assertIn("appearance: none", picked, "drawn here: one browser keeps its own list 24 px high whatever it is told")
+        self.assertIn("height: var(--tap)", picked)
 
 
 if __name__ == "__main__":
