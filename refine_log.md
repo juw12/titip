@@ -1311,3 +1311,81 @@ way to receive a push.
 stop: run 19 ended with 0.14.0 merged to `main`. Nothing that was listed as open is left but what
 Outlook gives no program a way to: its own "Propose New Time", the reply text for people outside
 with its time span, a Teams link.
+
+## Run 20 (2026-11-22): asked the real Outlook, and what it showed (0.14.1)
+
+Asked for: "keep fixing it till all done". Runs 14 to 19 were written on the Mac, which has no
+Outlook, and each ended with a list of what was not verified. This run had the PC with the real
+Outlook run the checks itself: a workflow started from the Mac runs `scripts/check_outlook.py` in
+the live copy there, in the Windows session Outlook is open in, and hands back the printed lines
+(counts and yes or no, nothing of a mail). The page was looked at as 11 phones, light and dark,
+with Tilik, instead of asking for a look at a real one.
+
+### What the real Outlook said (on 0.14.0, before any change)
+
+- Reading only: every line ok. The lists narrowed to unread and to flagged hold nothing else; a
+  person's card comes with job, department, office and two numbers; an answer to all is addressed
+  as Outlook addresses it; other people's calendars are read and none of them is yours to change;
+  a mail that is to leave later takes the time (Outlook shifted it by seven hours, and Titip set
+  it again); the look for what is new finds 15 mails and no reminder showing, and announces
+  nothing at its first two looks; the note that holds the automatic reply is read (it is empty).
+- With `--write`: every line ok. A series of three with a reminder, one time of it changed, the
+  series deleted; an entry over two days, private, shown as free, every second week; a folder
+  made, renamed, taken out; a draft with a file; a draft with a picture inside its text, refused
+  for good while in Drafts, deleted, then deleted for good; a task, a note, a contact. All of it
+  was taken out again.
+- The push services answer this PC: Apple's with 403 and Google's with 400 to an empty request,
+  which is the answer of a service that is reached. The way out is open.
+- This mailbox keeps its mail in a data file: the Inbox of the mailbox itself is empty. Titip
+  lists the Inbox of a data file along with the mailbox's own, so the phone was never empty; the
+  check for a reply in the reading pane had looked in the mailbox's own. It starts from the list
+  Titip shows now.
+
+### Changes kept
+
+- **Suggest another time** also writes the four fields Outlook's own "Propose New Time" fills in
+  (MS-OXOCAL: the proposed start, end, length, and that it is a proposal), each read back, a time
+  that comes back shifted set again. If one is not taken, all four are taken out and the answer
+  leaves with the words alone. The words are always there.
+- The automatic reply for **people outside** the organization: a second box on the same sheet,
+  each box with its name over it. It is the second hidden note Outlook keeps in the Inbox, and it
+  is written only when it was changed.
+- The page for any network **opens without a connection**: the worker fetches the page's own 15
+  files once when it is put in, and keeps what the page loads after that. The network comes first
+  every time. Nothing a PC answered is ever kept.
+- What is pressed is 48 px high everywhere (it was 44 in ten places, which is under what Android
+  asks for), and the sender's name, which opens a person's card, is 48 px to the finger in a line
+  that stays one line high (it was 21 px). It is a button only when it has something to show.
+- Another time picked for one meeting can no longer ride along with an answer to another: it was
+  kept aside until the answer left, and stayed there when the question "this one or the whole
+  series" was cancelled.
+- `check_outlook.py`: the proposal fields on an unsent mail that is thrown away; both reply
+  notes; and with `--write`, where no reply text is set and the replies are off, a text written,
+  read back and taken out again.
+
+### Hard gates (code-checked)
+
+- 508 unit and server tests (495 before): the four fields and their rollback, an Outlook that
+  shifts a time, the answer leaving either way and saying whether it carries the proposal, both
+  reply texts, every file the worker fetches being a file of the page, and no 44 px left.
+- 334 browser steps, all pass (326 before): both boxes named and saved, the proposal in what the
+  PC is handed, the name and Save a finger high, and the page opening from its kept files after
+  the server it came from was shut down.
+- Tilik, three flows (the reply sheet, another time for a meeting, a new mail), each on 11 phones
+  in light and dark: no fault. Before the change it found the 21 px name as a fault on all 22
+  looks, and Save, the note for the organizer, the day and hours of another time, and Bcc as
+  under 48 px. The pictures were looked at: the two boxes read as two, in both colours, down to
+  320 px wide.
+
+### Not verified
+
+- A reply written in Outlook's reading pane (0.11.1), on the real Outlook. The check is written
+  and started; it waits behind other work on that PC. What it shows goes into the next run.
+- That an organizer's Outlook shows the four fields as a proposal with "Accept proposal". The
+  fields are the documented ones and are read back; what the other side draws is its own.
+- That the reply people get is the text written from the phone. Reading both notes is checked on
+  the real mailbox; writing is checked by `--write` only after this version is on that PC.
+- The offline page on the real address: the worker is put in on `github.io` only, so it is
+  looked at there after the merge.
+
+stop: run 20 ended with 0.14.1 on `main`.
