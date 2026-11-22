@@ -1,4 +1,4 @@
-"""Check what Titip 0.9.0 to 0.15.0 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0 to 0.15.1 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
     python scripts/check_outlook.py --write    also makes calendar entries (one that repeats, one over two days, one on two
@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from titip import __version__, mailbox  # noqa: E402
-from titip.mailbox import OL_DISCARD, MailError, OutlookMailbox, clean_send_request  # noqa: E402
+from titip.mailbox import OL_DISCARD, MailError, OutlookBusy, OutlookMailbox, clean_send_request  # noqa: E402
 
 problems: list[str] = []
 
@@ -63,8 +64,19 @@ def main() -> int:
     box = OutlookMailbox(read_ahead=False)
     print(f"Titip {__version__}, {'reading and writing' if write else 'reading only'}", flush=True)
 
-    state = attempt("Outlook answers, and says how many mails wait in the Outbox",
-                    lambda: "outbox %d" % box.state(timeout=180)["counts"]["outbox"])
+    def first_answer():
+        # This is a second program next to the Titip that runs here. While that one reads a lot (right after it
+        # started or updated itself), Outlook turns a second program away: waited out, for five minutes at most.
+        for turned_away in range(11):
+            try:
+                counts = box.state(timeout=180)["counts"]
+                return "outbox %d" % counts["outbox"] + (" (Outlook was busy %d times first)" % turned_away if turned_away else "")
+            except OutlookBusy:
+                if turned_away == 10:
+                    raise
+                time.sleep(30)
+
+    state = attempt("Outlook answers, and says how many mails wait in the Outbox", first_answer)
     if state is None:
         print("\nOutlook is not open or does not answer: nothing else can be checked.")
         return 1
@@ -299,6 +311,8 @@ def main() -> int:
         return "%d Outlook windows, %d of them with a reply or a draft being written in the reading pane" % (count, writing)
 
     attempt("what Outlook's windows hold in the reading pane (a draft written there is taken out before Titip sends it)", windows)
+    # (That Titip gets a reply out of the pane was tried on a real Outlook on 22 November 2026, by a check that
+    # presses Reply there itself: selecting nothing was enough, and Titip deleted the draft. See refine_log.md, Run 22.)
 
     def what_is_new():
         first = box._do(box._news_now, timeout=180)
@@ -568,6 +582,25 @@ def main() -> int:
                     "ticked off, opened again, moved to Deleted Items")
 
         attempt("a task", task)
+
+        def task_without_a_day():
+            name = "Titip check task without a day %s (deletes itself)" % stamp
+            box.keep({"kind": "tasks", "what": "save", "title": name, "start": "", "remind": "", "body": "Made by scripts/check_outlook.py."})
+            made = one_of("tasks", name)
+            try:
+                bare = box._do(box._thing, "tasks", made["id"], timeout=120)
+                due = (dt.date.today() + dt.timedelta(days=2)).isoformat()
+                box.keep({"kind": "tasks", "what": "save", "id": made["id"], "title": name, "due": due, "body": "Made by scripts/check_outlook.py."})
+                dated = box._do(box._thing, "tasks", made["id"], timeout=120)
+                box.keep({"kind": "tasks", "what": "save", "id": made["id"], "title": name, "body": "Made by scripts/check_outlook.py."})
+                again = box._do(box._thing, "tasks", made["id"], timeout=120)
+            finally:
+                box.keep({"kind": "tasks", "what": "remove", "id": made["id"]})
+            if (bare["due"], bare["start"], dated["due"], again["due"]) != ("", "", due, ""):
+                raise MailError(f"made without a day: due {bare['due']!r}; given a due day: {dated['due']!r}; the day taken off again: {again['due']!r}")
+            return "made without a due day, given one, and the day taken off again (Outlook's own no date is handed back); moved to Deleted Items"
+
+        attempt("a task without a day", task_without_a_day)
 
         def note():
             name = "Titip check note %s (deletes itself)" % stamp

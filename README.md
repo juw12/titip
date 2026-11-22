@@ -271,7 +271,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.15.0`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.15.1`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page. The page for any network keeps its own files on the
 phone (the page, never mail), so its icon opens without a connection too and says that the phone
@@ -475,6 +475,9 @@ Titip opens a door from your network to your mailbox. Read this first.
 - A task's start day is set after its due day and both are read back: Outlook moves the one
   when the other is set. If it does not keep both, Titip says so and saves nothing new. The
   reminder is a day and a time, set, read back, and set again if Outlook shifted it.
+- A task without a day has none set. A day is taken off by handing Outlook its own "no date"
+  back, read off a new task that is thrown away: a real Outlook takes that and nothing else
+  (before 0.15.1 a task without a due day could not be saved from the phone at all).
 - A picture in the text is a PNG, a JPEG or a GIF. If the line that names it is taken out, it
   goes along as a plain file. A link is made only of an address that starts with http or https.
 - A row has to be pushed about a quarter of the screen before it counts; let go earlier and nothing
@@ -486,7 +489,10 @@ Titip opens a door from your network to your mailbox. Read this first.
   go: first by selecting nothing, then by showing Sent for a moment (the folder it showed comes
   back), last by opening the draft in a window of its own. Leaving the pane, Outlook saves what
   was typed there; text you did not change on the phone leaves as Outlook saved it. If Outlook
-  still holds on, the phone says so: click another mail on the PC, then send again.
+  still holds on, the phone says so: click another mail on the PC, then send again. Tried on a
+  real Outlook: selecting nothing was enough, and the draft was deleted. That Outlook did not
+  refuse a draft deleted under the pane by another program; it deleted it and kept the reply in
+  the pane with nothing behind it. Titip never does that.
 - A mail sent for later is handed to Outlook at once, with the time before which it is not to be
   delivered. Outlook must be open on the PC at that time for it to leave; if it is not, the mail
   leaves the next time Outlook runs. It can wait 60 days at most. The time is set, read back, and
@@ -602,7 +608,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.15.0 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.15.1 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

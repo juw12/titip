@@ -436,7 +436,11 @@ OL_CONTACTS, OL_NOTES, OL_TASKS = 10, 12, 13
 THINGS = {"tasks": (OL_TASKS, 3, "IPM.Task"), "notes": (OL_NOTES, 5, "IPM.StickyNote"), "contacts": (OL_CONTACTS, 2, "IPM.Contact")}
 THINGS_SHOWN = 300
 THINGS_LOOK = 3000  # contacts looked through for a search, when Outlook cannot search them itself
-NO_DAY = dt.datetime(4501, 1, 1, 12)  # Outlook's "no date" (noon, so that a time shifted on the way in stays on that day)
+# Outlook's "no date" is 1 January 4501, midnight, and nothing else of that year: a real Outlook refuses noon
+# ("The object does not support this method"), and pywin32 cannot hand over a plain time that far off at all
+# (OSError 22). So the value is read off a task that has no day (see _no_day); this one, written the way
+# Outlook hands its own over, is used only where that cannot be read.
+NO_DAY = dt.datetime(4501, 1, 1, tzinfo=dt.timezone.utc)
 
 
 def clean_keep_request(payload: dict) -> dict:
@@ -953,6 +957,7 @@ class OutlookMailbox:
         self._calendars: dict[tuple, tuple[float, dict]] = {}  # (offset, days) -> (monotonic, page)
         self._date_way: int | None = None  # which of DATE_WAYS Outlook on this PC has understood
         self._folder_list: tuple[float, dict] | None = None  # (monotonic, the folders and the categories)
+        self._none_day = None  # Outlook's own "no date", once it was read off a task that has none
         self._answers: dict[tuple, tuple[float, object]] = {}  # other slow answers kept: key -> (monotonic, answer)
         self._signatures: dict | None = None
         self._state_problem: MailError | None = None
@@ -3017,12 +3022,35 @@ class OutlookMailbox:
                 for key in [key for key in self._answers if key[0] == "things" and key[1] == request["kind"]]:
                     del self._answers[key]
 
-    @staticmethod
-    def _set_day(item, name: str, day) -> None:
+    def _no_day(self):
+        """Outlook's own "no date", read off a new task that is thrown away at once. It is handed back to
+        Outlook as it came: the only way a day is taken off that a real Outlook was seen to take."""
+        if self._none_day is None:
+            value = NO_DAY
+            try:
+                fresh = self._app.CreateItem(THINGS["tasks"][1])
+                try:
+                    got = fresh.DueDate
+                    if got.year > 4000:
+                        value = got
+                finally:
+                    fresh.Close(OL_DISCARD)
+            except Exception as error:
+                if getattr(error, "hresult", None) in RPC_BUSY:
+                    raise
+            self._none_day = value
+        return self._none_day
+
+    def _set_day(self, item, name: str, day) -> None:
         """Set a date-only field (a task's due date) and read it back. Outlook may take the time as written
-        on another clock: noon stays on its day either way, and should it not, the day next to it is tried."""
+        on another clock: noon stays on its day either way, and should it not, the day next to it is tried.
+        No day: left alone where there is none already, else Outlook's own "no date" is handed over."""
         if day is None:
-            setattr(item, name, NO_DAY)
+            if self._day(getattr(item, name, None)) == "":
+                return
+            setattr(item, name, self._no_day())
+            if self._day(getattr(item, name, None)) != "":
+                raise MailError("Outlook did not take that day off. Take it off in Outlook itself.")
             return
         for shift in (0, 1, -1):
             setattr(item, name, dt.datetime(day.year, day.month, day.day, 12) + dt.timedelta(days=shift))
