@@ -109,6 +109,12 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
   as a mail. The button at the thumb says what it makes: New task, New note, New contact.
 - What is switched (automatic replies, reminders on this phone, open or done tasks) is one line
   over the list: the fact on the left, the way to change it on the right, as words in link blue.
+- A row pushed aside shows what will happen in a word behind it, on red for Delete and on the
+  bar's blue for read or unread: dim until it is far enough to count, then full. Never an icon alone.
+- What narrows a list (All, Unread, Flagged) is three plain buttons under the search box, the one
+  in use pressed like an answer to an invitation.
+- A person's card rises from the bottom like every list to pick from: the name, one line of facts,
+  and what can be done (write, call) as rows.
 - Send later is a button under the text like High importance; pressed, it shows a day and a time
   over the buttons, and the button at the top says Send later.
 - PC out of reach: the list from memory if there is one, and one sentence that names the cause (see

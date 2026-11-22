@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.11.1";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.12.0";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = {
     inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar",
@@ -28,7 +28,7 @@
   }
 
   // at: when the rows on screen were read from the PC. stale: the last try to read them failed.
-  var view = { folder: "inbox", id: "", rows: [], more: false, query: "", deep: false, loading: false, item: null, formatted: true, at: 0, stale: false, days: 0, from: "" };
+  var view = { folder: "inbox", id: "", rows: [], more: false, query: "", deep: false, show: "", loading: false, item: null, formatted: true, at: 0, stale: false, days: 0, from: "" };
   var own = { folders: [], categories: [], asked: 0, known: false };   // your own folders and Outlook's categories, as the PC last listed them
   var signature = { "new": "", reply: "" };   // the text Outlook signs with, put under a mail when it is started
   var planned = null;     // the calendar entry being made or changed: {id, scope, occurrence}
@@ -114,9 +114,10 @@
 
   var pc = {
     state: function () { return request("/api/state"); },
-    list: function (folder, offset, query, deep) {
-      return request("/api/mail?folder=" + folder + "&limit=" + PAGE + "&offset=" + offset + "&q=" + encodeURIComponent(query) + (deep ? "&deep=1" : ""));
+    list: function (folder, offset, query, deep, show) {
+      return request("/api/mail?folder=" + folder + "&limit=" + PAGE + "&offset=" + offset + "&q=" + encodeURIComponent(query) + (deep ? "&deep=1" : "") + (show ? "&show=" + show : ""));
     },
+    person: function (who) { return request("/api/person?q=" + encodeURIComponent(who)); },
     get: function (id) { return request("/api/item?id=" + encodeURIComponent(id)); },
     send: function (payload) { return request("/api/send", payload); },
     people: function () { return request("/api/people"); },
@@ -260,11 +261,11 @@
         return { ok: true, demo: true, account: data.me.address, name: data.me.name, counts: counts, away: !!data.away };
       });
     },
-    list: function (folder, offset, query, deep) {
+    list: function (folder, offset, query, deep, show) {
       return demoLoad().then(function (data) {
         var needle = query.toLowerCase().trim();
         var rows = data.mail.filter(function (mail) {
-          return mail.folder === folder &&
+          return mail.folder === folder && (!show || (show === "unread" ? mail.unread : mail.flagged)) &&
             (!needle || (mail.subject + " " + mail.from + " " + mail.to + (deep ? " " + mail.body : "")).toLowerCase().indexOf(needle) >= 0);
         }).sort(function (a, b) { return a.time < b.time ? 1 : -1; });
         return {
@@ -396,6 +397,7 @@
         if (!event) throw new Error("That calendar entry was moved or deleted. Refresh the calendar.");
         var copy = JSON.parse(JSON.stringify(event));
         copy.invitedPeople = demoPeople(data, event.required).filter(function (person) { return person.name !== data.me.name; });
+        copy.optionalPeople = demoPeople(data, event.optional || "").filter(function (person) { return person.name !== data.me.name; });
         return copy;
       });
     },
@@ -481,7 +483,7 @@
         }
         var first = order.allDay ? dayStart(order.day) : new Date(order.start);
         var after = order.allDay ? new Date(first.getFullYear(), first.getMonth(), first.getDate() + (order.days || 1)) : new Date(order.end);
-        var people = order["with"] || [];
+        var people = order["with"] || [], optional = order.optional || [];
         function timed(event, shift) {
           var begins = new Date(first.getTime() + shift), ends = new Date(after.getTime() + shift);
           event.allDay = !!order.allDay;
@@ -496,28 +498,32 @@
           event.location = order.location || "";
           event.body = order.body || "";
           if (order.reminder !== undefined) event.reminder = order.reminder === "none" ? null : Number(order.reminder);
+          if (order.busy) event.busy = order.busy;
+          if (order["private"] !== undefined && order.scope !== "one") event["private"] = !!order["private"];
           return event;
         }
         if (!rows.length) {
           var id = "demo.n" + Date.now();
-          var step = order.repeat ? { day: 1, week: 7, month: 30, year: 365 }[order.repeat.every] * 86400000 : 0;
+          var step = order.repeat ? { day: 1, week: 7, month: 30, year: 365, weekday: 1 }[order.repeat.every] * (order.repeat.interval || 1) * 86400000 : 0;
           var times = order.repeat ? Math.min(order.repeat.times || 12, 12) : 1;   // a year of them at most, in the demo
           for (var number = 0; number < times; number += 1) {
             data.events.push(timed(written({
-              id: id, organizer: data.me.name, meeting: people.length > 0, canceled: false, invited: false, mine: true,
-              response: people.length ? "organizer" : "", recurring: !!order.repeat, busy: "busy", required: people.join("; "), optional: "", reminder: 15
+              id: id, organizer: data.me.name, meeting: people.length + optional.length > 0, canceled: false, invited: false, mine: true,
+              response: people.length + optional.length ? "organizer" : "", recurring: !!order.repeat, busy: "busy", required: people.join("; "),
+              optional: optional.join("; "), reminder: 15
             }), step * number));
           }
-          return { ok: true, saved: true, told: people.length > 0 };
+          return { ok: true, saved: true, told: people.length + optional.length > 0 };
         }
         var series = rows[0].recurring && order.scope === "series";
         rows.forEach(function (event) {
           written(event);
           if (!series) timed(event, 0);
-          if (order.withExact && order.scope !== "one") {
-            event.required = people.join("; ");
-            event.meeting = people.length > 0;
-            event.response = people.length ? "organizer" : "";
+          if ((order.withExact || order.optionalExact) && order.scope !== "one") {
+            if (order.withExact) event.required = people.join("; ");
+            if (order.optionalExact) event.optional = optional.join("; ");
+            event.meeting = !!(event.required || event.optional);
+            event.response = event.meeting ? "organizer" : "";
           }
         });
         return { ok: true, saved: true, told: rows[0].meeting };
@@ -528,6 +534,19 @@
     lookup: function (typed) {
       return demoLoad().then(function (data) {
         return { book: true, people: (data.book || []).filter(function (person) { return person.name.toLowerCase().indexOf(typed) === 0; }) };
+      });
+    },
+    person: function (who) {
+      return demoLoad().then(function (data) {
+        var wanted = String(who).toLowerCase();
+        var kept = data.pages.contacts.filter(function (one) { return one.title.toLowerCase() === wanted || (one.email || "").toLowerCase() === wanted; })[0];
+        if (kept) {
+          return { found: true, known: true, name: kept.title, address: kept.email, job: kept.job, department: "", company: kept.company, office: "",
+            phones: [["Mobile", kept.mobile], ["Work", kept.work]].filter(function (pair) { return pair[1]; }).map(function (pair) { return { label: pair[0], number: pair[1] }; }) };
+        }
+        var listed = (data.book || []).concat(data.people || []).filter(function (one) { return one.name.toLowerCase() === wanted || one.address.toLowerCase() === wanted; })[0];
+        if (!listed && wanted.indexOf("@") < 0) return { found: false };
+        return { found: true, known: false, name: listed ? listed.name : who, address: listed ? listed.address : who, job: "", department: "", company: "", office: "", phones: [] };
       });
     },
     fileUrl: function () { return ""; }
@@ -602,7 +621,8 @@
   }
   var far = {
     state: function () { return farRequest("state", {}); },
-    list: function (folder, offset, query, deep) { return farRequest("mail", { folder: folder, limit: PAGE, offset: offset, q: query, deep: deep ? "1" : "" }); },
+    list: function (folder, offset, query, deep, show) { return farRequest("mail", { folder: folder, limit: PAGE, offset: offset, q: query, deep: deep ? "1" : "", show: show || "" }); },
+    person: function (who) { return farRequest("person", { q: who }); },
     get: function (id) { return farRequest("item", { id: id }); },
     send: function (payload) { return farRequest("send", payload, true); },
     people: function () { return farRequest("people", {}); },
@@ -633,7 +653,7 @@
 
   // The public page is updated before the PC has moved to the same version, and a PC can stay behind.
   // What 0.9.0 added is then said to be on its way, instead of asked of a PC that does not know the question.
-  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0";   // what came with a version asks for that one
+  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0";   // what came with a version asks for that one
   function pcBehind(needs) {
     if (DEMO || !pcVersion) return false;
     var has = pcVersion.split("."), wants = (needs || NEEDS).split(".");
@@ -837,13 +857,17 @@
       subject.appendChild(document.createTextNode(mail.subject));
       row.appendChild(subject);
       row.appendChild(el("span", "preview", mail.preview));
-      row.onclick = function () { location.hash = "#/" + view.folder + "/" + mail.id; };
+      row.onclick = function () {
+        if (Date.now() - swiped < 500) return;   // the finger that pushed the row aside did not tap it
+        location.hash = "#/" + view.folder + "/" + mail.id;
+      };
       item.appendChild(row);
       list.appendChild(item);
     });
     $("more").hidden = !view.more;
     if (!view.rows.length) {
-      if (view.query) showState("No match", "Nothing in " + folderName(view.folder) + " matches \u201c" + view.query + "\u201d" + (view.deep ? ", not in the text of the mail either." : "."));
+      if (view.show && !view.query) showState(view.show === "unread" ? "Nothing unread" : "Nothing flagged", "No " + view.show + " mail in " + folderName(view.folder) + ".");
+      else if (view.query) showState("No match", "Nothing in " + folderName(view.folder) + " matches \u201c" + view.query + "\u201d" + (view.deep ? ", not in the text of the mail either." : "."));
       else if (view.folder === "drafts") showState("No drafts", "Mail you save from the phone waits here, and in Outlook's Drafts.");
       else if (view.folder === "outbox") showState("Nothing is waiting", "Mail that Outlook has not sent yet shows here until it leaves.");
       else if (view.folder === "deleted") showState("Nothing deleted", "Mail you delete lands here. Outlook empties it by its own rules.");
@@ -992,27 +1016,29 @@
     view.loading = true;
     var folder = view.folder;
     var query = view.query;
+    var show = pcBehind(NEEDS_FULL) ? "" : view.show;
+    var narrowed = query || show;   // a search, or only what is unread or flagged: asked of Outlook each time, and not kept
     var offset = append ? view.rows.length : 0;
     if (!append && !silent) {
       showState("");
       showSaved({});
-      if (!query && !view.rows.length) {
+      if (!narrowed && !view.rows.length) {
         var kept = keptList(folder);
         if (kept) { view.rows = kept.mail; view.more = false; view.at = kept.at; renderRows(); }
       }
       // rows already on screen stay there while the fresh list is on its way; the arrows turn meanwhile
-      if (query || !view.rows.length) { skeleton(); $("more").hidden = true; }
+      if (narrowed || !view.rows.length) { skeleton(); $("more").hidden = true; }
     }
     if (!silent) $("refresh").classList.add("busy");
     if (query && !append) showState("Searching\u2026", view.deep ? "Looking through the text of every mail. This can take a while." : "Looking through every mail file. This can take a few seconds.");
-    return api.list(folder, offset, query, !!query && view.deep).then(function (page) {
+    return api.list(folder, offset, query, !!query && view.deep, show).then(function (page) {
       if (mine !== loads) return;
       view.rows = append ? view.rows.concat(page.mail) : page.mail;
       view.more = page.more;
       if (!append) {
         view.stale = false;
         clearTimeout(staleTimer);
-        if (!query) { view.at = Date.now(); keepList(folder, page); }
+        if (!narrowed) { view.at = Date.now(); keepList(folder, page); }
       }
       renderRows();
       if (!append) showSaved(page);
@@ -1022,7 +1048,7 @@
       if (append) { toast(error.message); return; }
       if (silent && !view.stale) return;   // a quiet refresh that failed: the next one tries again
       if (!silent) {
-        if (!query && view.rows.length) {
+        if (!narrowed && view.rows.length) {
           // the list from before stays readable; say that it is old, and why
           var note = $("savedNote");
           note.textContent = error.message + " This is the list from " + whenText(view.at) + ".";
@@ -1032,7 +1058,7 @@
           showState("Can't show your mail", error.message, true);
         }
       }
-      view.stale = !query;
+      view.stale = !narrowed;
       clearTimeout(staleTimer);
       if (view.stale) staleTimer = setTimeout(retryStale, STALE_AGAIN);
     }).then(function () {
@@ -1052,7 +1078,7 @@
     note.textContent = what === "calendar" ? "Outlook on your PC is busy. This is the calendar as it was a moment ago."
       : "Outlook on your PC is busy. This is the list from " + clockTime(page.savedAt) + ".";
     savedTimer = setTimeout(function () {
-      if (document.hidden || view.query || !firstPage() || !$("composer").hidden) return;
+      if (document.hidden || view.query || view.show || !firstPage() || !$("composer").hidden) return;
       load(false, true);
     }, SAVED_AGAIN);
   }
@@ -1147,6 +1173,8 @@
     $("inviteSaid").hidden = !$("inviteSaid").textContent;
     var asked = event.invited && !event.canceled;
     $("answers").hidden = !asked;
+    $("answerNote").hidden = !asked || pcBehind(NEEDS_FULL);
+    $("answerNote").value = "";
     Array.prototype.forEach.call($("answers").querySelectorAll("button"), function (button) {
       var answer = button.getAttribute("data-answer");
       var given = { accept: "accepted", tentative: "tentative", decline: "declined" }[answer] === event.response;
@@ -1156,9 +1184,12 @@
   }
   function respond(id, answer, event) {
     var showing = view.id;
+    var order = { what: "respond", id: id, answer: answer };
+    var note = $("answerNote").hidden ? "" : $("answerNote").value.trim();
+    if (note) order.note = note;   // a few words the organizer reads with the answer
     later(ANSWERING[answer], function () {
       toast(ANSWERING[answer] + "\u2026", "", null, true);
-      api.act({ what: "respond", id: id, answer: answer }).then(function (result) {
+      api.act(order).then(function (result) {
         toast(ANSWER_DONE[answer] + (result.told === false ? ". The organizer asked for no answers." : ". " + (event.organizer || "The organizer") + " is told."));
         if (view.folder === "calendar") load(false, true);
         if (view.id !== showing) return;
@@ -1202,6 +1233,7 @@
     $("subject").textContent = event.subject;
     paint($("face"), event.organizer || "?", "big");
     $("from").textContent = event.organizer || "";
+    setWho(event.organizer ? { name: event.organizer, address: "" } : null);
     $("fromAddress").textContent = "";
     $("toLabel").textContent = "With:";
     $("to").textContent = full ? full.required || "(nobody else)" : "\u2026";
@@ -1218,9 +1250,8 @@
     showMore(false);
     var actions = $("actions");
     actions.textContent = "";
-    // your own entry, not a repeating one, and not one over several days with hours: those are changed in Outlook
-    var changeable = !!full && full.mine && !pcBehind() && (!full.recurring || !pcBehind(NEEDS_MORE)) &&
-      (full.allDay || new Date(full.end) - new Date(full.start) < 86400000);
+    // your own entry; one that repeats when the PC can name one time of it
+    var changeable = !!full && full.mine && !pcBehind() && (!full.recurring || !pcBehind(NEEDS_MORE));
     actions.hidden = !changeable;
     if (changeable) {
       var change = el("button", "primary", "Change");
@@ -1272,6 +1303,7 @@
       $("subject").textContent = item.subject;
       paint($("face"), item.from, "big");
       $("from").textContent = item.from;
+      setWho(item.draft ? null : { name: item.from, address: item.fromAddress || "" });
       $("fromAddress").textContent = item.fromAddress && item.fromAddress !== item.from ? item.fromAddress : "";
       if (!item.draft && view.folder === "inbox") addPerson(item.from, item.fromAddress);
       $("toLabel").textContent = "To:";
@@ -1381,6 +1413,97 @@
     $("tags").hidden = !said.length;
   }
   function rowOf(id) { return view.rows.filter(function (mail) { return mail.id === id; })[0]; }
+  // ---- one person: job, department, office and numbers, from the company directory or your contacts
+  var who = null;
+  function setWho(person) {
+    who = person && !pcBehind(NEEDS_FULL) ? person : null;
+    $("from").classList.toggle("tap", !!who);
+  }
+  function showPerson() {
+    if (!who) return;
+    var asked = who, card = null;
+    pickFrom(asked.name || asked.address, asked.address && asked.address !== asked.name ? asked.address : "", false, function (got) {
+      card = got;
+      if (!got.found) return [];
+      var facts = [got.job, got.department, got.company, got.office].filter(Boolean).join(" \u00b7 ");
+      $("pickerNote").textContent = [got.address, facts].filter(Boolean).join(" \u00b7 ");
+      $("pickerNote").hidden = !$("pickerNote").textContent;
+      var rows = got.address ? [{ id: "mail", name: "Write a mail", note: got.address }] : [];
+      (got.phones || []).forEach(function (phone) { rows.push({ id: "tel", name: phone.number, note: "Call \u00b7 " + phone.label, number: phone.number }); });
+      return rows;
+    }, function (picked) {
+      if (picked.id === "tel") { location.href = "tel:" + picked.number.replace(/[^0-9+]/g, ""); return; }
+      writeTo(card.name || asked.name, card.address);
+    }, { load: function () { return api.person(asked.address || asked.name); },
+      empty: "Outlook's address book and your contacts say nothing more about this person." });
+  }
+  $("from").onclick = showPerson;
+  $("from").onkeydown = function (event) { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showPerson(); } };
+  // ---- a row pushed aside with a finger: to the left it is deleted (behind Undo), to the right marked read or unread
+  var swipe = null, swiped = 0, SWIPE_FAR = 96;
+  function toggleRead(mail, folder) {
+    var unread = mail.unread && opened.indexOf(mail.id) < 0;
+    api.act({ what: unread ? "read" : "unread", id: mail.id }).then(function (result) {
+      opened = opened.filter(function (id) { return id !== mail.id; });
+      store.set("titip.opened", JSON.stringify(opened));
+      mail.unread = result && result.left === "receipt" ? true : !unread;
+      toast(result && result.left === "receipt" ? "It asks for a read receipt, so it stays unread in Outlook until you open it there."
+        : unread ? "Marked as read" : "Marked as unread");
+      if (view.folder === folder) renderRows();
+      refreshCounts();
+    }).catch(function (error) { toast((error.unsure ? "" : "Not changed. ") + error.message); });
+  }
+  $("rows").addEventListener("touchstart", function (event) {
+    var row = event.target.closest ? event.target.closest(".row") : null;
+    swipe = null;
+    if (!row || event.touches.length !== 1 || PAGES[view.folder] || view.folder === "calendar" || pcBehind()) return;
+    var mail = view.rows[Array.prototype.indexOf.call($("rows").querySelectorAll(".row"), row)];
+    if (!mail) return;
+    swipe = {
+      row: row, mail: mail, x: event.touches[0].clientX, y: event.touches[0].clientY, dx: 0, on: false,
+      remove: view.folder !== "deleted", read: view.folder === "inbox" || isOwnFolder(view.folder)
+    };
+  }, { passive: true });
+  $("rows").addEventListener("touchmove", function (event) {
+    if (!swipe) return;
+    var dx = event.touches[0].clientX - swipe.x, dy = event.touches[0].clientY - swipe.y;
+    if (!swipe.on) {
+      if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) { swipe = null; return; }   // the list is being scrolled
+      if (Math.abs(dx) < 14) return;
+      swipe.on = true;
+    }
+    if ((dx < 0 && !swipe.remove) || (dx > 0 && !swipe.read)) dx = 0;
+    swipe.dx = dx;
+    var item = swipe.row.parentNode;
+    item.classList.toggle("swiping", dx !== 0);
+    item.classList.toggle("far", Math.abs(dx) >= SWIPE_FAR);
+    if (dx) {
+      item.setAttribute("data-side", dx < 0 ? "delete" : "read");
+      item.setAttribute("data-swipe", dx < 0 ? (view.folder === "drafts" ? "Discard" : "Delete")
+        : swipe.mail.unread && opened.indexOf(swipe.mail.id) < 0 ? "Mark as read" : "Mark as unread");
+    } else {   // this way nothing can be done here: nothing is promised behind the row
+      item.removeAttribute("data-side");
+      item.removeAttribute("data-swipe");
+    }
+    swipe.row.style.transform = dx ? "translateX(" + dx + "px)" : "";
+    if (event.cancelable) event.preventDefault();   // the list stays where it is while a row is pushed aside
+  }, { passive: false });
+  function endSwipe(event) {
+    var done = swipe;
+    swipe = null;
+    if (!done || !done.on) return;
+    swiped = Date.now();
+    var item = done.row.parentNode;
+    done.row.style.transform = "";
+    item.classList.remove("swiping", "far");
+    item.removeAttribute("data-swipe");
+    item.removeAttribute("data-side");
+    if (event.type === "touchcancel" || Math.abs(done.dx) < SWIPE_FAR) return;   // not far enough: nothing happens
+    if (done.dx < 0) removeMail(done.mail, view.folder);
+    else toggleRead(done.mail, view.folder);
+  }
+  $("rows").addEventListener("touchend", endSwipe);
+  $("rows").addEventListener("touchcancel", endSwipe);
   function markUnread(item) {
     api.act({ what: "unread", id: item.id }).then(function () {
       opened = opened.filter(function (id) { return id !== item.id; });
@@ -1630,7 +1753,7 @@
   // {name, address}. Picked from the suggestions it has both. Typed by hand it is an address, or only a
   // name (address ""), which Outlook looks up in its address book when it sends.
   var ADDRESS = /^[^\s@<>;,]+@[^\s@<>;,]+$/;
-  var chosen = { toInput: [], ccInput: [], bccInput: [], withInput: [] };
+  var chosen = { toInput: [], ccInput: [], bccInput: [], withInput: [], optInput: [] };
 
   function handed(person) { return person.address || person.name; }   // what the PC is given for this one
   function typedPerson(text) {
@@ -1814,7 +1937,7 @@
     input.focus();
     rememberComposer();
   }
-  ["toInput", "ccInput", "bccInput", "withInput"].forEach(function (id) {
+  ["toInput", "ccInput", "bccInput", "withInput", "optInput"].forEach(function (id) {
     var input = $(id);
     input.parentNode.addEventListener("click", function (event) { if (event.target === input.parentNode) input.focus(); });
     input.addEventListener("input", function () { settle(input, false); showPeople(input); });
@@ -1837,7 +1960,7 @@
         event.preventDefault();   // Enter takes the name, as in Outlook; it never sends
         if (listed && pick.found.length) { choosePerson(input, pick.found[pick.at]); return; }
         if (input.value.trim()) { settle(input, true); hidePeople(); rememberComposer(); return; }
-        (id === "withInput" ? $("planNotes") : $("subjectField").hidden ? $("bodyInput") : $("subjectInput")).focus();
+        (id === "withInput" || id === "optInput" ? $("planNotes") : $("subjectField").hidden ? $("bodyInput") : $("subjectInput")).focus();
       } else if (event.key === "Escape" && listed) {
         event.stopPropagation();
         hidePeople();
@@ -1973,6 +2096,12 @@
         plan: plan ? { to: plan.to, cc: plan.cc } : null, important: false, signed: "", receipt: false, marks: false, later: false
       };
       if (plan) { fields.to = plan.to; fields.cc = plan.cc; }
+      if (source && mode !== "draft" && mode !== "new") {
+        // the subject as Outlook will write it, to change if you like. Untouched, Outlook's own stays (it may say AW: or TR:).
+        var prefix = mode === "forward" ? "FW: " : "RE: ";
+        fields.subject = source.subject.slice(0, 3).toUpperCase() === prefix.trim() ? source.subject : prefix + source.subject;
+        draft.subjectWas = fields.subject;
+      }
       // Outlook's signature, as text you can change or take out: under a new mail, or the one for answers
       var sign = mode === "new" ? signature["new"] : mode === "draft" ? "" : signature.reply;
       if (sign) { draft.signed = sign; fields.body = "\n\n" + sign; }
@@ -1990,7 +2119,7 @@
     $("replyNote").textContent = draft.note;
     $("replyNote").hidden = !draft.note;
     $("toField").hidden = loose;
-    $("subjectField").hidden = draft.mode !== "new" && draft.mode !== "draft";
+    $("subjectField").hidden = false;
     $("ccLabel").textContent = loose ? "Add Cc" : "Cc";
     setChips($("toInput"), fields.to);
     setChips($("ccInput"), fields.cc);
@@ -2098,6 +2227,7 @@
       mode: mode, id: draft.id, action: action, to: values.to.map(handed), cc: values.cc.map(handed), bcc: values.bcc.map(handed),
       subject: values.subject, body: values.body
     };
+    if (mode !== "new" && mode !== "draft" && values.subject === draft.subjectWas) payload.subject = "";   // not changed: Outlook writes it
     if (draft.exact) payload.recipients = "exact";   // what is listed here is who it goes to, nobody else
     // nobody added, nobody taken out: the PC then leaves the answer addressed as Outlook addressed it
     if (draft.exact && draft.plan && samePeople(values.to, draft.plan.to) && samePeople(values.cc, draft.plan.cc) && !values.bcc.length) payload.kept = true;
@@ -2162,6 +2292,8 @@
     var folderChanged = folder !== view.folder || !view.rows.length && !view.loading;
     if (folder !== view.folder) {
       view.query = "";
+      view.show = "";
+      showShows();
       $("q").value = "";
       if (!$("searchBox").hidden) { $("searchBox").hidden = true; $("searchToggle").setAttribute("aria-expanded", "false"); }
       showSaved({});
@@ -2178,6 +2310,7 @@
     $("write").lastChild.textContent = { calendar: "New entry", tasks: "New task", notes: "New note", contacts: "New contact" }[folder] || "New mail";
     $("searchToggle").hidden = folder === "calendar";   // the calendar is looked through by day, not searched
     $("deep").parentNode.hidden = !!PAGES[folder];
+    showShows();
     $("q").placeholder = PAGES[folder] ? "Search " + FOLDERS[folder].toLowerCase() : "Search subject or person";
     showThingBar();
     $("refresh").setAttribute("aria-label", folder === "calendar" ? "Read the calendar again" : "Check for new mail");
@@ -2233,11 +2366,23 @@
     $("planTitle").textContent = !event ? "New entry" : scope === "one" ? "Change this one" : series ? "Change the series" : "Change entry";
     $("planSubject").value = event ? event.subject : "";
     $("planDay").value = dayOf(begins);
+    $("planEndDay").value = dayOf(ends);
+    var full = !pcBehind(NEEDS_FULL);
+    $("optField").hidden = !full || (!!event && !planned.people);
+    setChips($("optInput"), full && planned.people ? event.optionalPeople || [] : []);
+    $("planBusyField").hidden = $("planPrivateField").hidden = !full;
+    $("planBusy").value = event && event.busy ? event.busy : "";   // a new entry: busy, or free when it is all day, as Outlook decides
+    planned.busy = $("planBusy").value;
+    planned.day = $("planDay").value;
+    $("planPrivate").checked = !!(event && event["private"]);
+    $("planPrivate").disabled = scope === "one";   // Outlook keeps this for the whole series
+    planned["private"] = $("planPrivate").checked;
+    Array.prototype.forEach.call($("planRepeat").querySelectorAll("[data-needs]"), function (option) { option.hidden = option.disabled = !full; });
     $("planFrom").value = event && event.allDay ? "09:00" : hourOf(begins);
     $("planTo").value = event && event.allDay ? "09:30" : hourOf(ends);
     $("planAllDay").checked = !!(event && event.allDay);
     // when a series takes place is changed in Outlook: here what it is called, where, who, and its text
-    ["planDay", "planFrom", "planTo", "planAllDay"].forEach(function (id) { $(id).disabled = series; });
+    ["planDay", "planEndDay", "planFrom", "planTo", "planAllDay"].forEach(function (id) { $(id).disabled = series; });
     $("planHours").hidden = $("planAllDay").checked;
     $("planWhere").value = event ? event.location || "" : "";
     $("planNotes").value = event ? (event.body || "").trim() : "";
@@ -2268,7 +2413,17 @@
     if (!subject) { showPlanError("Give it a title first."); $("planSubject").focus(); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) { showPlanError("Pick a day."); $("planDay").focus(); return; }
     var people = $("withField").hidden ? [] : fieldPeople($("withInput"));
+    var optional = $("optField").hidden ? [] : fieldPeople($("optInput"));
+    var invited = people.concat(optional);
+    var lastDay = $("planEndDay").value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lastDay) || lastDay < day) lastDay = day;   // left as it was while the day moved on: one day
     var order = { what: "save", id: planned.id, subject: subject, location: $("planWhere").value.trim(), body: $("planNotes").value, "with": people.map(handed) };
+    if (!$("optField").hidden) {
+      order.optional = optional.map(handed);
+      if (planned.id) order.optionalExact = true;   // the ones listed are everyone who is optional
+    }
+    if (!$("planBusyField").hidden && $("planBusy").value && $("planBusy").value !== planned.busy) order.busy = $("planBusy").value;
+    if (!$("planPrivateField").hidden && !$("planPrivate").disabled && (!planned.id || $("planPrivate").checked !== planned["private"])) order["private"] = $("planPrivate").checked;
     if (planned.scope) order.scope = planned.scope;
     if (planned.occurrence) order.occurrence = planned.occurrence;
     if (planned.id && planned.people) order.withExact = true;   // the people listed are everyone who is invited
@@ -2276,30 +2431,33 @@
     if (!planned.id && $("planRepeat").value) {
       var times = Number($("planTimes").value) || 0;
       if (times === 1 || times < 0 || times > 500) { showPlanError("It can repeat 2 to 500 times, or without an end."); $("planTimes").focus(); return; }
-      order.repeat = { every: $("planRepeat").value, times: times };
+      var how = $("planRepeat").value.split(":");   // "week:2" is every second week
+      order.repeat = { every: how[0], times: times };
+      if (how[1]) order.repeat.interval = Number(how[1]);
     }
     if ($("planAllDay").checked) {
       order.allDay = true;
       order.day = day;
-      order.days = planned.days;
+      order.days = Math.round((dayStart(lastDay) - dayStart(day)) / 86400000) + 1;
     } else {
       var from = $("planFrom").value, to = $("planTo").value;
       if (!/^\d{2}:\d{2}/.test(from) || !/^\d{2}:\d{2}/.test(to)) { showPlanError("Say from when to when, or tick All day."); $("planFrom").focus(); return; }
       var first = dayStart(day);
       var begins = new Date(first.getFullYear(), first.getMonth(), first.getDate(), Number(from.slice(0, 2)), Number(from.slice(3, 5)));
-      var ends = new Date(first.getFullYear(), first.getMonth(), first.getDate(), Number(to.slice(0, 2)), Number(to.slice(3, 5)));
+      var last = dayStart(lastDay);
+      var ends = new Date(last.getFullYear(), last.getMonth(), last.getDate(), Number(to.slice(0, 2)), Number(to.slice(3, 5)));
       if (ends < begins) ends = new Date(ends.getTime() + 86400000);   // until after midnight
       order.start = begins.toISOString();
       order.end = ends.toISOString();
     }
     var job = planned;
-    var telling = people.length > 0 || job.meeting;
+    var telling = invited.length > 0 || job.meeting;
     showPlanner(false);
     later(telling ? (job.id ? "Sending the change" : "Sending the invitation") : "Saving", function () {
       toast(telling ? "Sending\u2026" : "Saving\u2026", "", null, true);
       api.plan(order).then(function (result) {
         planned = null;
-        toast(result.told ? (job.id || !people.length ? "Saved. The people invited are told." : "Invitation sent to " + people[0].name + (people.length > 1 ? " and " + (people.length - 1) + " more" : ""))
+        toast(result.told ? (job.id || !invited.length ? "Saved. The people invited are told." : "Invitation sent to " + invited[0].name + (invited.length > 1 ? " and " + (invited.length - 1) + " more" : ""))
           : "Saved to the calendar");
         if (view.folder !== "calendar") return;
         if (view.id) location.hash = "#/calendar";
@@ -2778,9 +2936,20 @@
   $("planForm").onsubmit = function (event) { event.preventDefault(); submitPlan(); };
   $("planForm").oninput = function () { showPlanError(""); };
   $("planForm").addEventListener("keydown", function (event) {   // Enter in a line of the form does not save it
-    if (event.key === "Enter" && event.target.tagName === "INPUT" && event.target.id !== "withInput") event.preventDefault();
+    if (event.key === "Enter" && event.target.tagName === "INPUT" && event.target.id !== "withInput" && event.target.id !== "optInput") event.preventDefault();
   });
   $("planAllDay").onchange = function () { $("planHours").hidden = this.checked; };
+  $("planDay").onchange = function () {   // the last day goes along with the first, earlier or later: an entry stays as long as it was
+    var day = /^\d{4}-\d{2}-\d{2}$/;
+    if (!planned || !day.test(this.value)) return;
+    if (day.test(planned.day) && day.test($("planEndDay").value)) {
+      var moved = Math.round((dayStart(this.value) - dayStart(planned.day)) / 86400000);
+      var last = dayStart($("planEndDay").value);
+      $("planEndDay").value = dayOf(new Date(last.getFullYear(), last.getMonth(), last.getDate() + moved));
+    }
+    if ($("planEndDay").value < this.value) $("planEndDay").value = this.value;
+    planned.day = this.value;
+  };
   $("pickerCancel").onclick = closePicker;
   $("pickerDone").onclick = function () {
     var job = picking;
@@ -2868,8 +3037,25 @@
     box.hidden = !box.hidden;
     this.setAttribute("aria-expanded", String(!box.hidden));
     if (!box.hidden) $("q").focus();
-    else if (view.query) { view.query = ""; $("q").value = ""; view.rows = []; load(false); }
+    else if (view.query || view.show) { view.query = ""; view.show = ""; showShows(); $("q").value = ""; view.rows = []; load(false); }
   };
+  // only what is unread, or flagged: the three words under the search box
+  function showShows() {
+    $("shows").hidden = !!PAGES[view.folder] || view.folder === "calendar" || pcBehind(NEEDS_FULL);
+    Array.prototype.forEach.call($("shows").querySelectorAll("button"), function (button) {
+      button.setAttribute("aria-pressed", String(button.getAttribute("data-show") === view.show));
+    });
+  }
+  Array.prototype.forEach.call($("shows").querySelectorAll("button"), function (button) {
+    button.onclick = function () {
+      var wanted = button.getAttribute("data-show");
+      if (wanted === view.show) return;
+      view.show = wanted;
+      showShows();
+      view.rows = [];
+      load(false);
+    };
+  });
   var searchTimer = 0;
   $("q").oninput = function () {
     clearTimeout(searchTimer);
@@ -2908,7 +3094,7 @@
     if (document.hidden) return;
     if (Date.now() - LOADED > PAGE_OLD && $("composer").hidden && !pending && !view.id) { location.reload(); return; }
     if (view.stale) { retryStale(); return; }
-    if (!view.query && firstPage() && $("composer").hidden && Date.now() - view.at > AGED) load(false, true);
+    if (!view.query && !view.show && firstPage() && $("composer").hidden && Date.now() - view.at > AGED) load(false, true);
   }
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) {
@@ -2921,7 +3107,7 @@
   window.addEventListener("pageshow", function (event) { if (event.persisted) wake(); });
 
   setInterval(function () {
-    if (!document.hidden && !view.query && firstPage() && $("composer").hidden) load(false, true);
+    if (!document.hidden && !view.query && !view.show && firstPage() && $("composer").hidden) load(false, true);
   }, REFRESH_MS);
 
   window.addEventListener("hashchange", route);

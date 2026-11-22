@@ -516,7 +516,7 @@ class CopiesInMemory(unittest.TestCase):
         self.assertTrue(wait_until(lambda: not box._asking))
         self.assertNotIn("saved", box.list("inbox"))
 
-    def test_without_a_copy_the_phone_is_told_busy_and_searches_always_ask_outlook(self):
+    def test_without_a_copy_the_phone_is_told_busy_and_searches_ask_outlook(self):
         outlook = FakeOutlook()
         box = box_with(outlook)
         outlook.silent()
@@ -525,9 +525,14 @@ class CopiesInMemory(unittest.TestCase):
         outlook.silent(False)
         self.assertTrue(wait_until(lambda: not box._asking))
         box.list("sent", query="gasket")
-        box.list("sent", query="gasket")
+        box.list("sent", query="gasket")  # the same search a moment later (the phone had given up): the answer just given
         box.list("sent", offset=40)
-        self.assertEqual(outlook.count("_list"), 4)
+        self.assertEqual(outlook.count("_list"), 3)
+        for key in list(box._answers):  # a moment has passed
+            box._answers[key] = (0.0, box._answers[key][1])
+        box.list("sent", query="gasket")
+        box.list("sent", query="gaskets")
+        self.assertEqual(outlook.count("_list"), 5, "after it, and for another search, Outlook is asked")
         with self.assertRaises(MailError):
             box.list("../secrets")
 

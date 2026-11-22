@@ -1115,3 +1115,83 @@ want it send, fix it". Not a judged round. Written on the Mac, which has no Outl
   depend on the language, the last-resort rewording of Outlook's sentence does.
 
 stop: run 16 ended with 0.11.1 merged to `main`; the PC moves to it by itself.
+
+## Run 17 (2026-11-22): what was still open to be a whole Outlook on the phone (0.12.0)
+
+Asked for: "now what else open to make fully functional outlook, do it till finish n no mistake
+check urself". Not a judged round. Written on the Mac, which has no Outlook. The list of what was
+open was taken from the Limits in the README and from what Outlook's own phone app does.
+
+### What the ASUS found since Run 15 (real Outlook)
+
+- A forward goes through while the calendar is being read: 200 after 4.7 s, the calendar answered
+  after 30.7 s. Run 14's fix holds on the PC it was written for.
+- `check_outlook.py` and `--write` pass on 0.11.0. One line of the check itself was wrong (Outlook
+  writes a phone number its own way) and was fixed there (PR 24).
+- 0.11.1 (a draft held in the reading pane) has not been tried on the real Outlook yet.
+
+### Changes kept
+
+- **Unread, Flagged** under the search box: the list is asked of Outlook narrowed, like a search.
+- **A row pushed aside**: left deletes behind Undo, right marks read or unread.
+- **The subject of an answer or forward** is shown and can be changed. Unchanged, it is not sent,
+  so Outlook's own stays in whatever language it writes it.
+- **Who somebody is**: a tap on the sender's name asks the company directory, then the contacts.
+- **Calendar**: guests who need not come, listed and changed apart from the others; a last day, so
+  an entry with hours can go over several days; Show as; Private; every working day and every
+  second week; an answer to an invitation with a note.
+- `scripts/check_outlook.py` reads the inbox narrowed both ways and looks up the newest sender;
+  with `--write` it makes an entry over two days, private, shown as free, every second week, reads
+  it back with its pattern and deletes it.
+
+### Found on the way (by reading the change again before it left)
+
+- The first version sent "busy" with every new entry. Outlook shows an all-day entry as free by
+  itself; Titip would have made every all-day entry busy. Show as now starts at "As Outlook sets
+  it" and is only sent when picked.
+- The first version left the last day where it was when the first day was moved earlier, which
+  made a one-hour entry a day longer without a word. The last day now moves with the first.
+- A row pushed the way nothing can be done (to the right in Sent) still carried a label.
+- A narrowed list is one more question that can take Outlook longer than the phone waits, and
+  searches and older pages were still put to Outlook anew on every try, the way the calendar was
+  before 0.10.3. All three are now asked once and the answer kept ten seconds for the next try.
+
+### Not taken, and why
+
+- **New mail and reminders announced while the page is closed.** It can be done: the PC would send
+  a sealed push through Apple's or Google's push service to the Home Screen app. It is the largest
+  thing still open, and the one that cannot be tried from this Mac at all. Left for a round of its
+  own, asked for by name.
+- **Answering one time of a repeating meeting, proposing another time.** Outlook's object model
+  does the first only through an exception to the series, which could not be checked without a
+  real invitation; it has no call for the second.
+- **Text and time span of automatic replies, an online (Teams) meeting.** Not in the object model.
+- **Deleting for good, emptying Deleted Items, picking several mails at once.** The first two stay
+  out on purpose: nothing is removed for good from the phone.
+- **Fonts, colours, tables, pictures in the text; a category's colour; a task's start day and
+  repetition; rooms.** Still in the Limits.
+
+### Hard gates (code-checked)
+
+- 458 unit and server tests (434 before). New, against a stand-in Outlook: the two filters as
+  Outlook is asked for them, alone and with a search; a search that takes longer than the phone
+  waits is asked once in four tries and its late answer is what the next try gets; guests of both
+  kinds made, changed apart, and left alone by a page from before 0.12.0; show-as and private
+  set only when named; every second week and every working day; an answer with a note; one
+  person from the directory, from the contacts, unknown, and with Outlook busy; all of it
+  through the phone's door and listed for the relay.
+- 290 browser steps, all pass (258 before): the list narrowed both ways and searched within;
+  rows pushed right, a little left, far left with Undo, and deleted in Sent; nothing to push in
+  Deleted; the sender's card and a mail started from it; the subject of an answer left alone and
+  of a forward changed; an entry over three days with an optional guest, opened, changed and
+  deleted; its last day moving with its first; one every second week; an answer with a note.
+
+### Not verified
+
+- Nothing of 0.12.0 on a real Outlook. In particular: that Outlook takes the two filters as
+  written (they are the documented names for "read" and for the flag), that the directory answers
+  for a sender's address, and that a guest added as optional is invited as optional.
+- A push with a real finger on a real phone. The check sends the touches a finger sends.
+- 0.11.1 on the real Outlook, still.
+
+stop: run 17 ended with 0.12.0 merged to `main`; the PC moves to it by itself.

@@ -12,7 +12,10 @@ mail and asks for a read receipt, makes, renames and takes out a folder, switche
 one, makes a category, reads a shared calendar, and makes an entry that repeats, changes one time of it,
 deletes the series and changes who is invited to a meeting. Makes, changes, ticks off and deletes a
 task, a note and a contact, writes to a contact, sends a mail for later and stops it in the Outbox,
-switches the automatic replies, and lets a reminder ring on the phone. Then Autopilot: on the paired phone, on the public page (demo), and
+switches the automatic replies, and lets a reminder ring on the phone. Narrows the list to what is
+unread or flagged, pushes rows aside, changes the subject of a forward, opens what Outlook knows of a
+sender, makes an entry over three days with an optional guest and one every second week, and answers
+an invitation with a note. Then Autopilot: on the paired phone, on the public page (demo), and
 through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
 trip: the code for any network opens the public mail app, a stand-in relay with the worker's rules
 passes sealed text, this Titip answers. Then the iPhone Home Screen: a browser with an iPhone's name
@@ -484,7 +487,7 @@ def main() -> None:
             page.wait_for_selector("#actions button:has-text('Forward')")
             page.click("#actions button:has-text('Forward')")
             check(page.locator("#attached .fileName").all_inner_texts() == ["hinge-B-torque.xlsx", "cam-scuffing.jpg"]
-                  and page.locator("#toField").is_visible() and page.locator("#subjectField").is_hidden(),
+                  and page.locator("#toField").is_visible() and page.input_value("#subjectInput") == "FW: Hinge sample B: torque results",
                   "a forward lists the files of the original that go along")
             page.locator("#attached .fileChip").nth(1).click()
             page.locator("#toInput").press_sequentially("pri")
@@ -1206,6 +1209,224 @@ def main() -> None:
             page.click("#actions button:has-text('Delete')")
             expect(page.locator("#toastText")).to_have_text("Deleted from the calendar", timeout=30000)
             expect(page.locator(".row.event:has-text('Call the tool shop')")).to_have_count(0, timeout=15000)
+
+            # ---- 0.12.0: only what is unread or flagged; a row pushed aside; the subject of an answer; who somebody is;
+            # guests who need not come, an entry over several days, every second week; an answer with a note
+            def settled():
+                page.wait_for_timeout(200)
+                expect(page.locator("#refresh.busy")).to_have_count(0, timeout=30000)
+
+            def push(index, dx):   # a finger pushes the row that far sideways and lets go
+                page.evaluate("""([index, dx]) => {
+                    const row = document.querySelectorAll('#rows .row')[index];
+                    const box = row.getBoundingClientRect();
+                    const at = (x) => new Touch({identifier: 1, target: row, clientX: x, clientY: box.top + 20});
+                    const fire = (type, x, down) => row.dispatchEvent(new TouchEvent(type,
+                        {bubbles: true, cancelable: true, touches: down ? [at(x)] : [], changedTouches: [at(x)]}));
+                    const start = box.left + box.width / 2;
+                    fire('touchstart', start, true);
+                    for (let step = 1; step <= 6; step += 1) fire('touchmove', start + dx * step / 6, true);
+                    window.pushed = (row.parentNode.getAttribute('data-swipe') || '') + '|' + row.parentNode.className + '|' + row.style.transform;
+                    fire('touchend', start + dx, false);
+                }""", [index, dx])
+                return page.evaluate("window.pushed")
+
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            settled()
+            rows = page.locator("#rows .row")
+            every = rows.count()
+            page.click("#searchToggle")
+            check(page.locator("#shows button").all_inner_texts() == ["All", "Unread", "Flagged"]
+                  and page.get_attribute("#shows button[data-show='']", "aria-pressed") == "true" and overflow(page) <= 0,
+                  "under the search box: All, Unread, Flagged, and All is what is shown")
+            page.click("#shows button[data-show=flagged]")
+            settled()
+            flagged = rows.count()
+            check(0 < flagged < every and page.locator("#rows .row:has(.flag)").count() == flagged
+                  and page.get_attribute("#shows button[data-show=flagged]", "aria-pressed") == "true", f"Flagged lists only the flagged mail ({flagged} of {every})")
+            page.screenshot(path=SHOTS / "phone-flagged.png")
+            page.fill("#q", "zzzz")
+            page.wait_for_selector("#state strong:has-text('No match')")
+            page.fill("#q", "")
+            settled()
+            expect(rows).to_have_count(flagged, timeout=15000)
+            check(True, "a search looks among the flagged ones only, and without it they are all back")
+            page.click("#shows button[data-show=unread]")
+            settled()
+            unread = rows.count()
+            check(unread < every and page.locator("#rows .row.unread").count() == unread
+                  and (unread > 0 or page.inner_text("#state strong") == "Nothing unread"), f"Unread lists only what is unread ({unread} of {every})")
+            page.click("#searchToggle")
+            settled()
+            expect(rows).to_have_count(every, timeout=15000)
+            page.click("#searchToggle")
+            check(page.get_attribute("#shows button[data-show='']", "aria-pressed") == "true", "closing the search shows everything again")
+            page.click("#searchToggle")
+
+            was_unread = "unread" in rows.first.get_attribute("class")
+            posted.clear()
+            said = push(0, 150)
+            expect(page.locator("#toastText")).to_have_text("Marked as read" if was_unread else "Marked as unread", timeout=15000)
+            check(said.startswith(("Mark as read" if was_unread else "Mark as unread") + "|swiping far|translateX(150px)")
+                  and [body["what"] for name, body in posted if name == "act"] == ["read" if was_unread else "unread"]
+                  and ("unread" in rows.first.get_attribute("class")) != was_unread,
+                  f"a row pushed to the right is marked {'read' if was_unread else 'unread'}, and the list shows it ({said})")
+            push(0, 150)
+            expect(page.locator("#toastText")).to_have_text("Marked as unread" if was_unread else "Marked as read", timeout=15000)
+            check(("unread" in rows.first.get_attribute("class")) == was_unread and page.locator("#letter").is_hidden(), "pushed again it is as it was, and no mail was opened by it")
+            posted.clear()
+            said = push(1, -60)
+            page.wait_for_timeout(400)
+            check(said.startswith("Delete|swiping|") and not [name for name, body in posted if name == "act"] and rows.count() == every,
+                  "a row pushed a little to the left says Delete, and let go it stays")
+            said = push(1, -170)
+            expect(page.locator("#toastText")).to_contain_text("Deleting in")
+            check(said.startswith("Delete|swiping far|"), "pushed far to the left it is deleted, behind Undo")
+            page.click("#toastAction")
+            page.wait_for_timeout(3600)
+            check(rows.count() == every and not [name for name, body in posted if name == "act"], "Undo, and the mail is still there")
+
+            rows.first.click()
+            page.wait_for_selector("#actions button:has-text('Reply')")
+            check("tap" in (page.get_attribute("#from", "class") or ""), "the sender's name can be tapped")
+            page.click("#from")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(2, timeout=15000)
+            check(page.inner_text("#pickerTitle") == "Mateo Silva" and "Mechanical engineer" in page.inner_text("#pickerNote")
+                  and page.locator("#pickerList .pickOne").first.inner_text().split("\n")[0] == "Write a mail" and overflow(page) <= 0,
+                  "a tap on the sender shows what Outlook knows of them: job, company, address and number")
+            page.screenshot(path=SHOTS / "phone-person.png")
+            page.locator("#pickerList .pickOne").first.click()
+            expect(page.locator("#composer")).to_be_visible()
+            check(page.locator("#toField .chipName").all_inner_texts() == ["Mateo Silva"], "and Write a mail starts one to them")
+            page.click("#discard")
+            page.click("#actions button:has-text('Reply')")
+            check(page.locator("#subjectField").is_visible() and page.input_value("#subjectInput") == "RE: Hinge sample B: torque results",
+                  "an answer shows its subject, as Outlook will write it")
+            page.fill("#bodyInput", "Thanks, Mateo.")
+            posted.clear()
+            page.click("#send")
+            expect(page.locator("#toastText")).to_have_text("Sent to Mateo Silva", timeout=30000)
+            check(next(body for name, body in posted if name == "send")["subject"] == "", "left as it is, the subject is Outlook's to write")
+            page.click("#actions button:has-text('Forward')")
+            check(page.input_value("#subjectInput") == "FW: Hinge sample B: torque results", "a forward shows its subject too")
+            page.fill("#subjectInput", "Torque results, for the review")
+            page.locator("#toInput").press_sequentially("pri")
+            page.locator("#people .person").first.click()
+            posted.clear()
+            page.click("#send")
+            expect(page.locator("#toastText")).to_have_text("Sent to Priya Nair", timeout=30000)
+            check(next(body for name, body in posted if name == "send")["subject"] == "Torque results, for the review", "changed, the PC is handed the new subject")
+            page.click("#back")
+            page.click(".tabs a[data-folder=sent]")
+            page.wait_for_selector(".row .subject:has-text('Torque results, for the review')")
+            settled()
+            sent = rows.count()
+            check("Torque results, for the review" in rows.first.inner_text(), "and the mail left under it")
+            said = push(0, 150)
+            check(said == "||", f"in Sent nothing is unread, so a push to the right does nothing ({said})")
+            push(0, -170)
+            expect(page.locator("#toastText")).to_have_text("Moved to Deleted", timeout=30000)
+            expect(rows).to_have_count(sent - 1, timeout=15000)
+            check(page.locator(".row .subject:has-text('Torque results, for the review')").count() == 0, "a mail pushed away in Sent is moved to Deleted")
+            page.click("#folderPick")
+            page.click("#folderMenu a[data-folder=deleted]")
+            page.wait_for_selector(".row .subject:has-text('Torque results, for the review')")
+            said = push(0, -170)
+            page.wait_for_timeout(400)
+            check(said == "||" and (page.locator("#toast").is_hidden() or "Deleting" not in page.inner_text("#toastText")),
+                  "in Deleted a push does nothing: nothing is removed for good from the phone")
+
+            page.click(".tabs a[data-folder=calendar]")
+            page.wait_for_selector(".row.event")
+            page.click("#write")
+            day_one = time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400))
+            day_three = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 86400))
+            page.fill("#planDay", day_one)
+            check(page.input_value("#planEndDay") == day_one and page.locator("#optField").is_visible() and page.input_value("#planBusy") == ""
+                  and not page.is_checked("#planPrivate") and overflow(page) <= 0,
+                  "a new entry ends on the day it starts unless you say otherwise, and shows the way Outlook sets it")
+            page.fill("#planEndDay", day_three)
+            page.fill("#planDay", time.strftime("%Y-%m-%d", time.localtime(time.time() + 2 * 86400)))
+            check(page.input_value("#planEndDay") == time.strftime("%Y-%m-%d", time.localtime(time.time() + 4 * 86400)), "moved a day later, its last day moves with it")
+            page.fill("#planDay", day_one)
+            check(page.input_value("#planEndDay") == day_three, "and moved back, it is as long as it was, not a day longer")
+            page.fill("#planEndDay", day_one)
+            page.fill("#planSubject", "Climate chamber run")
+            page.fill("#planFrom", "09:00")
+            page.fill("#planTo", "17:00")
+            page.fill("#planEndDay", day_three)
+            page.select_option("#planBusy", "away")
+            page.check("#planPrivate")
+            page.locator("#optInput").press_sequentially("jon")
+            page.locator("#people .person").first.click()
+            page.screenshot(path=SHOTS / "phone-entry-days.png", full_page=True)
+            posted.clear()
+            page.click("#planSave")
+            expect(page.locator("#toastText")).to_have_text("Invitation sent to Jonas Weber", timeout=30000)
+            run = next(body for name, body in posted if name == "plan")
+            begins, ends = (time.mktime(time.strptime(run[name][:19], "%Y-%m-%dT%H:%M:%S")) for name in ("start", "end"))
+            check(run["optional"] == ["jonas.weber@lumenworks.example"] and run["with"] == [] and run["busy"] == "away" and run["private"] is True
+                  and ends - begins == 2 * 86400 + 8 * 3600 and "optionalExact" not in run,
+                  "the PC is told who need not come, the two more days with their hours, how it shows and that it is private")
+            chamber = page.locator(".row.event:has-text('Climate chamber run')")
+            expect(chamber.first).to_be_visible(timeout=15000)
+            chamber.first.click()
+            page.wait_for_selector("#actions button:has-text('Change')")
+            check("jonas.weber@lumenworks.example" in page.inner_text("#cc") and page.inner_text("#ccRowLabel") == "Optional:"
+                  and page.locator("#actions button").all_inner_texts() == ["Change", "Cancel the meeting"],
+                  "the entry lists the guest as optional, and one over several days can be changed like any other")
+            page.click("#actions button:has-text('Change')")
+            check(page.locator("#optField .chipName").all_inner_texts() == ["Jonas Weber"] and page.locator("#withField .chip").count() == 0
+                  and page.input_value("#planEndDay") == day_three and page.input_value("#planBusy") == "away" and page.is_checked("#planPrivate"),
+                  "Change opens it as it is: its last day, who is optional, out of office, private")
+            page.locator("#optField .chip").first.click()
+            page.uncheck("#planPrivate")
+            posted.clear()
+            page.click("#planSave")
+            expect(page.locator("#toastText")).to_have_text("Saved to the calendar", timeout=30000)
+            changed = next(body for name, body in posted if name == "plan")
+            check(changed["optionalExact"] is True and changed["optional"] == [] and changed["private"] is False and "busy" not in changed,
+                  "the guest taken off is handed over as the whole list, and what was not touched is not sent")
+            chamber.first.click()
+            page.wait_for_selector("#actions button:has-text('Delete')")
+            page.click("#actions button:has-text('Delete')")
+            expect(page.locator("#toastText")).to_have_text("Deleted from the calendar", timeout=30000)
+            expect(chamber).to_have_count(0, timeout=15000)
+
+            page.click("#write")
+            check(page.locator("#planRepeat option").all_inner_texts()[:5] == ["Never", "Every day", "Every working day", "Every week", "Every 2 weeks"],
+                  "an entry can repeat every working day and every second week")
+            page.fill("#planSubject", "Supplier call")
+            page.select_option("#planRepeat", "week:2")
+            page.fill("#planTimes", "3")
+            posted.clear()
+            page.click("#planSave")
+            expect(page.locator("#toastText")).to_have_text("Saved to the calendar", timeout=30000)
+            fortnightly = next(body for name, body in posted if name == "plan")
+            check(fortnightly["repeat"] == {"every": "week", "times": 3, "interval": 2} and "busy" not in fortnightly and "private" in fortnightly,
+                  "the PC is told: every week, every second one, three times; and how it shows is left to Outlook")
+            calls = page.locator(".row.event:has-text('Supplier call')")
+            expect(calls.first).to_be_visible(timeout=15000)
+            calls.first.click()
+            page.wait_for_selector("#actions button:has-text('Delete')")
+            page.click("#actions button:has-text('Delete')")
+            page.locator("#pickerList .pickOne:has-text('The whole series')").click()
+            expect(page.locator("#toastText")).to_have_text("Deleted from the calendar", timeout=30000)
+            expect(calls).to_have_count(0, timeout=15000)
+
+            page.locator(".row.event:has-text('Drop test, corner drops')").click()
+            page.wait_for_selector("#answers button[data-answer=tentative]")
+            check(page.locator("#answerNote").is_visible() and overflow(page) <= 0, "an invitation can be answered with a note for the organizer")
+            page.fill("#answerNote", "I can join after 15:00.")
+            page.screenshot(path=SHOTS / "phone-answer-note.png")
+            posted.clear()
+            page.click("#answers button[data-answer=tentative]")
+            expect(page.locator("#toastText")).to_have_text("Answered tentative. Jonas Weber is told.", timeout=30000)
+            answer = next(body for name, body in posted if name == "act")
+            check(answer["note"] == "I can join after 15:00." and answer["answer"] == "tentative" and page.input_value("#answerNote") == "",
+                  "the note goes to the PC with the answer, and the box is empty again")
+            page.click("#back")
 
             # ---- search and empty state
             page.click(".tabs a[data-folder=inbox]")

@@ -359,6 +359,7 @@ def clean_act_request(payload: dict) -> dict:
     request = {
         "what": what, "id": str(payload.get("id") or ""), "answer": str(payload.get("answer") or ""),
         "to": str(payload.get("to") or ""), "categories": [],
+        "note": str(payload.get("note") or "").strip()[:NOTE_MOST],  # a few words for the organizer, with the answer
     }
     if what not in ACTS:
         raise MailError("Unknown action.")
@@ -419,7 +420,14 @@ def clean_keep_request(payload: dict) -> dict:
     return request
 
 
-REPEATS = {"day": 0, "week": 1, "month": 2, "year": 5}  # Outlook's numbers for how an entry repeats
+REPEATS = {"day": 0, "week": 1, "month": 2, "year": 5, "weekday": 1}  # Outlook's numbers for how an entry repeats
+WEEKDAYS = 62  # Monday to Friday, as Outlook counts the days of the week (Sunday is 1, Saturday 64)
+REPEAT_INTERVAL_MOST = 99  # every so many days, weeks or months
+NOTE_MOST = 2000  # characters of a note that goes along with an answer to an invitation
+SHOWS = {  # what a list can be narrowed to, as Outlook is asked for it
+    "unread": '"urn:schemas:httpmail:read" = 0',
+    "flagged": '"http://schemas.microsoft.com/mapi/proptag/0x10900003" = 2',
+}
 REPEAT_MOST = 500  # times an entry made on the phone takes place
 REMINDER_MOST = 28 * 24 * 60  # minutes before
 
@@ -462,11 +470,24 @@ def clean_plan_request(payload: dict) -> dict:
             times = int(repeat.get("times") or 0)
         except (TypeError, ValueError):
             raise MailError("Bad request.")
-        request["repeat"] = {"every": repeat["every"], "times": max(0, min(times, REPEAT_MOST))}  # 0: it goes on
+        try:
+            interval = int(repeat.get("interval") or 1)
+        except (TypeError, ValueError):
+            raise MailError("Bad request.")
+        if repeat["every"] in ("year", "weekday"):
+            interval = 1  # every year, every working day: nothing in between
+        request["repeat"] = {
+            "every": repeat["every"], "times": max(0, min(times, REPEAT_MOST)),  # 0: it goes on
+            "interval": max(1, min(interval, REPEAT_INTERVAL_MOST)),
+        }
     request["subject"] = " ".join(str(payload.get("subject") or "").split())[:255]
     request["location"] = " ".join(str(payload.get("location") or "").split())[:255]
     request["body"] = str(payload.get("body") or "")[:MAX_BODY]
     request["with"] = split_addresses(payload.get("with"))[:PEOPLE_RECIPIENTS]
+    request["optional"] = split_addresses(payload.get("optional"))[:PEOPLE_RECIPIENTS]  # invited, but need not come
+    request["optionalExact"] = payload.get("optionalExact") is True  # a page from before 0.12.0 does not list them: they stay
+    request["busy"] = payload.get("busy") if payload.get("busy") in BUSY.values() else None  # None: as it is
+    request["private"] = payload.get("private") if isinstance(payload.get("private"), bool) else None
     request["allDay"] = payload.get("allDay") is True
     if not request["subject"]:
         raise MailError("Give it a title first.")
@@ -970,6 +991,8 @@ class OutlookMailbox:
                 self._folder_list = (time.monotonic(), value)
                 return
             if key[0] != "item":  # the other calendars, the rules, what an invitation is for
+                if key[0] == "narrowed":  # searches come one per word typed: the ones nobody can be waiting for any more go first
+                    self._forget_narrowed(time.monotonic() - LIST_FRESH_SECONDS)
                 if len(self._answers) >= 60:
                     self._answers.clear()
                 self._answers[key] = (time.monotonic(), value)
@@ -1213,19 +1236,31 @@ class OutlookMailbox:
             return None
 
     # -------------------------------------------------- list
-    def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "", deep: bool = False) -> dict:
+    def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "", deep: bool = False, show: str = "") -> dict:
         """One page of a folder. The first page comes from the copy in memory when Outlook is slow.
 
         A copy older than LIST_FRESH_SECONDS is only a fallback: Outlook is asked first, and when it
         does not answer within QUICK_SECONDS the copy is returned marked `saved`, with its time.
         Searches and older pages always wait for Outlook. `deep`: a search also looks in the text of the mail.
+        `show`: only what is "unread" or "flagged"; asked of Outlook like a search, and not kept as the folder's list.
         """
         if folder not in ALL_FOLDERS and not FOLDER_ID.fullmatch(folder):
             raise MailError("Unknown folder.")
+        if show and show not in SHOWS:
+            raise MailError("Unknown filter.")
         limit = max(1, min(int(limit), 100))
         self._phone_asked()
-        if int(offset) > 0 or (query or "").strip():
-            page = self._do(self._list, folder, limit, offset, query, *((True,) if deep else ()))
+        if int(offset) > 0 or (query or "").strip() or show:
+            # A search letter by letter, an older page or a narrowed list can take Outlook longer than the
+            # phone waits. It is asked once however often the phone asks meanwhile, and its answer is kept
+            # a moment for the try that comes after it arrived: what 0.10.3 did for the calendar.
+            key = ("narrowed", folder, limit, int(offset), " ".join(str(query or "").split()).lower(), bool(deep), show)
+            kept = self._answers.get(key)
+            if kept and time.monotonic() - kept[0] < LIST_FRESH_SECONDS:
+                page = kept[1]
+            else:
+                page = self._shared(key, self._list, folder, limit, offset, query,
+                                    *((bool(deep), show) if show else (True,) if deep else ()), wait=READ_SECONDS)
             self._want(page["mail"])
             return page
         self._page = limit
@@ -1256,7 +1291,7 @@ class OutlookMailbox:
             f'"{field}" {how} \'{around}{text}{around}\'' for field in ("urn:schemas:httpmail:subject", who, BODY_TEXT)
         ) + ")"
 
-    def _list(self, folder: str, limit: int, offset: int, query: str, deep: bool = False) -> dict:
+    def _list(self, folder: str, limit: int, offset: int, query: str, deep: bool = False, show: str = "") -> dict:
         if folder not in ALL_FOLDERS and not FOLDER_ID.fullmatch(folder):
             raise MailError("Unknown folder.")
         limit = max(1, min(int(limit), 100))
@@ -1273,14 +1308,19 @@ class OutlookMailbox:
             table_filter = (
                 f'@SQL=("urn:schemas:httpmail:subject" like \'%{text}%\' OR "{who}" like \'%{text}%\')'
             )
+        only = f" AND ({SHOWS[show]})" if show in SHOWS and words else f"@SQL=({SHOWS[show]})" if show in SHOWS else ""
+        if words:
+            table_filter += only
+        elif only:
+            table_filter = only
         rows = []
         for mail_folder in self._mail_folders(folder):
             self._give_way()  # between two data files
             store_key = self._store_key(mail_folder.StoreID)
             table = None
-            if deep and table_filter:
+            if deep and words:
                 try:
-                    table = mail_folder.GetTable(self._text_filter(mail_folder, text, who), 0)
+                    table = mail_folder.GetTable(self._text_filter(mail_folder, text, who) + only, 0)
                 except Exception as error:
                     if getattr(error, "hresult", None) in RPC_BUSY:
                         raise
@@ -1319,7 +1359,7 @@ class OutlookMailbox:
                     "flagged": "flag" in at and row[at["flag"]] == 2,
                     "important": "importance" in at and row[at["importance"]] == 2,
                 })
-            if table_filter and len(rows) >= want:
+            if words and len(rows) >= want:
                 break  # a search scans every message of a data file: stop once the page is full
         rows.sort(key=lambda mail: mail["time"], reverse=True)
         page = rows[offset:want]
@@ -1640,6 +1680,56 @@ class OutlookMailbox:
                 pass
         return found
 
+    def person(self, who: str) -> dict:
+        """What Outlook knows about one person, by name or address: the company directory first, then
+        your contacts. Asked when a name is tapped, so it goes first and never makes the phone wait long."""
+        who = " ".join(str(who or "").split())[:254]
+        if len(who) < LOOKUP_SHORTEST:
+            raise MailError("Nobody was named.")
+        self._phone_asked()
+        try:
+            return self._do(self._person, who, timeout=LOOKUP_SECONDS, first=True)
+        except OutlookBusy:
+            return {"found": False, "busy": True}
+
+    def _person(self, who: str) -> dict:
+        recipient = self._ns.CreateRecipient(who)
+        if not recipient.Resolve():  # nobody, or more than one, by that name
+            return {"found": False}
+        entry = recipient.AddressEntry
+        try:
+            address = entry.PropertyAccessor.GetProperty(P_SMTP) or ""
+        except Exception as error:
+            if getattr(error, "hresult", None) in RPC_BUSY:
+                raise
+            address = getattr(entry, "Address", "") or ""
+        card = {"found": True, "known": False, "name": " ".join(str(recipient.Name or "").split()),
+                "address": str(address) if "@" in str(address) else (who if "@" in who else ""),
+                "job": "", "department": "", "company": "", "office": "", "phones": []}
+        source = None
+        for ask in ("GetExchangeUser", "GetContact"):  # a colleague in the directory, or somebody in your contacts
+            try:
+                source = getattr(entry, ask)()
+            except Exception as error:
+                if getattr(error, "hresult", None) in RPC_BUSY:
+                    raise
+                source = None
+            if source is not None:
+                break
+        if source is None:
+            return card
+        text = lambda name: " ".join(str(getattr(source, name, "") or "").split())  # noqa: E731
+        smtp = text("PrimarySmtpAddress") or text("Email1Address")
+        if "@" in smtp:
+            card["address"] = smtp
+        card.update(name=text("Name") or text("FullName") or card["name"], job=text("JobTitle"), department=text("Department"),
+                    company=text("CompanyName"), office=text("OfficeLocation"))
+        for label, field in (("Mobile", "MobileTelephoneNumber"), ("Work", "BusinessTelephoneNumber")):
+            if text(field):
+                card["phones"].append({"label": label, "number": text(field)})
+        card["known"] = bool(card["job"] or card["department"] or card["company"] or card["office"] or card["phones"])
+        return card
+
     def attachment(self, mail_id: str, index: int, folder: Path) -> tuple[str, Path]:
         """Save one attachment into `folder`; returns (file name, path)."""
         return self._do(self._attachment, mail_id, index, folder)
@@ -1670,6 +1760,7 @@ class OutlookMailbox:
         finally:
             with self._lock:  # Sent and Drafts have changed (or may have): no old copy of them is shown
                 self._lists.clear()
+                self._forget_narrowed()
                 if request["mode"] == "draft":
                     self._drop_message(self._moved.get(request["id"], request["id"]))
 
@@ -1917,6 +2008,7 @@ class OutlookMailbox:
             "response": RESPONSES.get(int(getattr(appointment, "ResponseStatus", 0) or 0), ""),
             "recurring": bool(getattr(appointment, "IsRecurring", False)),
             "busy": BUSY.get(int(getattr(appointment, "BusyStatus", 2) or 0), "busy"),
+            "private": int(getattr(appointment, "Sensitivity", 0) or 0) == 2,  # olPrivate: others see only that the time is taken
             # minutes before it starts that Outlook reminds you, or None when it does not
             "reminder": int(getattr(appointment, "ReminderMinutesBeforeStart", 0) or 0) if getattr(appointment, "ReminderSet", False) else None,
         }
@@ -2107,13 +2199,13 @@ class OutlookMailbox:
         item = self._item(event_id)
         if not str(getattr(item, "MessageClass", "") or "").startswith("IPM.Appointment"):
             raise MailError("That is not a calendar entry.")
-        invited = []  # who is invited, for the phone to list and change: not yourself, not who is optional, not a room
+        invited, optional = [], []  # who is invited and who need not come, for the phone to list and change: not yourself, not a room
         try:
             mine = self._my_addresses()
             organizer = str(getattr(item, "Organizer", "") or "").lower()
             for name, address, kind in self._recipients(item.Recipients, RECIPIENTS_READ)[0]:
-                if kind == 1 and address.lower() not in mine and name.lower() != organizer:
-                    invited.append(as_person(name, address))
+                if kind in (1, 2) and address.lower() not in mine and name.lower() != organizer:
+                    (invited if kind == 1 else optional).append(as_person(name, address))
         except Exception:
             pass
         return {
@@ -2122,6 +2214,7 @@ class OutlookMailbox:
             "required": str(getattr(item, "RequiredAttendees", "") or ""),
             "optional": str(getattr(item, "OptionalAttendees", "") or ""),
             "invitedPeople": invited,
+            "optionalPeople": optional,
             "body": (getattr(item, "Body", "") or "")[:MAX_BODY],
         }
 
@@ -2201,9 +2294,9 @@ class OutlookMailbox:
                     raise
         raise MailError("Outlook cannot find that one time of the series. Refresh the calendar and try again.")
 
-    def _invite(self, item, wanted: list[str]) -> bool:
-        """Make the people invited (required) exactly `wanted`; yourself and whoever is optional or a room stay.
-        True when somebody was added or taken out."""
+    def _invite(self, item, wanted: list[str], as_kind: int = 1) -> bool:
+        """Make the people invited exactly `wanted`: the required ones (`as_kind` 1) or the optional ones (2).
+        Yourself, the others and a room stay. True when somebody was added or taken out."""
         mine = self._my_addresses()
         organizer = str(getattr(item, "Organizer", "") or "").lower()
         left = list(wanted)
@@ -2217,8 +2310,8 @@ class OutlookMailbox:
                 names.add(str(recipient.PropertyAccessor.GetProperty(P_SMTP) or "").lower())
             except Exception:
                 pass
-            if kind != 1 or names & mine or (organizer and organizer in names):
-                continue  # the organizer, an optional guest, a room: not what the phone lists
+            if kind != as_kind or names & mine or (organizer and organizer in names):
+                continue  # the organizer, a guest of the other kind, a room: not what this list holds
             same = next((entry for entry in left if entry.lower() in names), None)
             if same is None:
                 recipients.Remove(index)
@@ -2226,7 +2319,7 @@ class OutlookMailbox:
             else:
                 left.remove(same)
         for entry in left:
-            recipients.Add(entry).Type = 1
+            recipients.Add(entry).Type = as_kind
             changed = True
         return changed
 
@@ -2263,19 +2356,31 @@ class OutlookMailbox:
                 item.ReminderSet = request["reminder"] >= 0
                 if request["reminder"] >= 0:
                     item.ReminderMinutesBeforeStart = request["reminder"]
+            if request["busy"] is not None:
+                item.BusyStatus = next(number for number, name in BUSY.items() if name == request["busy"])
+            if request["private"] is not None and not one_time:  # Outlook keeps this for the whole series
+                item.Sensitivity = 2 if request["private"] else 0
             if created and request["repeat"]:
                 pattern = item.GetRecurrencePattern()  # takes the day and the hours from what was just set
                 pattern.RecurrenceType = REPEATS[request["repeat"]["every"]]
+                if request["repeat"]["every"] == "weekday":
+                    pattern.DayOfWeekMask = WEEKDAYS
+                if request["repeat"].get("interval", 1) > 1:
+                    pattern.Interval = request["repeat"]["interval"]
                 if request["repeat"]["times"]:
                     pattern.Occurrences = request["repeat"]["times"]
                 else:
                     pattern.NoEndDate = True
-            if created and request["with"]:
+            if created and (request["with"] or request["optional"]):
                 item.MeetingStatus = 1  # olMeeting: an entry with people is a meeting, and they are invited
-                for address in request["with"]:
-                    item.Recipients.Add(address).Type = 1
-            elif not created and request["withExact"] and not one_time:
-                if self._invite(item, request["with"]) and request["with"]:
+                for kind, addresses in ((1, request["with"]), (2, request["optional"])):
+                    for address in addresses:
+                        item.Recipients.Add(address).Type = kind
+            elif not created and not one_time and (request["withExact"] or request["optionalExact"]):
+                changed = request["withExact"] and self._invite(item, request["with"])
+                if request["optionalExact"]:
+                    changed = self._invite(item, request["optional"], 2) or changed
+                if changed and (request["with"] or request["optional"]):
                     item.MeetingStatus = 1
             if item.Recipients.Count and not item.Recipients.ResolveAll():
                 unknown = [r.Name for r in item.Recipients if not r.Resolved]
@@ -2699,6 +2804,7 @@ class OutlookMailbox:
             # waits its turn like a read, a busy Outlook is simply not asked, and no list is thrown away.
             result = self._do(self._act, request)
             with self._lock:
+                self._forget_narrowed()
                 for _, _, page in self._lists.values():
                     for row in page["mail"]:
                         if row["id"] == mail_id:
@@ -2714,8 +2820,15 @@ class OutlookMailbox:
         finally:
             with self._lock:  # the folders and the calendar have changed (or may have)
                 self._lists.clear()
+                self._forget_narrowed()
                 self._calendars.clear()
                 self._drop_message(mail_id)
+
+    def _forget_narrowed(self, before: float | None = None) -> None:
+        """A search or a narrowed list that was kept a moment is not what the folder holds any more.
+        `before`: only the ones kept before that moment. Called with the lock held."""
+        for key in [key for key, kept in self._answers.items() if key[0] == "narrowed" and (before is None or kept[0] < before)]:
+            del self._answers[key]
 
     def _act(self, request: dict) -> dict:
         held = self._held_in_the_pane(request["id"]) if request["what"] in ("delete", "move") else []
@@ -2778,6 +2891,8 @@ class OutlookMailbox:
         answer = appointment.Respond(ANSWERS[request["answer"]], True)  # True: no window opens on the PC
         if answer is None:  # the organizer asked for no answers: Outlook only notes yours
             return {"ok": True, "responded": request["answer"], "told": False}
+        if request["note"]:
+            answer.Body = request["note"]  # what the organizer reads in the answer
         answer.Send()
         return {"ok": True, "responded": request["answer"], "told": True}
 
@@ -2832,6 +2947,7 @@ class DemoMailbox:
                 "response": event.get("response", "organizer" if event.get("required") else ""),
                 "recurring": bool(event.get("recurring")),
                 "busy": event.get("busy", "busy"),
+                "private": bool(event.get("private")),
                 "reminder": event.get("reminder", None if all_day else 15),
                 "required": event.get("required", ""),
                 "optional": event.get("optional", ""),
@@ -2884,13 +3000,15 @@ class DemoMailbox:
 
     quick_state = state
 
-    def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "", deep: bool = False) -> dict:
+    def list(self, folder: str, limit: int = 40, offset: int = 0, query: str = "", deep: bool = False, show: str = "") -> dict:
         if folder not in ALL_FOLDERS and not FOLDER_ID.fullmatch(folder):
             raise MailError("Unknown folder.")
+        if show and show not in SHOWS:
+            raise MailError("Unknown filter.")
         needle = (query or "").lower().strip()
         rows = [
             mail for mail in self.mail
-            if mail["folder"] == folder
+            if mail["folder"] == folder and (not show or mail["unread" if show == "unread" else "flagged"])
             and (not needle or needle in (mail["subject"] + " " + mail["from"] + " " + mail["to"] + (" " + mail["body"] if deep else "")).lower())
         ]
         rows.sort(key=lambda mail: mail["time"], reverse=True)
@@ -2968,6 +3086,24 @@ class DemoMailbox:
     def people(self) -> dict:
         """Everyone in the invented mail, for the composer's suggestions."""
         return {"people": [dict(person) for person in self.people_known]}
+
+    def person(self, who: str) -> dict:
+        """One person of the invented directory or the invented contacts, by name or address."""
+        who = " ".join(str(who or "").split())[:254].lower()
+        if len(who) < LOOKUP_SHORTEST:
+            raise MailError("Nobody was named.")
+        with self.lock:
+            for one in self.pages["contacts"]:
+                if who in (one["title"].lower(), one["email"].lower()):
+                    phones = [{"label": label, "number": number} for label, number in (("Mobile", one["mobile"]), ("Work", one["work"])) if number]
+                    return {"found": True, "known": True, "name": one["title"], "address": one["email"], "job": one["job"],
+                            "department": "", "company": one["company"], "office": "", "phones": phones}
+        for one in self.book + self.people_known:
+            if who in (one["name"].lower(), one["address"].lower()):
+                return {"found": True, "known": False, "name": one["name"], "address": one["address"], "job": "", "department": "",
+                        "company": "", "office": "", "phones": []}
+        return {"found": "@" in who, "known": False, "name": who, "address": who if "@" in who else "", "job": "", "department": "",
+                "company": "", "office": "", "phones": []} if "@" in who else {"found": False}
 
     def lookup(self, query: str) -> dict:
         """The invented directory, matched the way Outlook's is: by the start of the name."""
@@ -3138,11 +3274,15 @@ class DemoMailbox:
                 for one in rows:
                     self.events.remove(one)
                 return {"ok": True, "removed": True, "told": rows[0]["meeting"]}
-            for address in request["with"]:
+            for address in request["with"] + request["optional"]:
                 if "@" not in address and " " not in address and len(address) < 3:
                     raise MailError(f"Outlook does not know: {address}. Use a full e-mail address.")
             last = request["end"] - dt.timedelta(minutes=1) if request["allDay"] else request["end"]
             fresh = {"subject": request["subject"], "location": request["location"], "body": request["body"]}
+            if request["busy"] is not None:
+                fresh["busy"] = request["busy"]
+            if request["private"] is not None and request["scope"] != "one":
+                fresh["private"] = request["private"]
             when = {
                 "start": utc(request["start"]), "end": utc(request["end"]), "day": request["start"].date().isoformat(),
                 "lastDay": last.date().isoformat(), "allDay": request["allDay"],
@@ -3151,14 +3291,15 @@ class DemoMailbox:
                 fresh["reminder"] = request["reminder"] if request["reminder"] >= 0 else None
             if not rows:
                 repeat = request["repeat"]
+                guests = request["with"] + request["optional"]
                 first = {
-                    "id": f"demo.{len(self.events) + 0xE100:016X}", "organizer": self.me["name"], "meeting": bool(request["with"]),
-                    "canceled": False, "invited": False, "mine": True, "response": "organizer" if request["with"] else "",
-                    "recurring": bool(repeat), "busy": "busy", "required": "; ".join(request["with"]), "optional": "",
-                    "reminder": 15, **fresh, **when,
+                    "id": f"demo.{len(self.events) + 0xE100:016X}", "organizer": self.me["name"], "meeting": bool(guests),
+                    "canceled": False, "invited": False, "mine": True, "response": "organizer" if guests else "",
+                    "recurring": bool(repeat), "busy": "busy", "private": False, "required": "; ".join(request["with"]),
+                    "optional": "; ".join(request["optional"]), "reminder": 15, **fresh, **when,
                 }
                 self.events.append(first)
-                step = {"day": 1, "week": 7, "month": 30, "year": 365}.get(repeat["every"], 0) if repeat else 0
+                step = {"day": 1, "week": 7, "month": 30, "year": 365, "weekday": 1}.get(repeat["every"], 0) * repeat["interval"] if repeat else 0
                 for number in range(1, min(repeat["times"] or 12, 12) if repeat else 0):  # a year of them at most, in the demo
                     shift = dt.timedelta(days=step * number)
                     self.events.append({
@@ -3171,10 +3312,13 @@ class DemoMailbox:
                 one.update(fresh)
                 if not series:  # when a series takes place is not changed from the phone
                     one.update(when)
-                if request["withExact"] and request["scope"] != "one":
-                    one["required"] = "; ".join(request["with"])
-                    one["meeting"] = bool(request["with"])
-                    one["response"] = "organizer" if request["with"] else ""
+                if request["scope"] != "one" and (request["withExact"] or request["optionalExact"]):
+                    if request["withExact"]:
+                        one["required"] = "; ".join(request["with"])
+                    if request["optionalExact"]:
+                        one["optional"] = "; ".join(request["optional"])
+                    one["meeting"] = bool(one["required"] or one.get("optional"))
+                    one["response"] = "organizer" if one["meeting"] else ""
             return {"ok": True, "saved": True, "told": rows[0]["meeting"]}
 
     def calendars(self) -> dict:
@@ -3253,7 +3397,8 @@ class DemoMailbox:
         shared = [event for calendar in self.other_calendars.values() for event in calendar["events"]]
         for event in self.events + shared:
             if event["id"] == event_id:
-                return {**event, "invitedPeople": [one for one in self._people(event["required"]) if one["address"] != self.me["address"] and one["name"] != self.me["name"]]}
+                others = lambda text: [one for one in self._people(text) if one["address"] != self.me["address"] and one["name"] != self.me["name"]]  # noqa: E731
+                return {**event, "invitedPeople": others(event["required"]), "optionalPeople": others(event.get("optional", ""))}
         raise MailError("That calendar entry was moved or deleted. Refresh the calendar.")
 
     def act(self, payload: dict) -> dict:
