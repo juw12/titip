@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.15.0";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.15.1";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = {
     inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar",

@@ -1455,3 +1455,58 @@ rest of that list is what a program on the PC cannot reach, and the README now s
 
 stop: run 21 ended with 0.15.0 on `main`. What is left in the list of limits is what a program
 on the PC cannot reach, and says so.
+
+## Run 22 (2026-11-22): 0.15.0 asked of the real Outlook, and a task without a day (0.15.1)
+
+Asked for: the same. Run 21 ended with 0.15.0 untried on the real Outlook, and with the check of
+a reply in the reading pane waiting. Both ran, from the Mac, on the PC that has the Outlook.
+
+### What the real Outlook said (on 0.15.0)
+
+- Reading only: every line ok.
+- With `--write`: every line ok but one. An entry on two days of the week takes place on those
+  days (Outlook keeps 80 for a Thursday and a Saturday); one on the last such weekday of the
+  month keeps that pattern and starts on the day asked for; a category made teal is read back
+  as teal and taken out again; a reply text written for colleagues and one for people outside
+  are read back and taken out again (the replies were off and no text was set).
+- The one: **a task**. Taking the start day off failed with `OSError 22`. Asked one question at
+  a time: a plain time in the year 4501, which is how Titip said "no day" since 0.11.0, cannot be
+  handed over by pywin32 at all; the same marked as UTC, at noon, Outlook refuses ("The object
+  does not support this method"); the value Outlook itself hands back for a task without a day
+  is taken, for the due day and for the start day. Taking the due day off takes the start day
+  off too; taking the start day off leaves the due day.
+- So a task without a due day could not be saved from the phone on a real Outlook, since 0.11.0.
+  No check had made one: every check gave its task a day.
+- **A reply in the reading pane** (0.11.1): pressed Reply on a read mail, the answer opened in
+  the pane and was saved as a draft. Selecting nothing, the first and gentlest of the three
+  ways, made Outlook let go, and the draft was deleted. A second reply, held in the pane (Titip
+  saw it there), was deleted by Titip itself, and the pane was empty afterwards. Nothing was
+  left in Drafts.
+- Run 21 said Outlook answered nothing for some minutes after the draft deleted under the pane.
+  That was not the reason. It answered nothing to a second program whenever the Titip that runs
+  there had just updated itself and was reading everything anew: once after 0.14.1, once after
+  0.15.0, both times with nothing in the pane. `check_outlook.py` waits that out now.
+
+### Changes kept
+
+- A task without a day has none set, and a day is taken off by handing Outlook its own "no
+  date" back, read off a new task that is thrown away. An Outlook that does not take the day off
+  is said, and nothing is saved half changed.
+- `check_outlook.py --write` makes a task without a day, gives it one and takes it off again.
+  Its first question waits up to five minutes for an Outlook that turns a second program away.
+
+### Hard gates (code-checked)
+
+- 537 unit and server tests (535 before): a new task without a day sets none and asks Outlook
+  for nothing; a day taken off hands over Outlook's own value, read once; any other time of 4501
+  is refused by the stand-in as the real one refuses it; an Outlook that keeps the day is said.
+- 353 browser steps, all pass.
+
+### Not verified
+
+- 0.15.1 on the real Outlook, until `check_outlook.py --write` has run there with its two lines
+  for a task.
+- What an organizer's mail program draws for a suggested time, and that the automatic reply
+  people get is the text written from the phone (the notes are written and read back).
+
+stop: run 22 ended with 0.15.1 on `main`.

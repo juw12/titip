@@ -234,7 +234,8 @@ class Keeping(unittest.TestCase):
         self.assertEqual((task.Subject, task.Importance, task.Body, task.calls), ("Book the drop tower", 2, "Corner drops.", ["save"]))
         self.assertEqual(task.DueDate, dt.datetime(2026, 11, 24, 12), "noon: an Outlook that shifts the time still lands on that day")
         self.keep(box, kind="tasks", what="save", title="Order hinge samples")
-        self.assertEqual((box._app.created[1].DueDate, box._app.created[1].Importance), (mailbox.NO_DAY, 1))
+        self.assertEqual((hasattr(box._app.created[1], "DueDate"), box._app.created[1].Importance), (False, 1),
+                         "no day: none is set on a task that has none (a real Outlook takes only its own no date)")
 
     def test_a_day_outlook_shifts_over_midnight_is_set_again_until_it_is_the_day_asked_for(self):
         class Shifted(Thing):

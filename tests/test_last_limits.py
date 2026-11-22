@@ -20,15 +20,24 @@ def utc(moment: dt.datetime) -> str:
     return moment.astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+NONE = dt.datetime(4501, 1, 1, tzinfo=dt.timezone(dt.timedelta(0), "as Outlook hands it over"))  # Outlook's own "no date"
+
+
+def none(value) -> bool:
+    return value.year > 4000
+
+
 class Task(Thing):
     """A task the way Outlook keeps its days: without a due day it has no start day either, and a start day
     after the due day moves the due day along."""
 
     def __setattr__(self, name, value):
+        if name in ("DueDate", "StartDate") and none(value) and value != NONE:
+            raise OSError(22, "Invalid argument")  # what a real Outlook (and pywin32) does with any other time of 4501
         self.__dict__[name] = value
-        if name == "DueDate" and value == mailbox.NO_DAY:
-            self.__dict__["StartDate"] = mailbox.NO_DAY
-        if name == "StartDate" and value != mailbox.NO_DAY and self.__dict__.get("DueDate", mailbox.NO_DAY) < value:
+        if name == "DueDate" and none(value):
+            self.__dict__["StartDate"] = NONE
+        if name == "StartDate" and not none(value) and (none(self.__dict__.get("DueDate", NONE)) or self.__dict__["DueDate"] < value):
             self.__dict__["DueDate"] = value
 
 
@@ -68,7 +77,46 @@ class ATaskStartsAndReminds(unittest.TestCase):
                     ReminderSet=True, ReminderTime=dt.datetime(2026, 12, 1, 8, 30))
         box = self.box(task)
         self.keep(box, kind="tasks", what="save", id="0123456789." + "AB" * 12, title="Check", due="2026-12-04", start="", remind="")
-        self.assertEqual((task.StartDate, task.DueDate.date(), task.ReminderSet), (mailbox.NO_DAY, dt.date(2026, 12, 4), False))
+        self.assertEqual((task.StartDate, task.DueDate.date(), task.ReminderSet), (NONE, dt.date(2026, 12, 4), False))
+
+    def test_no_day_is_outlooks_own_no_date_and_is_not_set_where_there_is_none(self):
+        """What the real Outlook showed on 22 November 2026: a plain time in 4501 cannot be handed over at all,
+        any other time of that year is refused, and its own value for "no date" is taken."""
+        class App:
+            def __init__(self):
+                self.made = []
+
+            def CreateItem(self, kind):
+                self.made.append(Task("NEW", DueDate=NONE, StartDate=NONE))
+                return self.made[-1]
+
+        box = self.box()
+        box._app = App()
+        self.keep(box, kind="tasks", what="save", title="Order hinge samples", start="", remind="")
+        new = box._app.made[0]
+        self.assertEqual((new.DueDate, new.StartDate, new.calls, len(box._app.made)), (NONE, NONE, ["save"], 1),
+                         "a new task has no day: none is set, and Outlook is not asked for its no date")
+        task = Task("T1", Subject="Check", Body="", DueDate=day(2026, 12, 4), StartDate=day(2026, 12, 1), Complete=False, Importance=1)
+        box = self.box(task)
+        box._app = App()
+        self.keep(box, kind="tasks", what="save", id="0123456789." + "AB" * 12, title="Check", start="", remind="")
+        self.assertEqual((task.DueDate, task.StartDate), (NONE, NONE))
+        self.assertEqual(box._app.made[0].calls, [f"close{mailbox.OL_DISCARD}"], "the task it was read off is thrown away")
+        self.keep(box, kind="tasks", what="save", id="0123456789." + "AB" * 12, title="Check", due="2026-12-04", start="2026-12-02")
+        self.keep(box, kind="tasks", what="save", id="0123456789." + "AB" * 12, title="Check", due="2026-12-04", start="")
+        self.assertEqual((task.DueDate.date(), task.StartDate, len(box._app.made)), (dt.date(2026, 12, 4), NONE, 1), "read once, then kept")
+
+    def test_an_outlook_that_does_not_take_the_day_off_is_said(self):
+        class Keeps(Thing):
+            def __setattr__(self, name, value):
+                if not (name == "DueDate" and none(value)):
+                    self.__dict__[name] = value
+
+        task = Keeps("T1", Subject="Check", Body="", DueDate=day(2026, 12, 4), Complete=False, Importance=1)
+        with self.assertRaises(MailError) as refused:
+            self.keep(self.box(task), kind="tasks", what="save", id="0123456789." + "AB" * 12, title="Check")
+        self.assertIn("did not take that day off", str(refused.exception))
+        self.assertEqual(task.calls, [], "and the task is not saved half changed")
 
     def test_a_due_day_outlook_moved_along_with_the_start_is_put_right(self):
         class Dragging(Task):
@@ -77,7 +125,7 @@ class ATaskStartsAndReminds(unittest.TestCase):
             def __setattr__(self, name, value):
                 before = self.__dict__.get("StartDate")
                 super().__setattr__(name, value)
-                if name == "StartDate" and before not in (None, mailbox.NO_DAY) and value != mailbox.NO_DAY:
+                if name == "StartDate" and before is not None and not none(before) and not none(value):
                     self.__dict__["DueDate"] = self.__dict__["DueDate"] + (value - before)
 
         task = Dragging("T1", Subject="Check", Body="", DueDate=day(2026, 12, 4), StartDate=day(2026, 12, 1), Complete=False, Importance=1)
@@ -92,8 +140,8 @@ class ATaskStartsAndReminds(unittest.TestCase):
             def __setattr__(self, name, value):
                 super().__setattr__(name, value)
                 if name == "DueDate":
-                    self.__dict__["StartDate"] = mailbox.NO_DAY
-                elif name == "StartDate" and value != mailbox.NO_DAY:
+                    self.__dict__["StartDate"] = NONE
+                elif name == "StartDate" and not none(value):
                     self.__dict__["DueDate"] = value + dt.timedelta(days=5)
 
         box = self.box(make=Losing)
