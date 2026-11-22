@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.15.1";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.16.0";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = {
     inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar",
@@ -585,6 +585,14 @@
         rows.forEach(function (event) {
           written(event);
           if (!series) timed(event, 0);
+          else if (order.hours && !event.allDay) {   // new hours for every time of the series, each on its own day
+            var was = new Date(event.start), begins = new Date(was.getFullYear(), was.getMonth(), was.getDate(), first.getHours(), first.getMinutes());
+            var ends = new Date(begins.getTime() + (after.getTime() - first.getTime()));
+            event.start = begins.toISOString();
+            event.end = ends.toISOString();
+            event.day = dayOf(begins);
+            event.lastDay = dayOf(ends);
+          }
           if ((order.withExact || order.optionalExact) && order.scope !== "one") {
             if (order.withExact) event.required = people.join("; ");
             if (order.optionalExact) event.optional = optional.join("; ");
@@ -722,7 +730,7 @@
 
   // The public page is updated before the PC has moved to the same version, and a PC can stay behind.
   // What 0.9.0 added is then said to be on its way, instead of asked of a PC that does not know the question.
-  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0", NEEDS_PUSH = "0.14.0", NEEDS_REAL = "0.14.1", NEEDS_LAST = "0.15.0";   // what came with a version asks for that one
+  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0", NEEDS_PUSH = "0.14.0", NEEDS_REAL = "0.14.1", NEEDS_LAST = "0.15.0", NEEDS_HOURS = "0.16.0";   // what came with a version asks for that one
   function pcBehind(needs) {
     if (DEMO || !pcVersion) return false;
     var has = pcVersion.split("."), wants = (needs || NEEDS).split(".");
@@ -2538,8 +2546,12 @@
     $("planFrom").value = event && event.allDay ? "09:00" : hourOf(begins);
     $("planTo").value = event && event.allDay ? "09:30" : hourOf(ends);
     $("planAllDay").checked = !!(event && event.allDay);
-    // when a series takes place is changed in Outlook: here what it is called, where, who, and its text
-    ["planDay", "planEndDay", "planFrom", "planTo", "planAllDay"].forEach(function (id) { $(id).disabled = series; });
+    // of a series: what it is called, where, who, its text, and its hours (with a PC from 0.16.0 on). Its days: in Outlook
+    ["planDay", "planEndDay", "planAllDay"].forEach(function (id) { $(id).disabled = series; });
+    planned.hours = series && !(event && event.allDay) && !pcBehind(NEEDS_HOURS);
+    $("planFrom").disabled = $("planTo").disabled = series && !planned.hours;
+    planned.from = $("planFrom").value;
+    planned.to = $("planTo").value;
     $("planHours").hidden = $("planAllDay").checked;
     $("planWhere").value = event ? event.location || "" : "";
     $("planNotes").value = event ? (event.body || "").trim() : "";
@@ -2556,7 +2568,9 @@
     // who is invited: listed for an entry of your own and changed here; of one time of a series it stays as the series has it
     $("withField").hidden = !!event && !planned.people;
     setChips($("withInput"), planned.people ? event.invitedPeople || [] : []);
-    $("planNote").textContent = series ? "Changes every time it takes place. When it takes place is changed in Outlook."
+    $("planNote").textContent = series ? (planned.hours
+      ? "Changes every time it takes place. New hours put every time back on the series: what was changed for one of them is lost. Its days are changed in Outlook."
+      : "Changes every time it takes place. When it takes place is changed in Outlook.")
       : planned.meeting ? "The people invited are told about the change." : "";
     $("planNote").hidden = !$("planNote").textContent;
     $("planFoot").textContent = event ? "Changed in Outlook's calendar on your PC." : "Goes into Outlook's calendar on your PC. With people in it, Outlook sends them an invitation.";
@@ -2657,6 +2671,8 @@
       if (ends < begins) ends = new Date(ends.getTime() + 86400000);   // until after midnight
       order.start = begins.toISOString();
       order.end = ends.toISOString();
+      // the hours of a whole series: said only when they were changed, so that an untouched series keeps its single changed times
+      if (planned.hours && (from !== planned.from || to !== planned.to)) order.hours = true;
     }
     var job = planned;
     var telling = invited.length > 0 || job.meeting;

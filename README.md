@@ -52,7 +52,7 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   what it is. An entry of your own opens with **Change** and **Delete** (**Cancel the meeting**
   when people are invited, and they are told). Change lists **who is invited** and who is
   **optional**: take somebody off, put somebody on. Of an entry that repeats you are asked: only
-  this one, or the whole series.
+  this one, or the whole series. The whole series can be given **new hours**.
 - An invitation can be answered **with a note**: a line over the three answers, which the
   organizer reads in the answer. **Suggest another time** answers tentative and says the day and
   the hours you would rather have, in words and in the fields Outlook's own "Propose New Time"
@@ -271,7 +271,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.15.1`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.16.0`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page. The page for any network keeps its own files on the
 phone (the page, never mail), so its icon opens without a connection too and says that the phone
@@ -408,7 +408,13 @@ Titip opens a door from your network to your mailbox. Read this first.
   a cancellation for one person, so tell them yourself.
 - One time of a series is found by when it starts. If Outlook takes that time as written on
   another clock, it is asked again shifted by the PC's distance from UTC, and what comes back must
-  start at the right moment or nothing is changed. When a series takes place is changed in Outlook.
+  start at the right moment or nothing is changed.
+- The hours of a whole series go to the pattern Outlook keeps for it: the time of day it starts
+  and how long it lasts, set and read back, and set again if Outlook took the time as written on
+  another clock. Outlook then puts every time of the series back on the pattern: a time you had
+  moved or renamed by itself is like the others again. The sheet says so before you save, and the
+  hours are only handed over when you changed them. The days a series takes place on are changed
+  in Outlook.
 - Other calendars are the ones Outlook lists at the side of its own calendar, which needs an
   Outlook window open on the PC. One that cannot be reached is left out of the list.
 - Marks become formatting only when the keys over the text were used in that mail and a mark is
@@ -566,9 +572,9 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Text you type is sent as plain paragraphs. A draft sent unchanged keeps its formatting; a draft you
   edit on the phone goes as plain text.
 - Search looks at subject and sender (recipient in Sent), and at the text only when you tick it.
-- When a series takes place is changed in Outlook: changing it throws away what was changed for
-  single times of it, and Outlook asks before it does that. A room is booked in Outlook. How an
-  entry repeats is said when it is made, not afterwards. Whether an organizer's mail program shows
+- Of a series that is there, the hours can be changed, not the days or how it repeats: those
+  are changed in Outlook. How an entry repeats is said when it is made. A room is booked in
+  Outlook: booking one sends a real request to a real room, which no check here can try. Whether an organizer's mail program shows
   another time you suggested as a proposal to accept is up to that program; the words are always
   in the answer. Outlook takes a declined meeting out of the calendar. An online meeting (Teams) is made in
   Outlook: its link comes from an add-in Titip cannot drive.
@@ -608,7 +614,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.15.1 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.16.0 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

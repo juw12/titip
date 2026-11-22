@@ -68,8 +68,11 @@ the system face.
   48 px, which is what Android asks for and more than the 44 an iPhone does (a recipient's label is
   32 px to look at and 44 to tap). A name in a line of text that can be pressed keeps the line one
   line high and is 48 px to the finger.
-- The days of the week are seven equal buttons in one line, Monday first, two letters each, the
-  ones picked pressed like an answer to an invitation. The day the entry starts on is pressed and
+- What a change costs is said on the sheet before it is saved, in the line under the bar, not in
+  a question afterwards: new hours for a series say that single changed times are lost.
+- The days of the week are seven equal buttons, Monday first, two letters each, each a finger
+  wide: one line where they fit, two where they do not. The ones picked are pressed like an
+  answer to an invitation. The day the entry starts on is pressed and
   cannot be let go.
 - A category's colour is a 12 px dot before its name; one without a colour has a ring. Eight
   colours, picked to be told apart on both grounds, never the only sign: the name is next to it.

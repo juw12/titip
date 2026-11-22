@@ -579,6 +579,9 @@ def clean_plan_request(payload: dict) -> dict:
     if what != "save":
         raise MailError("Unknown action.")
     request["withExact"] = payload.get("withExact") is True  # the people listed are everyone who is invited, nobody else
+    # the hours of a whole series are changed too (0.16.0). Only when the phone says so: a page from before sends the
+    # hours of the one time that was opened, and that one may have been moved to other hours than the series has.
+    request["hours"] = payload.get("hours") is True and request["scope"] == "series" and payload.get("allDay") is not True
     reminder = payload.get("reminder")
     request["reminder"] = None  # as Outlook sets it, or as it is
     if reminder == "none":
@@ -2499,6 +2502,34 @@ class OutlookMailbox:
                 raise MailError("Outlook did not take the time of this entry. Make it in Outlook itself.")
         return shift
 
+    @staticmethod
+    def _series_hours(series, start: dt.datetime, end: dt.datetime) -> None:
+        """Give a whole series new hours: from the time of day of `start`, for as long as until `end`.
+
+        The pattern keeps a time of day (Outlook hands it back on 30 December 1899, a day pywin32 cannot hand
+        over, so a day of now is used: Outlook takes the time of it). A plain time may be taken as written on
+        another clock; it is read back and set again by as much less, as a real Outlook needs. Outlook puts
+        every time of the series back on the pattern: what was changed for one of them is gone.
+        """
+        pattern = series.GetRecurrencePattern()
+        wanted = start.hour * 60 + start.minute
+        minutes = int((end - start).total_seconds() // 60)
+
+        def read() -> int:
+            value = pattern.StartTime
+            return value.hour * 60 + value.minute
+
+        pattern.StartTime = start
+        got = read()
+        if got != wanted:
+            off = (got - wanted + 720) % 1440 - 720  # by how much Outlook shifted it, between -12 and +12 hours
+            pattern.StartTime = start - dt.timedelta(minutes=off)
+            if read() != wanted:
+                raise MailError("Outlook did not take the new hours of the series. Change them in Outlook itself.")
+        pattern.Duration = minutes
+        if int(pattern.Duration) != minutes:
+            raise MailError("Outlook did not take how long the series lasts. Change it in Outlook itself.")
+
     def _own_entry(self, event_id: str, scope: str = "", occurrence: dt.datetime | None = None):
         """An entry of your own, to change or take out. Of one that repeats: the series, or the one time named."""
         item = self._item(event_id)
@@ -2592,10 +2623,12 @@ class OutlookMailbox:
         try:
             item.Subject = request["subject"]
             item.Location = request["location"]
-            if not series:  # when a series takes place is changed in Outlook: here only what it is called, where, and its text
+            if not series:  # of a series: what it is called, where, who, its text, and (below) its hours. Its days: in Outlook
                 item.AllDayEvent = request["allDay"]
                 shift = self._set_time(item, "Start", request["start"])
                 self._set_time(item, "End", request["end"], shift)
+            elif request["hours"] and not bool(getattr(item, "AllDayEvent", False)):
+                self._series_hours(item, request["start"], request["end"])
             if created or " ".join(request["body"].split()) != " ".join((getattr(item, "Body", "") or "").split()):
                 item.Body = request["body"]  # untouched, the text keeps the formatting it has in Outlook
             if request["reminder"] is not None:
@@ -3706,8 +3739,13 @@ class DemoMailbox:
             series = rows[0]["recurring"] and request["scope"] == "series"
             for one in rows:
                 one.update(fresh)
-                if not series:  # when a series takes place is not changed from the phone
+                if not series:  # of a series only the hours are changed from the phone, not the days
                     one.update(when)
+                elif request["hours"] and not one["allDay"]:
+                    was = dt.datetime.strptime(one["start"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc).astimezone().replace(tzinfo=None)
+                    begins = was.replace(hour=request["start"].hour, minute=request["start"].minute)
+                    ends = begins + (request["end"] - request["start"])
+                    one.update(start=utc(begins), end=utc(ends), day=begins.date().isoformat(), lastDay=ends.date().isoformat())
                 if request["scope"] != "one" and (request["withExact"] or request["optionalExact"]):
                     if request["withExact"]:
                         one["required"] = "; ".join(request["with"])

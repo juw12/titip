@@ -1,4 +1,4 @@
-"""Check what Titip 0.9.0 to 0.15.1 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0 to 0.16.0 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
     python scripts/check_outlook.py --write    also makes calendar entries (one that repeats, one over two days, one on two
@@ -378,12 +378,23 @@ def main() -> int:
                 after = sorted(event["subject"] for event in box._do(box._calendar, 2, 5, timeout=300)["events"] if event["subject"].startswith(name))
                 if after != [name, name, name + ", changed"]:
                     raise MailError("changing one time of it did not leave the two others as they were")
+                # the hours of the whole series (0.16.0): 04:15 to 05:00 instead of 03:00 to 03:30
+                later = begins.replace(hour=4, minute=15)
+                box.plan({"what": "save", "id": made[0]["id"], "scope": "series", "hours": True, "subject": name,
+                          "start": utc(later), "end": utc(later + dt.timedelta(minutes=45))})
+                box._calendars.clear()
+                moved = [event for event in box._do(box._calendar, 2, 5, timeout=300)["events"] if event["subject"].startswith(name)]
+                wanted = sorted((utc(later + dt.timedelta(days=ahead)), utc(later + dt.timedelta(days=ahead, minutes=45))) for ahead in range(3))
+                if sorted((event["start"], event["end"]) for event in moved) != wanted:
+                    raise MailError("the new hours of the series are not the hours every time of it has: %d times, the first from %s" % (
+                        len(moved), moved[0]["start"] if moved else "none"))
             finally:
                 if made:
                     box.plan({"what": "remove", "id": made[0]["id"], "scope": "series"})
-            return "made for 3 days with a reminder, one time of it changed, the series deleted"
+            return ("made for 3 days with a reminder, one time of it changed, the whole series given new hours (every time of it has them), "
+                    "the series deleted")
 
-        attempt("a calendar entry that repeats", entry_that_repeats)
+        attempt("a calendar entry that repeats, and the hours of the whole series", entry_that_repeats)
 
         def folder_and_category():
             renamed = "Titip check renamed (deletes itself)"  # no comma: Titip does not take one in a folder's name
