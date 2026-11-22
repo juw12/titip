@@ -301,6 +301,102 @@ class RepeatsOnAWeekdayOfTheMonth(Repeating, unittest.TestCase):
         self.assertIsNone(clean_plan_request({**self.order(every="monthNth"), "id": "0123456789." + "AB" * 12, "scope": "series"})["repeat"])
 
 
+class Pattern:
+    """The pattern of a series as a real Outlook showed it on 22 November 2026: the hours are a time of day on
+    30 December 1899, and a plain time is taken as written on a clock `shift` hours off."""
+
+    def __init__(self, shift=0, stuck=False):
+        self.__dict__.update(shift=shift, stuck=stuck, sets=[], Duration=30)
+        self.__dict__["StartTime"] = dt.datetime(1899, 12, 30, 3, 0)
+
+    def __setattr__(self, name, value):
+        if name == "StartTime":
+            if value.year < 1970:
+                raise OSError(22, "Invalid argument")  # pywin32 cannot hand such a day over
+            self.sets.append(value)
+            if not self.stuck:
+                moved = value + dt.timedelta(hours=self.shift)
+                self.__dict__["StartTime"] = dt.datetime(1899, 12, 30, moved.hour, moved.minute)
+            return
+        self.__dict__[name] = value
+
+
+class TheHoursOfASeries(unittest.TestCase):
+    def series(self, pattern, **more):
+        entry = planned(Appointment("AB", "Weekly sync", at(24, 3), at(24, 3, 30), IsRecurring=True, **more))
+        entry.GetRecurrencePattern = lambda: pattern
+        return entry
+
+    def change(self, entry, **more):
+        box = OutlookMailbox(read_ahead=False)
+        box._item = lambda event_id: entry
+        box._ns = type("Namespace", (), {"CompareEntryIDs": lambda self, one, other: True,
+                                         "GetDefaultFolder": lambda self, number: type("Folder", (), {"EntryID": "CAL"})()})()
+        start = at(24, 4, 15)
+        order = {"what": "save", "id": "0123456789." + "AB" * 12, "scope": "series", "subject": "Weekly sync",
+                 "start": utc(start), "end": utc(start + dt.timedelta(minutes=45)), **more}
+        return box._plan(clean_plan_request(order))
+
+    def test_new_hours_go_to_the_pattern_and_are_read_back(self):
+        pattern = Pattern()
+        entry = self.series(pattern)
+        self.assertEqual(self.change(entry, hours=True), {"ok": True, "saved": True, "told": False})
+        self.assertEqual(((pattern.StartTime.hour, pattern.StartTime.minute), pattern.Duration, entry.calls), ((4, 15), 45, ["save"]))
+        self.assertEqual(len(pattern.sets), 1)
+        self.assertEqual((entry.Start, entry.End), (at(24, 3), at(24, 3, 30)), "the entry's own day and hours are not set: the pattern has them")
+
+    def test_an_outlook_that_takes_a_plain_time_seven_hours_off_is_given_it_again(self):
+        pattern = Pattern(shift=-7)
+        self.change(self.series(pattern), hours=True)
+        self.assertEqual((pattern.StartTime.hour, pattern.StartTime.minute, pattern.Duration, len(pattern.sets)), (4, 15, 45, 2))
+        pattern = Pattern(shift=9)
+        self.change(self.series(pattern), hours=True)
+        self.assertEqual((pattern.StartTime.hour, pattern.StartTime.minute), (4, 15))
+
+    def test_hours_outlook_does_not_take_are_said_and_nothing_is_saved(self):
+        entry = self.series(Pattern(stuck=True))
+        with self.assertRaises(MailError) as refused:
+            self.change(entry, hours=True)
+        self.assertIn("did not take the new hours of the series", str(refused.exception))
+        self.assertEqual(entry.calls, [])
+
+    def test_only_when_the_phone_says_so_and_only_for_a_series_with_hours(self):
+        pattern = Pattern()
+        self.change(self.series(pattern))  # a page from before 0.16.0: it sends the hours of the one time that was opened
+        self.assertEqual((pattern.sets, pattern.Duration), ([], 30))
+        self.change(self.series(pattern, AllDayEvent=True), hours=True)
+        self.assertEqual(pattern.sets, [], "a series that lasts all day has no hours")
+        clean = clean_plan_request({"what": "save", "id": "0123456789." + "AB" * 12, "scope": "one", "occurrence": "2026-11-24T03:00:00Z",
+                                    "subject": "x", "start": "2026-11-24T03:00:00Z", "end": "2026-11-24T04:00:00Z", "hours": True})
+        self.assertFalse(clean["hours"], "one time of a series is moved as it always was")
+        self.assertFalse(clean_plan_request({"what": "save", "subject": "x", "start": "2026-11-24T03:00:00Z", "end": "2026-11-24T04:00:00Z", "hours": "yes"})["hours"])
+
+    def test_the_people_of_a_meeting_are_told(self):
+        pattern = Pattern()
+        entry = self.series(pattern, meeting=1)
+        self.assertTrue(self.change(entry, hours=True)["told"])
+        self.assertEqual(entry.calls, ["send"])
+
+    def test_the_invented_calendar_moves_every_time_of_it_on_its_own_day(self):
+        box = DemoMailbox()
+        start = dt.datetime.now().replace(hour=9, minute=0, second=0, microsecond=0) + dt.timedelta(days=1)
+        box.plan({"what": "save", "subject": "Daily look", "start": utc(start), "end": utc(start + dt.timedelta(minutes=30)), "repeat": {"every": "day", "times": 3}})
+        rows = [event for event in box.events if event["subject"] == "Daily look"]
+        later = start.replace(hour=10, minute=30)
+        box.plan({"what": "save", "id": rows[0]["id"], "scope": "series", "subject": "Daily look", "start": utc(later), "end": utc(later + dt.timedelta(hours=1))})
+        self.assertEqual(sorted(event["start"] for event in rows), [utc(start + dt.timedelta(days=ahead)) for ahead in range(3)], "not said: not changed")
+        box.plan({"what": "save", "id": rows[0]["id"], "scope": "series", "hours": True, "subject": "Daily look",
+                  "start": utc(later), "end": utc(later + dt.timedelta(hours=1))})
+        self.assertEqual(sorted((event["start"], event["end"]) for event in rows),
+                         [(utc(later + dt.timedelta(days=ahead)), utc(later + dt.timedelta(days=ahead, hours=1))) for ahead in range(3)])
+
+    def test_the_page_offers_it_only_to_a_pc_that_can(self):
+        page = (WEB / "app.js").read_text(encoding="utf-8")
+        self.assertIn('NEEDS_HOURS = "0.16.0"', page)
+        self.assertIn("planned.hours = series && !(event && event.allDay) && !pcBehind(NEEDS_HOURS);", page)
+        self.assertIn("if (planned.hours && (from !== planned.from || to !== planned.to)) order.hours = true;", page)
+
+
 class WhenItTakesPlace(unittest.TestCase):
     """What the invented mailbox shows for a pattern: the days Outlook would work out."""
 

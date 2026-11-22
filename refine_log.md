@@ -1510,3 +1510,50 @@ a reply in the reading pane waiting. Both ran, from the Mac, on the PC that has 
   people get is the text written from the phone (the notes are written and read back).
 
 stop: run 22 ended with 0.15.1 on `main`.
+
+## Run 23 (2026-11-22): the hours of a whole series (0.16.0)
+
+Asked for: the same. Run 21 had left "when a series takes place" in the list of limits with a
+reason (changing it throws away single changed times). That is a price to say, not a wall: the
+hours of a series are something Outlook lets a program change, and now that the real Outlook can
+be asked from here, how it wants them could be found out first.
+
+### What the real Outlook said (one question, nothing saved)
+
+- The pattern of a series keeps its hours as a time of day on 30 December 1899. That day cannot
+  be handed over by pywin32 (`OSError 22`), so a day of now is used; Outlook takes the time of it.
+- A plain time is taken seven hours off on that PC, as for a mail that leaves later. Set again
+  by as much less, it reads back right, and the end follows. How long it lasts is a number of
+  minutes and is taken as given.
+
+### Changes kept
+
+- **Change the series** has its hours open (not its days). New hours go to the pattern, read
+  back, set again if Outlook shifted them. They are handed over only when they were changed: a
+  page from before sends the hours of the one time that was opened, which may be a time that was
+  moved, and a series must not follow it.
+- The sheet says before saving what new hours cost: every time of the series is back on the
+  pattern, and what was changed for one of them is lost.
+- `check_outlook.py --write` gives its test series new hours and reads every time of it back.
+
+### Hard gates (code-checked)
+
+- 544 unit and server tests (537 before): the hours on the pattern and read back, an Outlook
+  seven hours off and one nine hours the other way, hours it does not take said and nothing
+  saved, nothing changed unless the phone says so, never for a series that lasts all day, the
+  people of a meeting told, and the invented calendar moving every time on its own day.
+- 357 browser steps, all pass (353 before): the series opens with its hours and not its days,
+  untouched hours are not sent, changed ones are, and every time shows them.
+- The sheet was looked at at 320 px, dark, and at 393 px: the line that says the cost fits, the
+  days are dimmed, nothing is wider than the screen.
+
+### Not verified
+
+- 0.15.1 and 0.16.0 on the real Outlook, until `check_outlook.py --write` has run there: a task
+  without a day, and the new hours of a series read back from the calendar. When this was
+  written that PC could not fetch from GitHub (its network asked for a proxy sign-in, 407), so
+  it was still on 0.15.0.
+- That the people of a meeting get an update that reads well: only a series for yourself is
+  tried, since a meeting would send real mail.
+
+stop: run 23 ended with 0.16.0 on `main`.
