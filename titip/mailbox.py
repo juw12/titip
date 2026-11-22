@@ -328,6 +328,9 @@ def clean_send_request(payload: dict) -> dict:
 
 ACTS = ("delete", "respond", "read", "unread", "flag", "unflag", "move", "categorize", "erase")
 ARRANGES = ("folder", "rename", "unfolder", "category", "rule", "ruleFrom", "away", "awayText", "empty")
+NEWS_ROWS = 15  # the newest mails of the Inbox that are looked at for what is new
+NEWS_REMINDERS = 300  # of Outlook's reminders, how many are asked whether they are showing
+NEWS_KEPT = 400  # mails and reminders remembered as told
 EMPTY_MOST = 300  # mails deleted for good in one go when a folder is emptied; the phone asks again for the rest
 AWAY_TEXT_MOST = 4000
 OOF_TEMPLATE = "IPM.Note.Rules.OofTemplate.Microsoft"  # the hidden note in the Inbox that holds the automatic reply for colleagues
@@ -1721,6 +1724,70 @@ class OutlookMailbox:
                     take(recipient.AddressEntry, str(recipient.Name or ""))
             except Exception:
                 pass
+        return found
+
+    # -------------------------------------------------- what a phone that is put away is told
+    def news(self) -> list[dict]:
+        """Mail that came into the Inbox since the last look, and the reminders Outlook is showing:
+        for the phones that asked to be told while Titip is closed (titip/push.py). Never starts
+        Outlook, and a busy Outlook is simply asked again at the next look."""
+        if not outlook_running():
+            return []
+        try:
+            return self._do(self._news_now, timeout=READ_SECONDS)
+        except OutlookBusy:
+            return []
+
+    def _news_now(self) -> list[dict]:
+        state = self.__dict__.setdefault("_news_state", {
+            "since": None, "first": True, "mails": collections.OrderedDict(), "reminders": collections.OrderedDict()})
+        found = []
+        rows = self._list("inbox", NEWS_ROWS, 0, "")["mail"]
+        if state["since"] is not None:  # at the first look nothing is news: only what comes after it
+            for row in reversed(rows):  # the oldest first, the way they came
+                if row["unread"] and row["time"] > state["since"] and row["id"] not in state["mails"]:
+                    found.append({"kind": "mail", "title": row["from"] or "New mail", "body": row["subject"],
+                                  "tag": "mail." + row["id"][-32:], "url": "#/inbox/" + row["id"]})
+        for row in rows:
+            state["mails"][row["id"]] = None
+        state["since"] = max([state["since"] or "", *(row["time"] for row in rows)])
+        # Outlook's own reminders, the ones its reminder window is showing now: an appointment, a task, a flagged mail
+        # From here on nothing is raised: the mail found above is remembered as told already, so it must be handed
+        # back. An Outlook that turns busy in the middle shows its reminders at the next look instead.
+        try:
+            reminders = self._app.Reminders
+            count = min(int(reminders.Count), NEWS_REMINDERS)
+        except Exception:
+            count = 0
+        for index in range(1, count + 1):
+            try:
+                one = reminders.Item(index)
+                if not bool(one.IsVisible):
+                    continue
+                caption = " ".join(str(one.Caption or "").split())
+                due = one.NextReminderDate
+                key = (caption, f"{due.year}-{due.month}-{due.day} {due.hour}:{due.minute}")
+            except Exception as error:
+                if getattr(error, "hresult", None) in RPC_BUSY:
+                    return found  # before the first look is called done: what is showing now is still not news next time
+                continue
+            if key in state["reminders"]:
+                continue
+            state["reminders"][key] = None
+            if state["first"]:
+                continue  # it was showing already when the first phone asked to be told: not news
+            when = ""
+            try:
+                start = one.Item.Start
+                when = f", {start.hour:02d}:{start.minute:02d}"
+            except Exception:
+                pass  # a task or a flagged mail has no start: the caption says it all
+            found.append({"kind": "reminder", "title": "Reminder", "body": caption + when,
+                          "tag": "remind." + hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:16], "url": "#/calendar"})
+        state["first"] = False
+        for kept in (state["mails"], state["reminders"]):
+            while len(kept) > NEWS_KEPT:
+                kept.popitem(last=False)
         return found
 
     def person(self, who: str) -> dict:
@@ -3175,6 +3242,12 @@ class DemoMailbox:
 
     def away(self) -> dict:
         return {"on": self.away_on, "text": self.away_text}
+
+    def news(self) -> list[dict]:
+        """Nothing arrives in an invented mailbox by itself; a test puts what is new into `arrived`."""
+        with self.lock:
+            found, self.__dict__["arrived"] = list(self.__dict__.get("arrived", [])), []
+        return found
 
     def person(self, who: str) -> dict:
         """One person of the invented directory or the invented contacts, by name or address."""

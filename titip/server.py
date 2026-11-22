@@ -38,6 +38,7 @@ from .pairing import (
     qr_svg,
     tailscale_name,
 )
+from .push import Push
 from .remote import Remote
 from .tls import ensure_certificate, server_context
 from .update import Updater
@@ -55,6 +56,7 @@ STATIC = {
     "/auto.html": ("auto.html", "text/html; charset=utf-8"),
     "/auto.js": ("auto.js", "text/javascript; charset=utf-8"),
     "/far.js": ("far.js", "text/javascript; charset=utf-8"),
+    "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     "/icon-192.png": ("icon-192.png", "image/png"),
@@ -219,7 +221,7 @@ class PhoneHandler(_Handler):
                 return self._error(HTTPStatus.BAD_GATEWAY, str(error))
             except ValueError:
                 return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
-        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite", "/api/things", "/api/thing", "/api/person", "/api/away"):
+        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite", "/api/things", "/api/thing", "/api/person", "/api/away", "/api/push"):
             return self._json(*self.app.mail_call(route[5:], query))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -244,7 +246,7 @@ class PhoneHandler(_Handler):
             return self._error(HTTPStatus.UNAUTHORIZED, NOT_PAIRED)
         if route == "/api/auto":
             return self._auto_order(body)
-        if route in ("/api/send", "/api/upload", "/api/act", "/api/plan", "/api/arrange", "/api/keep"):
+        if route in ("/api/send", "/api/upload", "/api/act", "/api/plan", "/api/arrange", "/api/keep", "/api/pushset"):
             return self._json(*self.app.mail_call(route[5:], body))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -330,6 +332,7 @@ class Titip:
         self.home = Path(home)
         self.autopilot = autopilot or Autopilot(self.home)  # without a mailbox: the page says it cannot run
         self.remote = Remote(self.home, self.autopilot, mail=self.mail_call)
+        self.push = Push(self.home, self.mailbox)  # the phones that are told about new mail while Titip is closed
         self.autopilot.on_change = self.remote.touch
         self.updater = updater or Updater(self.home, root=None)  # without a checkout: the page says so
         self.updater.busy = self.busy
@@ -364,6 +367,7 @@ class Titip:
             threading.Thread(target=server.serve_forever, daemon=True).start()
         self.autopilot.start()
         self.remote.start()
+        self.push.start()  # looks at Outlook only while a phone has asked to be told
         self.updater.start()
         # a phone can ask for mail: have the newest ready, so its first look after a restart does not wait for Outlook
         read_ahead = getattr(self.mailbox, "read_ahead_now", None)
@@ -374,6 +378,7 @@ class Titip:
         self.updater.stop()
         self.autopilot.stop()
         self.remote.stop()
+        self.push.stop()
         for server in (self.phone, self.desk):
             if server is not None:
                 server.shutdown()
@@ -484,6 +489,25 @@ class Titip:
                 return 200, self.mailbox.invite(str(params.get("id", "")))
             if route == "event":
                 return 200, self.mailbox.event(str(params.get("id", "")))
+            if route == "push":  # what a browser needs to sign up for notices, and whether this one has
+                return 200, {"key": self.push.public(), "on": self.push.knows(str(params.get("endpoint") or "")), "last": self.push.last}
+            if route == "pushset":  # a phone signs up for notices, signs off, or asks for a test
+                test = [{"title": "Titip", "body": "Notices from your PC reach this phone.", "tag": "titip.test", "url": "#/inbox"}]
+                try:
+                    if params.get("what") == "on":
+                        phone = self.push.add(params.get("subscription"))
+                        told = self.push.tell(test, only=phone["endpoint"])
+                        return 200, {"ok": True, "on": True, "reached": told["reached"] == 1, "why": told["why"]}
+                    if params.get("what") == "off":
+                        self.push.remove(str(params.get("endpoint") or ""))
+                        return 200, {"ok": True, "on": False}
+                    if params.get("what") == "test":
+                        told = self.push.tell(test, only=str(params.get("endpoint") or ""))
+                        return 200, {"ok": True, "reached": told["reached"] == 1 and told["phones"] == 1,
+                                     "why": told["why"] or ("" if told["phones"] else "This phone is not signed up on the PC any more. Switch notifications off and on again.")}
+                    raise MailError("Unknown action.")
+                except MailError as error:
+                    return 400, {"error": str(error)}
             if route == "away":  # are automatic replies on, and what do they say
                 return 200, self.mailbox.away()
             if route == "person":  # one person, as the address book and the contacts know them

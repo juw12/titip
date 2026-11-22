@@ -17,7 +17,8 @@ unread or flagged, pushes rows aside, changes the subject of a forward, opens wh
 sender, makes an entry over three days with an optional guest and one every second week, and answers
 an invitation with a note. Picks several mails and marks and deletes them together, deletes for
 good and empties Deleted Items, changes what the automatic reply says, writes a title, a link and a
-picture into a mail, suggests another time for a meeting and answers one time of a series. Then Autopilot: on the paired phone, on the public page (demo), and
+picture into a mail, suggests another time for a meeting and answers one time of a series. On the page for any network
+it opens the sheet for notifications and hands the worker a notice the way a push service does. Then Autopilot: on the paired phone, on the public page (demo), and
 through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
 trip: the code for any network opens the public mail app, a stand-in relay with the worker's rules
 passes sealed text, this Titip answers. Then the iPhone Home Screen: a browser with an iPhone's name
@@ -818,7 +819,7 @@ def main() -> None:
             page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
             page.click("#folderPick")
             expect(page.locator("#ownFolders a")).to_have_count(3, timeout=10000)
-            check(page.locator("#folderDo button:visible").all_inner_texts() == ["New folder", "Rules", "Automatic replies: off"],
+            check(page.locator("#folderDo button:visible").all_inner_texts() == ["New folder", "Rules", "Automatic replies: off", "Notifications: off"],
                   "under the folders: New folder, Rules and the automatic replies")
             page.click("#folderNew")
             expect(page.locator("#pickerForm")).to_be_visible()
@@ -836,7 +837,7 @@ def main() -> None:
             made.click()
             page.wait_for_selector("#state strong:has-text('Nothing here yet')")
             page.click("#folderPick")
-            check(page.locator("#folderDo button:visible").all_inner_texts() == ["New folder", "Rename this folder", "Take out this folder", "Rules", "Automatic replies: off"],
+            check(page.locator("#folderDo button:visible").all_inner_texts() == ["New folder", "Rename this folder", "Take out this folder", "Rules", "Automatic replies: off", "Notifications: off"],
                   "a folder of your own can be renamed and taken out")
             page.click("#folderRename")
             check(page.input_value("#pickerText") == "Tooling", "Rename starts from the name it has")
@@ -1946,6 +1947,44 @@ def main() -> None:
                 time.sleep(0.1)
             check(not stand_in.answers and stand_in.handle("GET", f"/c/{settings['channel']}/answer/{stand_in.asked[0]}", "", "")[0] == 204,
                   "every answer was handed out once and is gone from the relay")
+            # ---- 0.14.0: notices while the page is closed. The page that works on any network can sign up for them.
+            away.click(".tabs a[data-folder=inbox]")
+            away.wait_for_selector(".row .subject:has-text('Hinge sample B')", timeout=40000)
+            away.click("#folderPick")
+            check(away.inner_text("#pushOpen") == "Notifications: off", "under the folders: Notifications, and they are off")
+            away.click("#pushOpen")
+            expect(away.locator("#pickerList .pickOne")).to_have_count(1, timeout=40000)
+            check(away.inner_text("#pickerTitle") == "Notifications" and "Switch on" in away.inner_text("#pickerList")
+                  and "cannot read it" in away.inner_text("#pickerNote") and away.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 0,
+                  "the sheet says what they are, who seals them, and offers to switch them on")
+            away.screenshot(path=SHOTS / "phone-notifications.png")
+            key = away.evaluate("navigator.serviceWorker.ready.then(worker => worker.active.scriptURL)")
+            check(key.endswith("/sw.js"), "the worker that shows a notice is in place once the sheet was opened")
+            away.locator("#pickerList .pickOne").first.click()
+            expect(away.locator("#toastText")).to_contain_text("Not switched on.", timeout=30000)
+            check(away.evaluate("localStorage.getItem('titip.push')") != "1", f"a phone that does not allow it is not switched on, and is told why ({away.inner_text('#toastText')[:90]})")
+            # what the worker does with a notice from the PC: it is handed one the way a push service hands it over
+            context.grant_permissions(["notifications"], origin=public)
+            wire = context.new_cdp_session(away)
+            found = []
+            wire.on("ServiceWorker.workerRegistrationUpdated", lambda event: found.extend(event["registrations"]))
+            wire.send("ServiceWorker.enable")
+            for _ in range(50):
+                if any(one["scopeURL"].startswith(public) for one in found):
+                    break
+                away.wait_for_timeout(100)
+            registration = next(one["registrationId"] for one in found if one["scopeURL"].startswith(public))
+            wire.send("ServiceWorker.deliverPushMessage", {"origin": public, "registrationId": registration, "data": json.dumps(
+                {"title": "Priya Nair", "body": "RE: Friday design review agenda", "tag": "mail.e2e", "url": "#/sent"})})
+            # (a browser without a screen never grants notifications, so the notice itself cannot be looked at here;
+            # the worker tells the open page the same words, and that is what is checked)
+            expect(away.locator("#toastText")).to_have_text("Priya Nair: RE: Friday design review agenda", timeout=15000)
+            check(away.inner_text("#toastAction") == "Show", "a notice that arrives while Titip is open is said on the page too, with who wrote and what about")
+            away.click("#toastAction")
+            away.wait_for_function("location.hash === '#/sent'")
+            check(away.locator("#toast").is_hidden(), "and Show leads where the notice points")
+            wire.detach()
+
             # ---- the relay out of reach from the phone: the app finds out why and says what to do
             trouble = {"mode": "", "dropped": 0}
             other_key = os.urandom(32)

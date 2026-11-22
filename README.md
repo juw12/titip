@@ -67,6 +67,10 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - **Reminders on this phone**, one line on the calendar page: switched on, an entry whose reminder
   is due is said on the page with a short tone, and as a notification where the phone allows one.
   They ring while Titip is open on the phone, not while it is closed.
+- **Notifications** while Titip is closed, under the list of folders: new mail and Outlook's own
+  reminders are announced on the phone, the way a mail app does it, and a tap opens the mail. On
+  an iPhone they come to the Home Screen icon. **Send a test** proves the way from your PC to the
+  phone.
 - **Tasks**, **Notes** and **Contacts**, under the folder's name with the other folders: Outlook's
   own. The open tasks come by the day they are due, the done ones a tap away; **New task**,
   **Done**, **Change**, **Delete**. A note is its text, and its first line is its name. A contact
@@ -263,7 +267,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.13.0`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.14.0`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page.
 
@@ -471,6 +475,29 @@ Titip opens a door from your network to your mailbox. Read this first.
   company it goes to, and from when to when, are what was last set in Outlook. An Exchange mailbox
   says whether they are on; for another kind of mailbox the phone does not offer the switch. After
   switching, Titip reads the state back, and says so if Outlook took the switch and nothing changed.
+- Notifications reach a closed page through the push service of the phone's maker: Apple's for
+  an iPhone, Google's for Android and Chrome. The phone signs up there and hands your PC an address
+  and a key. For each notice your PC seals who wrote and what about for that one phone (RFC 8291)
+  and posts it to that address, with a proof that it is the PC the phone signed up with (a key
+  pair of its own, `push-key.pem` in Titip's folder). The push service sees that something was
+  sent, when and how large. It cannot read it. Your relay is not involved.
+- For that your PC talks to `web.push.apple.com` or `fcm.googleapis.com`, through the same ways
+  out of the network as the relay. A company network may not allow it: **Send a test** then says
+  that the PC could not reach the push service. Check your employer's rules before you switch
+  this on, as for Mail from anywhere.
+- A notice holds the sender and the subject of a mail, or the title and the start of a reminder,
+  and nothing else. More than four mails at one look become one line with their senders.
+- While a phone is signed up, your PC looks at Outlook every minute and a half: at the 15 newest
+  mails of the Inbox, and at the reminders Outlook is showing. It announces unread mail that came
+  since the look before, so a mail you read on the PC right away is not announced. It only looks
+  while Outlook is open and never starts it. A PC that is off or asleep announces nothing, and
+  what it missed is not announced later.
+- Notifications work on the page for any network (Mail from anywhere, and its Home Screen icon),
+  not on the page of your own network: that one has no certificate a phone accepts for a worker
+  in the background. An iPhone needs iOS 16.4 or later and the Home Screen icon.
+- Up to 8 phones can be signed up. One that switched notices off, or was reset, is forgotten the
+  next time a notice is sent to it. A reminder closed on the PC stays on the phone until you
+  swipe it away.
 - Reminders ring only while Titip is open and on screen: a web page cannot wake a phone, so do not
   count on them the way you count on Outlook's own. For them the phone asks for the calendar every
   half hour, which on a PC where reading the calendar is slow keeps Outlook busy that often: leave
@@ -523,8 +550,9 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Automatic replies: the switch and the text for colleagues. The text for people outside and a
   time span are set in Outlook; they are kept by the mail server, where a program on the PC cannot
   reach them.
-- It is laid out like Outlook's phone app but is not it: a reminder rings only while the page is
-  open, and new mail is not announced while it is closed.
+- It is laid out like Outlook's phone app but is not it. Notifications come only while the PC is
+  on and Outlook is open, up to a minute and a half after the mail, and only to the page for any
+  network.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 
@@ -544,7 +572,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.13.0 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.14.0 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

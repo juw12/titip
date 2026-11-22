@@ -1260,3 +1260,54 @@ The list was the "Still open" of Run 17. Written on the Mac, which has no Outloo
 - 0.11.1 and 0.12.0 on the real Outlook, still: the ASUS has not answered yet.
 
 stop: run 18 ended with 0.13.0 merged to `main`; the push while the page is closed is Run 19.
+
+## Run 19 (2026-11-22): told while the page is closed (0.14.0)
+
+Asked for: the last thing Run 18 left open. In Run 15 this was "not taken": a web page cannot wake
+a phone without a push service, and a push service would know when your meetings are. That second
+half was wrong. Web Push seals every notice for the one phone it goes to (RFC 8291); the service
+in between passes bytes on. So it is taken now. Written on the Mac, which has no Outlook and no
+way to receive a push.
+
+### Changes kept
+
+- `titip/push.py`: a key pair of the PC's own (VAPID, RFC 8292), the phones that signed up, the
+  sealing (RFC 8291, aes128gcm), the post to the phone's push service through the ways out the
+  relay uses, and a loop that looks at Outlook every 90 seconds while a phone wants to be told.
+- The mailbox says what is new: unread mail in the Inbox since the look before, and the
+  reminders Outlook itself is showing. It never starts Outlook.
+- `sw.js`, the page's first service worker. It shows a notice and opens Titip on a tap. It keeps
+  no page and answers no request, so nothing else about loading the app changes.
+- **Notifications** under the list of folders: what they are, Switch on (the phone asks once),
+  Send a test, Switch off. Where a phone cannot be told (an iPhone outside the Home Screen icon,
+  the page of your own network) the sheet says why, and what to do.
+- A notice may only be posted to the push services of the browsers. The address comes from a
+  phone, and the PC is not to be made to post into its own network.
+
+### Hard gates (code-checked)
+
+- 495 unit and server tests (474 before). The sealing comes out byte for byte as the worked
+  example of RFC 8291 (Appendix A), and a receiver written apart from it in the test opens what
+  was sealed, while another phone's key and another secret do not. The proof of who sends
+  verifies against the PC's public key and names the push service it is for. A notice goes only
+  to the push services of the browsers. A phone that signed off is forgotten; one that cannot be
+  reached stays and the reason is said. Mail is news once, only while unread, oldest first; a
+  reminder once, with its start; an Outlook that turns busy at the reminders still hands back
+  the mail it found; Outlook is never started for it.
+- 326 browser steps, all pass (320 before): the sheet on the page for any network, the worker
+  in place, a phone that does not allow it told why, and a notice handed to the worker the way
+  a push service hands it over, said on the open page with the way to the mail.
+
+### Not verified
+
+- A notice arriving on a real phone. Everything up to the post is checked, and what the worker
+  does with a notice is checked; the push service in between is Apple's or Google's and cannot be
+  tried from a test. **Send a test** on the phone is the check, and it says why when it fails.
+- That this PC's network lets it reach the push service. A company proxy may refuse.
+- That Outlook's `Reminders` collection says "showing" (IsVisible) the way its documentation
+  does, on the real Outlook.
+- 0.11.1, 0.12.0 and 0.13.0 on the real Outlook, still.
+
+stop: run 19 ended with 0.14.0 merged to `main`. Nothing that was listed as open is left but what
+Outlook gives no program a way to: its own "Propose New Time", the reply text for people outside
+with its time span, a Teams link.

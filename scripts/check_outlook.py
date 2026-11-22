@@ -1,4 +1,4 @@
-"""Check what Titip 0.9.0 to 0.13.0 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0 to 0.14.0 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
     python scripts/check_outlook.py --write    also makes calendar entries (one that repeats, one over two days), a folder, a draft
@@ -278,6 +278,17 @@ def main() -> int:
         return "%d Outlook windows, %d of them with a reply or a draft being written in the reading pane" % (count, writing)
 
     attempt("what Outlook's windows hold in the reading pane (a draft written there is taken out before Titip sends it)", windows)
+
+    def what_is_new():
+        first = box._do(box._news_now, timeout=180)
+        again = box._do(box._news_now, timeout=180)
+        state = box._news_state
+        if first or again:
+            raise MailError("the first two looks already called something new")
+        return "the Inbox and Outlook's reminders are looked at for what is new: %d mails and %d reminders that are showing are known, nothing announced" % (
+            len(state["mails"]), len(state["reminders"]))
+
+    attempt("what a phone would be told while Titip is closed", what_is_new)
 
     def reply_text():
         state = box._do(box._away_now, timeout=120)
