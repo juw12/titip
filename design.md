@@ -115,6 +115,9 @@ Plain words, said once. Say where mail leaves from, who it goes to and what happ
   in use pressed like an answer to an invitation.
 - A person's card rises from the bottom like every list to pick from: the name, one line of facts,
   and what can be done (write, call) as rows.
+- Several mails picked at once are washed blue with a blue edge; what can be done with them is one
+  line over the list, as words. In Deleted Items the word is "Delete for good", never just Delete.
+- What cannot be undone asks once more, in a sheet whose only row says what will happen.
 - Send later is a button under the text like High importance; pressed, it shows a day and a time
   over the buttons, and the button at the top says Send later.
 - PC out of reach: the list from memory if there is one, and one sentence that names the cause (see

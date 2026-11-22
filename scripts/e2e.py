@@ -15,7 +15,9 @@ task, a note and a contact, writes to a contact, sends a mail for later and stop
 switches the automatic replies, and lets a reminder ring on the phone. Narrows the list to what is
 unread or flagged, pushes rows aside, changes the subject of a forward, opens what Outlook knows of a
 sender, makes an entry over three days with an optional guest and one every second week, and answers
-an invitation with a note. Then Autopilot: on the paired phone, on the public page (demo), and
+an invitation with a note. Picks several mails and marks and deletes them together, deletes for
+good and empties Deleted Items, changes what the automatic reply says, writes a title, a link and a
+picture into a mail, suggests another time for a meeting and answers one time of a series. Then Autopilot: on the paired phone, on the public page (demo), and
 through a stand-in relay that only ever gets ciphertext. Then mail from any network, a full round
 trip: the code for any network opens the public mail app, a stand-in relay with the worker's rules
 passes sealed text, this Titip answers. Then the iPhone Home Screen: a browser with an iPhone's name
@@ -544,7 +546,7 @@ def main() -> None:
             page.wait_for_selector(".row .subject:has-text('RE: Quote Q-2291')")
             page.locator(".row").first.click()
             page.wait_for_selector("#body pre")
-            check(page.locator("#remove").is_hidden(), "it is in Deleted, where nothing can be removed for good from the phone")
+            check(page.inner_text("#remove") == "Delete for good", "it is in Deleted, where Delete says that it is for good")
             page.click("#back")
 
             # ---- the calendar, and an invitation answered from it
@@ -1154,8 +1156,9 @@ def main() -> None:
             check(page.locator("#awayNote").is_hidden(), "nothing is said over the list while automatic replies are off")
             page.click("#folderPick")
             page.click("#awayOpen")
-            expect(page.locator("#pickerList .pickOne")).to_have_count(1)
-            check("Switch on" in page.inner_text("#pickerList") and "set in Outlook" in page.inner_text("#picker"), "the automatic replies can be switched on; their text is Outlook's")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(2, timeout=15000)
+            check("Switch on" in page.inner_text("#pickerList") and "People in your organization are told" in page.inner_text("#picker"),
+                  "the automatic replies can be switched on, and say what people are told")
             page.screenshot(path=SHOTS / "phone-away.png")
             posted.clear()
             page.locator("#pickerList .pickOne").first.click()
@@ -1426,6 +1429,208 @@ def main() -> None:
             answer = next(body for name, body in posted if name == "act")
             check(answer["note"] == "I can join after 15:00." and answer["answer"] == "tentative" and page.input_value("#answerNote") == "",
                   "the note goes to the PC with the answer, and the box is empty again")
+            page.click("#back")
+
+            # ---- 0.13.0: several mails at once; deleted for good; a folder emptied; what the automatic reply says;
+            # a title, a link and a picture in the text; another time suggested; one time of a series answered
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            settled()
+            every = rows.count()
+            page.click("#searchToggle")
+            page.click("#pickOpen")
+            check(page.locator("#pickBar").is_visible() and page.inner_text("#pickSay") == "Tap the mails to select"
+                  and page.is_disabled("#pickDelete") and page.inner_text("#pickOpen") == "Stop selecting" and overflow(page) <= 0,
+                  "Select several mails: a line over the list says what to do, and nothing can be done with nothing")
+            page.click("#searchToggle")
+            rows.nth(every - 1).click()
+            rows.nth(every - 2).click()
+            check(page.inner_text("#pickSay") == "2 selected" and page.locator("#rows .row[aria-pressed=true]").count() == 2
+                  and page.locator("#letter").is_hidden() and not page.is_disabled("#pickDelete"), "a tap ticks a mail instead of opening it")
+            page.screenshot(path=SHOTS / "phone-select.png")
+            bar_top = page.evaluate("document.getElementById('pickBar').getBoundingClientRect().top")
+            check(0 < bar_top < 120, f"scrolled down to the last mails, the line with what can be done is still in sight ({bar_top:.0f} px from the top)")
+            rows.nth(every - 2).click()
+            check(page.inner_text("#pickSay") == "1 selected", "and a second tap takes the tick off")
+            rows.nth(every - 2).click()
+            posted.clear()
+            page.click("#pickUnread")
+            expect(page.locator("#toastText")).to_have_text("2 mails marked as unread", timeout=30000)
+            settled()
+            check([body["what"] for name, body in posted if name == "act"] == ["unread", "unread"] and page.locator("#pickBar").is_hidden()
+                  and "unread" in rows.nth(every - 1).get_attribute("class") and "unread" in rows.nth(every - 2).get_attribute("class"),
+                  "both are marked unread, one after the other, and the selecting is over")
+            page.evaluate("""() => {   // a finger held still on a row
+                const row = document.querySelectorAll('#rows .row')[document.querySelectorAll('#rows .row').length - 1];
+                const box = row.getBoundingClientRect();
+                const touch = new Touch({identifier: 1, target: row, clientX: box.left + 60, clientY: box.top + 20});
+                row.dispatchEvent(new TouchEvent('touchstart', {bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch]}));
+                window.letGo = () => row.dispatchEvent(new TouchEvent('touchend', {bubbles: true, cancelable: true, touches: [], changedTouches: [touch]}));
+            }""")
+            page.wait_for_timeout(800)
+            page.evaluate("window.letGo()")
+            rows.nth(every - 1).click()   # the tap a browser makes of the finger lifting: it must not take the tick off again
+            page.wait_for_timeout(600)
+            check(page.locator("#pickBar").is_visible() and page.inner_text("#pickSay") == "1 selected"
+                  and rows.nth(every - 1).get_attribute("aria-pressed") == "true", "a finger held on a mail starts selecting, with that mail ticked")
+            rows.nth(every - 2).click()
+            page.click("#pickRead")
+            expect(page.locator("#toastText")).to_have_text("2 mails marked as read", timeout=30000)
+            settled()
+            page.click("#searchToggle")
+            page.click("#pickOpen")
+            page.click("#searchToggle")
+            rows.nth(every - 1).click()
+            posted.clear()
+            page.click("#pickDelete")
+            expect(page.locator("#toastText")).to_contain_text("Deleting 1 mail in")
+            page.click("#toastAction")
+            page.wait_for_timeout(3600)
+            check(rows.count() == every and not [name for name, body in posted if name == "act"] and page.inner_text("#pickSay") == "1 selected",
+                  "Delete waits behind Undo, and undone the mail and its tick are still there")
+            page.click("#pickDone")
+            check(page.locator("#pickBar").is_hidden() and page.locator("#rows .row[aria-pressed]").count() == 0, "Done ends the selecting")
+
+            page.click(".tabs a[data-folder=sent]")
+            page.wait_for_selector(".row .subject")
+            settled()
+            sent = rows.count()
+            gone = [text.strip() for text in page.locator("#rows .row .subject").all_inner_texts()[:2]]
+            page.click("#searchToggle")
+            page.click("#pickOpen")
+            page.click("#searchToggle")
+            rows.nth(0).click()
+            rows.nth(1).click()
+            page.click("#pickDelete")
+            expect(page.locator("#toastText")).to_have_text("2 mails moved to Deleted", timeout=30000)
+            expect(rows).to_have_count(sent - 2, timeout=15000)
+            check(True, f"two mails picked in Sent are deleted together ({gone})")
+            page.click("#folderPick")
+            page.click("#folderMenu a[data-folder=deleted]")
+            page.wait_for_selector(".row .subject")
+            settled()
+            binned = rows.count()
+            rows.first.click()
+            page.wait_for_selector("#remove:has-text('Delete for good')")
+            check(page.locator("#remove").is_visible(), "what is in Deleted can be deleted for good")
+            posted.clear()
+            page.click("#remove")
+            expect(page.locator("#toastText")).to_contain_text("Deleting for good in")
+            expect(page.locator("#toastText")).to_have_text("Deleted for good", timeout=30000)
+            expect(rows).to_have_count(binned - 1, timeout=15000)
+            check([body["what"] for name, body in posted if name == "act"] == ["erase"], "the countdown says for good, and then it is gone")
+            page.click("#searchToggle")
+            page.click("#pickOpen")
+            page.click("#searchToggle")
+            rows.first.click()
+            check(page.inner_text("#pickDelete") == "Delete for good" and page.locator("#pickRead").is_hidden(), "picked in Deleted, mails are deleted for good")
+            page.click("#pickDelete")
+            expect(page.locator("#toastText")).to_have_text("1 mail deleted for good", timeout=30000)
+            expect(rows).to_have_count(binned - 2, timeout=15000)
+            page.click("#folderPick")
+            check(page.locator("#emptyOpen").is_visible() and page.inner_text("#emptyOpen") == "Empty Deleted Items", "under the folders, in Deleted: Empty Deleted Items")
+            page.click("#emptyOpen")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(1)
+            check("cannot be undone" in page.inner_text("#pickerNote") and "Delete everything for good" in page.inner_text("#pickerList"),
+                  "emptying asks once more, in words that say it cannot be undone")
+            page.screenshot(path=SHOTS / "phone-empty-deleted.png")
+            posted.clear()
+            page.locator("#pickerList .pickOne").first.click()
+            expect(page.locator("#toastText")).to_have_text(f"{binned - 2} deleted for good", timeout=30000)
+            page.wait_for_selector("#state strong:has-text('Nothing deleted')")
+            check(next(body for name, body in posted if name == "arrange") == {"what": "empty", "folder": "deleted"}, "and Deleted Items is empty")
+
+            page.click(".tabs a[data-folder=inbox]")
+            page.wait_for_selector(".row .subject:has-text('Hinge sample B')")
+            page.click("#folderPick")
+            check(page.locator("#emptyOpen").is_hidden(), "the Inbox cannot be emptied")
+            page.click("#awayOpen")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(2, timeout=15000)
+            check("People in your organization are told" in page.inner_text("#pickerNote") and "out of the office" in page.inner_text("#pickerNote"),
+                  "the automatic replies show what they say")
+            page.locator("#pickerList .pickOne:has-text('Change the text')").click()
+            expect(page.locator("#thinger")).to_be_visible()
+            check(page.inner_text("#thingTitleBar") == "Change the automatic reply" and "out of the office" in page.input_value("#thingBody")
+                  and page.locator("#thingName").is_hidden(), "Change the text opens what they say now")
+            page.fill("#thingBody", "")
+            page.click("#thingSave")
+            check("Write what people are to be told first" in page.inner_text("#thingError"), "an empty reply is not saved")
+            page.fill("#thingBody", "Back on 1 December.\nFor the lab, call Jonas.")
+            posted.clear()
+            page.click("#thingSave")
+            expect(page.locator("#toastText")).to_have_text("The automatic reply says the new text", timeout=30000)
+            check(next(body for name, body in posted if name == "arrange") == {"what": "awayText", "text": "Back on 1 December.\nFor the lab, call Jonas."},
+                  "the PC is handed the new text")
+            page.click("#folderPick")
+            page.click("#awayOpen")
+            expect(page.locator("#pickerNote")).to_contain_text("Back on 1 December.", timeout=15000)
+            page.click("#pickerCancel")
+
+            page.click("#write")
+            page.locator("#toInput").press_sequentially("pri")
+            page.locator("#people .person").first.click()
+            page.fill("#subjectInput", "Plan for Friday")
+            check(page.locator("#formatBar button").all_inner_texts() == ["B", "I", "U", "List", "Title", "M", "Link"] and overflow(page) <= 0,
+                  "over the text: also Title, Marked and Link")
+            page.fill("#bodyInput", "Plan\nsee drawing and bring both units")
+            page.evaluate("document.getElementById('bodyInput').setSelectionRange(0, 4)")
+            page.click("#formatBar button[data-mark='# ']")
+            page.evaluate("(() => { const box = document.getElementById('bodyInput'); const at = box.value.indexOf('drawing'); box.setSelectionRange(at, at + 7); })()")
+            page.click("#formatBar button[data-mark='link']")
+            page.keyboard.type("example.com/d")
+            page.evaluate("(() => { const box = document.getElementById('bodyInput'); const at = box.value.indexOf('both units'); box.setSelectionRange(at, at + 10); })()")
+            page.click("#formatBar button[data-mark='==']")
+            check(page.input_value("#bodyInput") == "# Plan\nsee [drawing](https://example.com/d) and bring ==both units==",
+                  "the keys write a title line, a link with its address, and marks around a passage")
+            page.evaluate("(() => { const box = document.getElementById('bodyInput'); box.setSelectionRange(box.value.length, box.value.length); })()")
+            page.set_input_files("#pictureInput", [{"name": "cam.png", "mimeType": "image/png", "buffer": b"\x89PNG\r\n\x1a\n" + os.urandom(3000)}])
+            check(page.input_value("#bodyInput").endswith("==both units==\n[picture: cam.png]\n") and page.locator("#attached .fileName").all_inner_texts() == ["cam.png"],
+                  "Picture in the text attaches it and writes the line that says where it shows")
+            page.screenshot(path=SHOTS / "phone-format-more.png")
+            posted.clear()
+            page.click("#send")
+            expect(page.locator("#toastText")).to_have_text("Sent to Priya Nair", timeout=30000)
+            richer = next(body for name, body in posted if name == "send")
+            check(richer.get("format") == "marks" and "[picture: cam.png]" in richer["body"], "the PC is told to turn the marks into formatting, and gets the line for the picture")
+            page.click(".tabs a[data-folder=sent]")
+            page.wait_for_selector(".row .subject:has-text('Plan for Friday')")
+            page.locator(".row:has(.subject:has-text('Plan for Friday'))").first.click()
+            page.wait_for_selector("#letter:not([hidden]) iframe")
+            plan_frame = page.frame_locator("#body iframe")
+            check(plan_frame.locator("a").get_attribute("href") == "https://example.com/d" and plan_frame.locator("a").inner_text() == "drawing"
+                  and plan_frame.locator("b").first.inner_text() == "Plan" and plan_frame.locator("span").inner_text() == "both units",
+                  "the mail that left has a title line, a real link and the marked passage")
+            page.click("#back")
+
+            page.click(".tabs a[data-folder=calendar]")
+            page.wait_for_selector(".row.event")
+            page.locator(".row.event:has-text('Drop test, corner drops')").click()
+            page.wait_for_selector("#answers button[data-answer=tentative]")
+            check(page.locator("#suggestOpen").is_visible() and page.locator("#suggest").is_hidden(), "an invitation offers: Suggest another time")
+            page.click("#suggestOpen")
+            check(page.input_value("#suggestDay") == time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400)) and page.input_value("#suggestFrom") == "14:00"
+                  and page.input_value("#suggestTo") == "16:00" and overflow(page) <= 0, "it starts from when the meeting is")
+            page.fill("#suggestFrom", "15:00")
+            page.fill("#suggestTo", "17:00")
+            page.screenshot(path=SHOTS / "phone-suggest.png")
+            posted.clear()
+            page.click("#suggestSend")
+            expect(page.locator("#toastText")).to_have_text("Answered tentative. Jonas Weber is told.", timeout=30000)
+            suggestion = next(body for name, body in posted if name == "act")
+            check(suggestion["answer"] == "tentative" and suggestion["note"].startswith("I suggest another time: ") and "3:00" in suggestion["note"]
+                  and "5:00" in suggestion["note"], f"the answer is tentative and says the time in words ({suggestion['note']})")
+            page.click("#back")
+            page.locator(".row.event:has-text('One to one with Mateo')").first.click()
+            page.wait_for_selector("#answers button[data-answer=accept]")
+            posted.clear()
+            page.click("#answers button[data-answer=accept]")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(2)
+            check([text.split("\n")[0] for text in page.locator("#pickerList .pickOne").all_inner_texts()] == ["Only this one", "The whole series"],
+                  "a meeting that repeats asks: answer this one, or the whole series")
+            page.locator("#pickerList .pickOne").first.click()
+            expect(page.locator("#toastText")).to_have_text("Accepted. Mateo Silva is told.", timeout=30000)
+            one_time = next(body for name, body in posted if name == "act")
+            check(one_time["answer"] == "accept" and one_time["occurrence"].endswith("Z"), "the PC is told which one time is answered")
             page.click("#back")
 
             # ---- search and empty state

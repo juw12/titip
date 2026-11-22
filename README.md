@@ -28,6 +28,10 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - **B**, **I**, **U** and **List** over the text put marks around what you selected (`**bold**`,
   `*italic*`, `__underlined__`, `- ` in front of a line). In the mail that leaves they are bold,
   italic, underlined and a real list. Typed without those keys, every sign stays as you typed it.
+  **Title** makes a line stand out (`# ` in front of it), **M** marks a passage yellow (`==words==`)
+  and **Link** writes `[words](https://...)`, which leaves as the words with the address behind them.
+- **Picture in the text**: the picture goes along as a file, and a line in the text
+  (`[picture: name]`) says where it is shown. Move the line, and the picture moves with it.
 - An answer lists who it goes to, To and Cc, the way Outlook addressed it, and you can change that:
   take somebody out, put somebody in, move somebody to Cc. It works the same for Reply, Reply all
   and Forward. **Bcc** opens a third line. The mail goes to the people listed and to nobody else.
@@ -48,7 +52,11 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   **optional**: take somebody off, put somebody on. Of an entry that repeats you are asked: only
   this one, or the whole series.
 - An invitation can be answered **with a note**: a line over the three answers, which the
-  organizer reads in the answer.
+  organizer reads in the answer. **Suggest another time** answers tentative and says the day and
+  the hours you would rather have. Of a meeting that repeats you are asked: answer this one time,
+  or the whole series.
+- **Select several mails** (under the search box, or hold a finger on a mail): tick them, then
+  **Delete**, **Read**, **Unread**, **Flag** or **Move** them together.
 - **Push a row aside** in a list of mail: to the left it is deleted (behind Undo, as always), to
   the right it is marked read or unread. What it does is said in words behind the row.
 - **Tap the sender's name** in an open mail for what Outlook knows of that person: job, department,
@@ -66,10 +74,13 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   person, a tap on a number dials it, and the search finds a contact by name, company or address.
 - **Send later**, a button under the text: pick a day and a time, and the mail waits in Outlook's
   Outbox until then. It can still be stopped there.
-- **Automatic replies** (out of office), under the list of folders: the switch, on or off. While
-  they are on, one line over every list says so, with **Switch off** next to it.
+- **Automatic replies** (out of office), under the list of folders: the switch, on or off, what
+  the reply says, and **Change the text**. While they are on, one line over every list says so,
+  with **Switch off** next to it.
 - **Delete** moves a message to Deleted Items. A draft is discarded the same way, and a mail deleted
-  from the Outbox does not leave.
+  from the Outbox does not leave. In Deleted Items, **Delete for good** removes a mail for good, and
+  under the list of folders **Empty Deleted Items** removes everything in it. **Empty Junk** moves
+  the junk to Deleted Items.
 - **More**, next to Delete: **Mark as unread**, **Flag**, **Move to a folder** (any folder of your own,
   so also Archive), **Categories** (Outlook's own, ticked, and **New category**), **Always move mail
   from this sender** (Outlook makes a rule). A flag and high importance show in the list.
@@ -252,7 +263,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.12.0`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.13.0`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page.
 
@@ -426,6 +437,21 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Guests who need not come are listed apart from the others and changed apart. A phone page from
   before 0.12.0 does not list them, and leaves them as they are. Private is kept by Outlook for a
   whole series, so it is not offered for one time of it.
+- Several mails are done one after the other, so Outlook is asked for one thing at a time. If one
+  fails, the phone says how many were done and why the last one was not.
+- Nothing leaves a folder for good in one step: only what is in Deleted Items already is deleted
+  for good, and the countdown before it says "for good". Emptying takes 300 at a time and says how
+  many are still there. It empties the Deleted Items of your mailbox, not those of other data files.
+- What the automatic reply says is read from, and written to, the hidden note Outlook keeps for
+  it in the Inbox (the one for people in your organization), and read back after it is written.
+  The text for people outside and a time span are set in Outlook. This is not tried on a real
+  Exchange yet: after the first change, look in Outlook once that it shows your text.
+- Another time for a meeting is said in words in a tentative answer. Outlook's own "Propose New
+  Time" form cannot be made by a program, so the organizer reads the time and moves the meeting.
+- One time of a meeting that repeats is found by when it starts, the way one time of your own
+  series is, and only that time is answered.
+- A picture in the text is a PNG, a JPEG or a GIF. If the line that names it is taken out, it
+  goes along as a plain file. A link is made only of an address that starts with http or https.
 - A row has to be pushed about a quarter of the screen before it counts; let go earlier and nothing
   happens. In Deleted nothing can be pushed away, and in Sent, Drafts and the Outbox only to the left.
 - A reply you started in Outlook's reading pane on the PC, or a draft that is clicked there, is
@@ -484,19 +510,21 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Search looks at subject and sender (recipient in Sent), and at the text only when you tick it.
 - When a series takes place, and rooms, are changed in Outlook. An entry made to repeat on the
   phone repeats on the day or date it starts on (not the last Friday of a month, not on two days of
-  a week). A repeating meeting is answered as a whole series, and no other time can be proposed
-  from the phone. Outlook takes a declined meeting out of the calendar. An online meeting (Teams)
-  is made in Outlook: its link comes from an add-in Titip cannot drive.
-- Delete moves to Deleted Items. Nothing is removed for good from the phone, and Deleted Items is not emptied.
+  a week). Another time for a meeting is suggested in words, not as Outlook's own proposal.
+  Outlook takes a declined meeting out of the calendar. An online meeting (Teams) is made in
+  Outlook: its link comes from an add-in Titip cannot drive.
+- Delete moves to Deleted Items. Only what is there already can be deleted for good.
 - A folder that holds mail or folders is not taken out from the phone, and Outlook's own folders are
   never renamed or taken out. Categories have no colour chosen for them on the phone.
-- Formatting is bold, italic, underlined and lists. No fonts, colours, tables or pictures in the
-  text; a picture goes along as a file.
+- Formatting is bold, italic, underlined, lists, a title line, a marked passage, links and
+  pictures. No fonts, colours or tables: Outlook's own phone app has none either.
 - A task has a name, a due day, high importance and a text. Its start day, how it repeats and
   whom it is assigned to are set in Outlook. A note has no colour. A contact has no picture.
-- Automatic replies: the switch, not the text and not a time span.
+- Automatic replies: the switch and the text for colleagues. The text for people outside and a
+  time span are set in Outlook; they are kept by the mail server, where a program on the PC cannot
+  reach them.
 - It is laid out like Outlook's phone app but is not it: a reminder rings only while the page is
-  open, and new mail is not announced while it is closed. Several mails cannot be picked at once.
+  open, and new mail is not announced while it is closed.
 - iPhone: Safari can forget the key of a page you have not opened for a week. A Home Screen icon
   does not, which is one more reason to make one. Web apps in the Mac Dock are not covered.
 
@@ -516,7 +544,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.12.0 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.13.0 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

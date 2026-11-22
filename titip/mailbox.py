@@ -167,6 +167,8 @@ ACCESSOR_RECIPIENTS = 60  # of one message: the people whose internet address Ou
 def marked(line: str) -> str:
     """One line (already made safe for HTML) with its marks turned into formatting:
     **bold**, *italic*, __underlined__. A mark needs text right inside it, so 2 * 3 * 4 stays as typed."""
+    line = re.sub(r"\[([^\[\]]+)\]\((https?://[^\s()<>]+)\)", r'<a href="\2">\1</a>', line)  # [words](https://...): a link
+    line = re.sub(r"==([^\s=](?:.*?[^\s=])?)==", r'<span style="background:#fff2a8">\1</span>', line)  # ==words==: marked yellow
     line = re.sub(r"\*\*([^\s*](?:.*?[^\s*])?)\*\*", r"<b>\1</b>", line)
     line = re.sub(r"(?<![\w_])__([^\s_](?:.*?[^\s_])?)__(?![\w_])", r"<u>\1</u>", line)
     return re.sub(r"(?<![\w*])\*([^\s*](?:.*?[^\s*])?)\*(?![\w*])", r"<i>\1</i>", line)
@@ -187,11 +189,14 @@ def text_to_html(text: str, marks: bool = False) -> str:
             bullet = re.match(r"\s*[-\u2022]\s+(.*)", line) or re.match(r"\s*\*\s+(.*)", line)
             counted = re.match(r"\s*\d{1,3}[.)]\s+(.*)", line)
             kind = "ul" if bullet else "ol" if counted else ""
+            title = None if kind else re.match(r"#\s+(\S.*)", line)  # "# words": a line that stands out as a title
             if kind != open_list:
                 parts.append((f"</{open_list}>" if open_list else "") + (f'<{kind} style="margin-top:0;margin-bottom:0">' if kind else ""))
                 open_list = kind
             if kind:
                 parts.append(f"<li>{marked((bullet or counted).group(1))}</li>")
+            elif title:
+                parts.append(f'<b style="font-size:14pt">{marked(title.group(1))}</b>' + ("<br>" if number < len(lines) - 1 else ""))
             else:
                 parts.append(marked(line) + ("<br>" if number < len(lines) - 1 else ""))
         body = "".join(parts) + (f"</{open_list}>" if open_list else "")
@@ -321,8 +326,13 @@ def clean_send_request(payload: dict) -> dict:
     return request
 
 
-ACTS = ("delete", "respond", "read", "unread", "flag", "unflag", "move", "categorize")
-ARRANGES = ("folder", "rename", "unfolder", "category", "rule", "ruleFrom", "away")
+ACTS = ("delete", "respond", "read", "unread", "flag", "unflag", "move", "categorize", "erase")
+ARRANGES = ("folder", "rename", "unfolder", "category", "rule", "ruleFrom", "away", "awayText", "empty")
+EMPTY_MOST = 300  # mails deleted for good in one go when a folder is emptied; the phone asks again for the rest
+AWAY_TEXT_MOST = 4000
+OOF_TEMPLATE = "IPM.Note.Rules.OofTemplate.Microsoft"  # the hidden note in the Inbox that holds the automatic reply for colleagues
+P_CONTENT_ID = PROP + "0x3712001F"  # PR_ATTACH_CONTENT_ID: what a picture inside the text is called by
+PICTURES = (".png", ".jpg", ".jpeg", ".gif")
 NAME_MOST = 80  # letters of a folder's or a category's name
 RULES_SHOWN = 100
 
@@ -337,6 +347,15 @@ def clean_arrange_request(payload: dict) -> dict:
         "what": what, "id": str(payload.get("id") or ""), "in": str(payload.get("in") or ""), "to": str(payload.get("to") or ""),
         "name": " ".join(str(payload.get("name") or "").split())[:NAME_MOST], "on": payload.get("on") is True,
     }
+    if what == "empty":
+        if payload.get("folder") not in ("deleted", "junk"):
+            raise MailError("Only Deleted Items and Junk are emptied from the phone.")
+        return {**request, "folder": payload["folder"]}
+    if what == "awayText":
+        text = str(payload.get("text") or "").replace("\r\n", "\n").strip()
+        if not text:
+            raise MailError("Write what people are to be told first.")
+        return {**request, "text": text[:AWAY_TEXT_MOST]}
     if what in ("folder", "rename", "category") and (not request["name"] or re.search(r'[\\/;,]', request["name"])):
         raise MailError("Give it a name, without \\ / ; or a comma.")
     if what == "folder" and request["in"] not in ("", "inbox") and not FOLDER_ID.fullmatch(request["in"]):
@@ -360,7 +379,13 @@ def clean_act_request(payload: dict) -> dict:
         "what": what, "id": str(payload.get("id") or ""), "answer": str(payload.get("answer") or ""),
         "to": str(payload.get("to") or ""), "categories": [],
         "note": str(payload.get("note") or "").strip()[:NOTE_MOST],  # a few words for the organizer, with the answer
+        "occurrence": None,  # of a meeting that repeats: the one time that is answered, by when it starts
     }
+    if what == "respond" and payload.get("occurrence"):
+        try:
+            request["occurrence"] = local_time(payload.get("occurrence"))
+        except (TypeError, ValueError):
+            raise MailError("That day or time could not be read.")
     if what not in ACTS:
         raise MailError("Unknown action.")
     if not request["id"]:
@@ -1228,6 +1253,24 @@ class OutlookMailbox:
             "away": self._away(),
         }
 
+    def _away_note(self):
+        """The hidden note in the Inbox that holds what colleagues are told automatically (2: found by its class)."""
+        return self._ns.GetDefaultFolder(OL_INBOX).GetStorage(OOF_TEMPLATE, 2)
+
+    def away(self) -> dict:
+        """Are automatic replies on, and what do they say? Asked when the phone opens that sheet."""
+        self._phone_asked()
+        return self._do(self._away_now)
+
+    def _away_now(self) -> dict:
+        try:
+            text = str(self._away_note().Body or "").replace("\r\n", "\n").strip()
+        except Exception as error:
+            if getattr(error, "hresult", None) in RPC_BUSY:
+                raise
+            text = None  # this mailbox keeps no such note (not an Exchange one)
+        return {"on": self._away(), "text": text}
+
     def _away(self) -> bool | None:
         """Are automatic replies (out of office) on? None when this mailbox does not say (not an Exchange one)."""
         try:
@@ -1922,7 +1965,19 @@ class OutlookMailbox:
                     place = folder / str(number)  # a folder each: two files may have the same name
                     place.mkdir()
                     (place / file["name"]).write_bytes(file["data"])
-                    mail.Attachments.Add(str(place / file["name"]))  # Outlook copies it into the mail
+                    added = mail.Attachments.Add(str(place / file["name"]))  # Outlook copies it into the mail
+                    # "[picture: name]" on a line of the text: the picture is shown there, not only attached
+                    spot = html.escape(f"[picture: {file['name']}]")
+                    if file["name"].lower().endswith(PICTURES) and spot in (mail.HTMLBody or ""):
+                        called = f"titip{number}.{os.urandom(4).hex()}@titip"
+                        try:
+                            added.PropertyAccessor.SetProperty(P_CONTENT_ID, called)
+                        except Exception as error:
+                            if getattr(error, "hresult", None) in RPC_BUSY:
+                                raise
+                            continue  # it goes along as a file, and the line stays as typed
+                        mail.HTMLBody = mail.HTMLBody.replace(
+                            spot, f'<img src="cid:{called}" alt="{html.escape(file["name"])}" style="max-width:100%">', 1)
             if mail.Recipients.Count and not mail.Recipients.ResolveAll():
                 unknown = [r.Name for r in mail.Recipients if not r.Resolved]
                 raise MailError("Outlook does not know: " + ", ".join(unknown) + ". Use a full e-mail address.")
@@ -2563,6 +2618,29 @@ class OutlookMailbox:
                     raise MailError(f"There is a category \u201c{category.Name}\u201d already.")
             self._ns.Categories.Add(request["name"])
             return {"ok": True, "name": request["name"]}
+        if what == "empty":
+            folder = self._ns.GetDefaultFolder(OL_FOLDER[request["folder"]])
+            gone = 0
+            if request["folder"] == "deleted":  # folders that were deleted lie in here too
+                subfolders = folder.Folders
+                for index in range(subfolders.Count, 0, -1):
+                    subfolders.Item(index).Delete()
+                    gone += 1
+            items = folder.Items
+            for index in range(items.Count, 0, -1):  # from the end: what is left keeps its place
+                if gone >= EMPTY_MOST:
+                    break
+                self._give_way()
+                items.Item(index).Delete()  # out of Deleted Items: for good. Out of Junk: to Deleted Items.
+                gone += 1
+            return {"ok": True, "emptied": gone, "left": int(folder.Items.Count)}
+        if what == "awayText":
+            note = self._away_note()
+            note.Body = request["text"]
+            note.Save()
+            if " ".join(str(self._away_note().Body or "").split()) != " ".join(request["text"].split()):
+                raise MailError("Outlook did not keep the text. Set it in Outlook itself.")
+            return {"ok": True, "text": request["text"]}
         if what == "away":
             # The switch only. The text of the reply, and whom it goes to, is what is set in Outlook.
             try:
@@ -2848,9 +2926,14 @@ class OutlookMailbox:
             raise MailError("A calendar entry cannot be moved or deleted this way. Open it in the calendar.")
         if what == "delete":
             if self._in_the_bin(item):
-                raise MailError("That message is in Deleted Items already. Deleting it again would remove it for good: do that in Outlook.")
+                raise MailError("That message is in Deleted Items already. Deleting it again would remove it for good: that is Delete for good.")
             item.Delete()  # to Deleted Items; from the Outbox this also stops the mail from leaving
             return {"ok": True, "deleted": True}
+        if what == "erase":  # for good, and only what was deleted before: nothing leaves a folder without a way back
+            if not self._in_the_bin(item):
+                raise MailError("Only what is in Deleted Items is deleted for good. Delete it first.")
+            item.Delete()
+            return {"ok": True, "erased": True}
         if what == "move":
             target = self._folder(request["to"]) if request["to"] not in OL_FOLDER else self._ns.GetDefaultFolder(OL_FOLDER[request["to"]])
             item.Move(target)
@@ -2888,6 +2971,8 @@ class OutlookMailbox:
             raise MailError("Outlook cannot find the meeting this invitation is for.")
         if int(getattr(appointment, "MeetingStatus", 0) or 0) in (0, 1):
             raise MailError("This is your own entry: there is nobody to answer.")
+        if request["occurrence"] is not None and bool(getattr(appointment, "IsRecurring", False)):
+            appointment = self._one_time(appointment, request["occurrence"])  # this one time only: the rest of the series stays unanswered
         answer = appointment.Respond(ANSWERS[request["answer"]], True)  # True: no window opens on the PC
         if answer is None:  # the organizer asked for no answers: Outlook only notes yours
             return {"ok": True, "responded": request["answer"], "told": False}
@@ -2962,7 +3047,8 @@ class DemoMailbox:
                 entry.update(mine=False, invited=False, other=True)
             self.other_calendars[calendar["id"]] = {"name": calendar["name"], "group": calendar.get("group", ""), "events": entries}
         self.rule_list = [dict(rule) for rule in data.get("rules", [])]
-        self.away = False
+        self.away_on = False
+        self.away_text = "I am out of the office and will answer when I am back."
         self.pages = {"tasks": [], "notes": [], "contacts": []}  # the invented tasks, notes and contacts
         for index, task in enumerate(data.get("tasks", [])):
             due = (dt.date.today() + dt.timedelta(days=task["dueInDays"])).isoformat() if "dueInDays" in task else ""
@@ -2996,7 +3082,7 @@ class DemoMailbox:
 
     def state(self) -> dict:
         counts = {name: sum(1 for mail in self.mail if mail["folder"] == name) for name in (*FOLDERS, "outbox")}
-        return {"ok": True, "demo": True, "account": self.me["address"], "name": self.me["name"], "counts": counts, "away": self.away}
+        return {"ok": True, "demo": True, "account": self.me["address"], "name": self.me["name"], "counts": counts, "away": self.away_on}
 
     quick_state = state
 
@@ -3086,6 +3172,9 @@ class DemoMailbox:
     def people(self) -> dict:
         """Everyone in the invented mail, for the composer's suggestions."""
         return {"people": [dict(person) for person in self.people_known]}
+
+    def away(self) -> dict:
+        return {"on": self.away_on, "text": self.away_text}
 
     def person(self, who: str) -> dict:
         """One person of the invented directory or the invented contacts, by name or address."""
@@ -3358,8 +3447,19 @@ class DemoMailbox:
                 self.categories.append(request["name"])
                 return {"ok": True, "name": request["name"]}
             if what == "away":
-                self.away = request["on"]
-                return {"ok": True, "away": self.away}
+                self.away_on = request["on"]
+                return {"ok": True, "away": self.away_on}
+            if what == "awayText":
+                self.away_text = request["text"]
+                return {"ok": True, "text": self.away_text}
+            if what == "empty":
+                inside = [mail for mail in self.mail if mail["folder"] == request["folder"]]
+                for mail in inside[:EMPTY_MOST]:
+                    if request["folder"] == "deleted":
+                        self.mail.remove(mail)
+                    else:
+                        mail["folder"] = "deleted"
+                return {"ok": True, "emptied": min(len(inside), EMPTY_MOST), "left": max(0, len(inside) - EMPTY_MOST)}
             if what == "rule":
                 for rule in self.rule_list:
                     if rule["name"] == request["name"]:
@@ -3408,9 +3508,15 @@ class DemoMailbox:
             if what == "delete":
                 mail = self._find(request["id"])
                 if mail["folder"] == "deleted":
-                    raise MailError("That message is in Deleted Items already. Deleting it again would remove it for good: do that in Outlook.")
+                    raise MailError("That message is in Deleted Items already. Deleting it again would remove it for good: that is Delete for good.")
                 mail["folder"] = "deleted"
                 return {"ok": True, "deleted": True}
+            if what == "erase":
+                mail = self._find(request["id"])
+                if mail["folder"] != "deleted":
+                    raise MailError("Only what is in Deleted Items is deleted for good. Delete it first.")
+                self.mail.remove(mail)
+                return {"ok": True, "erased": True}
             if what == "move":
                 if request["to"] not in ("inbox", "junk") and request["to"] not in [folder["id"] for folder in self.own_folders]:
                     raise MailError("That folder is not there any more. Open the list of folders again.")

@@ -219,7 +219,7 @@ class PhoneHandler(_Handler):
                 return self._error(HTTPStatus.BAD_GATEWAY, str(error))
             except ValueError:
                 return self._error(HTTPStatus.BAD_REQUEST, "Bad request.")
-        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite", "/api/things", "/api/thing", "/api/person"):
+        if route in ("/api/state", "/api/mail", "/api/item", "/api/people", "/api/calendar", "/api/event", "/api/folders", "/api/signature", "/api/calendars", "/api/rules", "/api/invite", "/api/things", "/api/thing", "/api/person", "/api/away"):
             return self._json(*self.app.mail_call(route[5:], query))
         return self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
@@ -484,6 +484,8 @@ class Titip:
                 return 200, self.mailbox.invite(str(params.get("id", "")))
             if route == "event":
                 return 200, self.mailbox.event(str(params.get("id", "")))
+            if route == "away":  # are automatic replies on, and what do they say
+                return 200, self.mailbox.away()
             if route == "person":  # one person, as the address book and the contacts know them
                 return 200, self.mailbox.person(str(params.get("q", "")))
             if route == "people":
