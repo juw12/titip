@@ -876,9 +876,28 @@ def main() -> None:
             page.click("#pickerExtra")
             page.fill("#pickerText", "Urgent")
             page.click("#pickerForm button")
+            expect(page.locator("#pickerList .pickOne")).to_have_count(9, timeout=10000)
+            check(page.inner_text("#pickerTitle") == "Colour" and page.locator("#pickerList .pickOne").first.inner_text() == "No colour"
+                  and page.locator("#pickerList .hue[data-colour=red]").count() == 1 and overflow(page) <= 0,
+                  "a new category is asked for its colour: none, or one of eight")
+            page.screenshot(path=SHOTS / "phone-category-colour.png")
+            posted.clear()
+            page.locator("#pickerList .pickOne:has-text('Purple')").click()
             expect(page.locator("#toastText")).to_have_text("Category \u201cUrgent\u201d made", timeout=15000)
+            check(next(body for name, body in posted if name == "arrange") == {"what": "category", "name": "Urgent", "colour": "purple"},
+                  "the PC is handed the name and the colour")
             expect(page.locator("#pickerList .pickOne")).to_have_count(5, timeout=10000)
             check("Urgent" in page.locator("#pickerList .pickOne").last.inner_text(), "a category made on the phone is there to tick at once")
+            check(page.locator("#pickerList .pickOne").last.locator(".hue").get_attribute("data-colour") == "purple"
+                  and page.locator("#pickerList .pickOne:has-text('Customer') .hue").get_attribute("data-colour") == "blue",
+                  "every category is listed with its colour")
+            shown = page.evaluate("""() => Array.from(document.querySelectorAll('#pickerList .pickOne')).map(row => {
+                const hue = row.querySelector('.hue'), name = row.querySelector('.ownName');
+                return [getComputedStyle(hue).backgroundColor, Math.round(name.getBoundingClientRect().left - hue.getBoundingClientRect().right)];
+            })""")
+            check(shown[-1][0] == "rgb(124, 77, 188)" and len({colour for colour, _ in shown}) == 5 and all(0 < gap <= 16 for _, gap in shown),
+                  f"each colour is the one it is called, with the name next to it ({shown[-1]})")
+            page.screenshot(path=SHOTS / "phone-categories-colours.png")
             page.click("#pickerCancel")
             page.click("#back")
 
@@ -1004,13 +1023,36 @@ def main() -> None:
             check(page.inner_text("#thingTitleBar") == "Change the task" and page.input_value("#thingName") == "Check the tool quote"
                   and page.input_value("#thingDue") == tomorrow and page.is_checked("#thingImportant"), "Change opens the task as it is")
             page.fill("#thingBody", "Ask for 100 pieces first.")
+            today = time.strftime("%Y-%m-%d")
+            check(page.locator("#thingStart").is_visible() and page.input_value("#thingStart") == "" and page.input_value("#thingRemindDay") == ""
+                  and overflow(page) <= 0, "a task can start on a day and remind of itself; neither is set yet")
+            check("unset" in (page.get_attribute("#thingStart", "class") or "") and "unset" not in (page.get_attribute("#thingDue", "class") or ""),
+                  "a day that is not set is dimmed, one that is set is not")
+            page.fill("#thingStart", time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 86400)))
+            page.click("#thingSave")
+            check("It is due before it starts" in page.inner_text("#thingError"), "a start after the due day is refused before the PC is asked")
+            page.fill("#thingStart", today)
+            page.fill("#thingRemindAt", "08:30")
+            page.click("#thingSave")
+            check("Pick the day of the reminder too" in page.inner_text("#thingError"), "a time to be reminded at needs its day")
+            page.fill("#thingRemindDay", tomorrow)
+            page.screenshot(path=SHOTS / "phone-task-starts.png")
             posted.clear()
             page.click("#thingSave")
             expect(page.locator("#toastText")).to_have_text("Saved", timeout=30000)
-            check(next(body for name, body in posted if name == "keep")["id"] == task_id != "", "the change names the task that is there, and no second one is made")
+            changed = next(body for name, body in posted if name == "keep")
+            reminds = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.mktime(time.strptime(tomorrow + " 08:30", "%Y-%m-%d %H:%M"))))
+            check(changed["id"] == task_id != "", "the change names the task that is there, and no second one is made")
+            check((changed["start"], changed["remind"]) == (today, reminds), f"the PC is handed the start day and when to remind ({changed['remind']})")
             expect(quote).to_have_count(1, timeout=15000)
             quote.click()
             page.wait_for_selector("#body pre:has-text('Ask for 100 pieces first.')")
+            said = page.inner_text("#tags")
+            check(said.startswith("Starts ") and "Due tomorrow" in said and "Reminder " in said and "8:30" in said, f"the task says when it starts and when it reminds ({said})")
+            page.click("#actions button:has-text('Change')")
+            check((page.input_value("#thingStart"), page.input_value("#thingRemindDay"), page.input_value("#thingRemindAt")) == (today, tomorrow, "08:30"),
+                  "Change shows the start day and the reminder it has")
+            page.click("#thingCancel")
             page.click("#actions button:text-is('Done')")
             expect(page.locator("#toastText")).to_have_text("Done", timeout=30000)
             expect(quote).to_have_count(0, timeout=15000)
@@ -1618,6 +1660,57 @@ def main() -> None:
 
             page.click(".tabs a[data-folder=calendar]")
             page.wait_for_selector(".row.event")
+            page.click("#write")
+            page.fill("#planSubject", "Line walk")
+            check(page.locator("#planDaysField").is_hidden(), "the days of the week are not asked for an entry that does not repeat weekly")
+            page.select_option("#planRepeat", "week")
+            days = page.locator("#planDays button")
+            starts_on = int(time.strftime("%w"))
+            check(days.count() == 7 and page.locator("#planDays button[aria-pressed=true]").count() == 1
+                  and page.locator("#planDays button:disabled").get_attribute("data-day") == str(starts_on) and overflow(page) <= 0,
+                  "every week asks on which days: the day it starts on is pressed and stays")
+            also = (starts_on + 2) % 7
+            page.click(f"#planDays button[data-day='{also}']")
+            low = [round(box["height"]) for box in (one.bounding_box() for one in days.all()) if box["height"] < 48]
+            check(not low, f"each day is a finger high {low if low else ''}")
+            page.fill("#planTimes", "4")
+            page.screenshot(path=SHOTS / "phone-repeat-days.png")
+            posted.clear()
+            page.click("#planSave")
+            expect(page.locator("#toastText")).to_have_text("Saved to the calendar", timeout=30000)
+            twice = next(body for name, body in posted if name == "plan")["repeat"]
+            check(twice == {"every": "week", "times": 4, "days": sorted([starts_on, also], key=[1, 2, 3, 4, 5, 6, 0].index), "day": starts_on},
+                  f"the PC is told both days, and which of them it starts on ({twice})")
+            walks = page.locator(".row.event:has-text('Line walk')")
+            expect(walks).to_have_count(4, timeout=15000)
+            check(True, "it takes place four times, on both days of two weeks")
+            walks.first.click()
+            page.wait_for_selector("#actions button:has-text('Delete')")
+            page.click("#actions button:has-text('Delete')")
+            page.locator("#pickerList .pickOne:has-text('The whole series')").click()
+            expect(page.locator("#toastText")).to_have_text("Deleted from the calendar", timeout=30000)
+            expect(walks).to_have_count(0, timeout=15000)
+
+            page.click("#write")
+            page.fill("#planSubject", "Safety round")
+            nth_words = ["first", "second", "third", "fourth", "last"][(int(time.strftime("%d")) - 1) // 7]
+            check(page.inner_text("#planNth") == f"Every month: {nth_words} {time.strftime('%A')}", f"an entry can repeat on such a weekday of the month ({page.inner_text('#planNth')})")
+            page.select_option("#planRepeat", "monthNth")
+            check(page.locator("#planDaysField").is_hidden() and page.locator("#planTimes").is_visible(), "which has no days of the week to pick")
+            posted.clear()
+            page.click("#planSave")
+            expect(page.locator("#toastText")).to_have_text("Saved to the calendar", timeout=30000)
+            monthly = next(body for name, body in posted if name == "plan")["repeat"]
+            check(monthly == {"every": "monthNth", "times": 0}, f"the PC is told: every month, on that weekday ({monthly})")
+            rounds = page.locator(".row.event:has-text('Safety round')")
+            expect(rounds.first).to_be_visible(timeout=15000)
+            rounds.first.click()
+            page.wait_for_selector("#actions button:has-text('Delete')")
+            page.click("#actions button:has-text('Delete')")
+            page.locator("#pickerList .pickOne:has-text('The whole series')").click()
+            expect(page.locator("#toastText")).to_have_text("Deleted from the calendar", timeout=30000)
+            expect(rounds).to_have_count(0, timeout=15000)
+
             page.locator(".row.event:has-text('Drop test, corner drops')").click()
             page.wait_for_selector("#answers button[data-answer=tentative]")
             check(page.locator("#suggestOpen").is_visible() and page.locator("#suggest").is_hidden(), "an invitation offers: Suggest another time")

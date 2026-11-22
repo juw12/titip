@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.14.1";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.15.0";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = {
     inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar",
@@ -29,7 +29,7 @@
 
   // at: when the rows on screen were read from the PC. stale: the last try to read them failed.
   var view = { folder: "inbox", id: "", rows: [], more: false, query: "", deep: false, show: "", loading: false, item: null, formatted: true, at: 0, stale: false, days: 0, from: "" };
-  var own = { folders: [], categories: [], asked: 0, known: false };   // your own folders and Outlook's categories, as the PC last listed them
+  var own = { folders: [], categories: [], colours: null, asked: 0, known: false };   // your own folders and Outlook's categories, as the PC last listed them
   var signature = { "new": "", reply: "" };   // the text Outlook signs with, put under a mail when it is started
   var planned = null;     // the calendar entry being made or changed: {id, scope, occurrence}
   var shown = { which: "", name: "" };   // the calendar on screen when it is not your own
@@ -239,13 +239,43 @@
       replyAll: { to: first.concat(others(to, taken)), cc: others(demoPeople(data, mail.cc), taken) }
     };
   }
+  // when an entry that repeats takes place, the first twelve times at most: what Outlook works out from the pattern
+  function demoTimes(first, repeat) {
+    if (!repeat) return [first];
+    var wanted = Math.min(repeat.times || 12, 12), found = [], every = repeat.every, interval = repeat.interval || 1;
+    function at(year, month, day) { return new Date(year, month, day, first.getHours(), first.getMinutes()); }
+    function week(date) { return Math.floor((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000 + 3) / 7); }   // weeks begin on Monday
+    if (every === "day" || every === "week" || every === "weekday") {
+      var days = every === "weekday" ? [1, 2, 3, 4, 5] : repeat.days && repeat.days.length > 1 ? repeat.days.concat([first.getDay()]) : null;
+      for (var ahead = 0; found.length < wanted && ahead < 4400; ahead += 1) {
+        var moment = at(first.getFullYear(), first.getMonth(), first.getDate() + ahead);
+        var fits = every === "day" ? ahead % interval === 0
+          : days ? days.indexOf(moment.getDay()) >= 0 && (week(moment) - week(first)) % interval === 0 : ahead % (7 * interval) === 0;
+        if (fits) found.push(moment);
+      }
+      return found;
+    }
+    var last = function (year, month) { return new Date(year, month + 1, 0).getDate(); };
+    var nth = repeat.last && first.getDate() + 7 > last(first.getFullYear(), first.getMonth()) ? 5 : Math.floor((first.getDate() - 1) / 7) + 1;
+    for (var step = 0; found.length < wanted && step < 600; step += 1) {
+      var month = first.getMonth() + step * (every === "year" ? 12 : interval), day = first.getDate();
+      var days_in = last(first.getFullYear(), month);
+      if (every === "monthNth") {
+        var same = [];
+        for (var number = 1; number <= days_in; number += 1) if (at(first.getFullYear(), month, number).getDay() === first.getDay()) same.push(number);
+        day = nth >= 5 || nth > same.length ? same[same.length - 1] : same[nth - 1];
+      } else if (day > days_in) continue;   // the 31st: a month without one has none
+      found.push(at(first.getFullYear(), month, day));
+    }
+    return found;
+  }
   function demoRow(one) {   // what the list shows of a task, a note or a contact
     if (one.kind === "notes") {
       var text = String(one.body || "").trim(), cut = text.indexOf("\n");
       return { id: one.id, kind: "notes", title: (cut < 0 ? text : text.slice(0, cut)).trim() || "(empty note)",
         preview: cut < 0 ? "" : text.slice(cut + 1).replace(/\s+/g, " ").trim().slice(0, 180), time: one.time };
     }
-    if (one.kind === "tasks") return { id: one.id, kind: "tasks", title: one.title, due: one.due, done: !!one.done, important: !!one.important };
+    if (one.kind === "tasks") return { id: one.id, kind: "tasks", title: one.title, due: one.due, start: one.start || "", done: !!one.done, important: !!one.important };
     return { id: one.id, kind: "contacts", title: one.title, company: one.company, email: one.email, phone: one.mobile || one.work };
   }
   function demoEvent(event) {
@@ -367,7 +397,12 @@
           data.folders.splice(data.folders.indexOf(folder), 1);
           return { ok: true, removed: true };
         }
-        if (order.what === "category") { data.categories.push(order.name); return { ok: true, name: order.name }; }
+        if (order.what === "category") {
+          data.categories.push(order.name);
+          data.colours = data.colours || {};
+          data.colours[order.name] = order.colour || "";
+          return { ok: true, name: order.name };
+        }
         if (order.what === "away") { data.away = !!order.on; return { ok: true, away: data.away }; }
         if (order.what === "awayText") {
           data.awayText = order.text;
@@ -438,7 +473,7 @@
     folders: function () {
       return demoLoad().then(function (data) {
         return { folders: (data.folders || []).map(function (folder) { return { id: folder.id, name: folder.name, "in": folder["in"], file: "", unread: 0 }; }),
-          categories: (data.categories || []).slice(), cut: false };
+          categories: (data.categories || []).slice(), colours: data.colours || {}, cut: false };
       });
     },
     signature: function () { return demoLoad().then(function (data) { return data.signature || { "new": "", reply: "" }; }); },
@@ -468,6 +503,7 @@
         if (!one) throw new Error("That is not what it was when the list was read. Refresh the list.");
         var full = demoRow(one);
         full.body = one.body || "";
+        if (kind === "tasks") full.remind = one.remind || "";
         if (kind === "contacts") {
           full.emails = one.email ? [one.email] : [];
           full.job = one.job || "";
@@ -489,7 +525,13 @@
         if (!one) { one = { id: "demo.p" + Date.now(), kind: order.kind, done: false }; list.push(one); }
         one.body = order.body || "";
         if (order.kind === "notes") one.time = new Date().toISOString();
-        else if (order.kind === "tasks") { one.title = order.title; one.due = order.due || ""; one.important = !!order.important; }
+        else if (order.kind === "tasks") {
+          if (order.start && !order.due) throw new Error("A task that starts on a day is due on a day too. Give it a due day.");
+          if (order.start && order.start > order.due) throw new Error("It is due before it starts.");
+          one.title = order.title; one.due = order.due || ""; one.important = !!order.important;
+          if (order.start !== undefined) one.start = order.start || "";
+          if (order.remind !== undefined) one.remind = order.remind || "";
+        }
         else { one.title = order.title; one.company = order.company || ""; one.job = order.job || ""; one.email = order.email || ""; one.mobile = order.mobile || ""; one.work = order.phone || ""; }
         return { ok: true, saved: true };
       });
@@ -529,14 +571,13 @@
         }
         if (!rows.length) {
           var id = "demo.n" + Date.now();
-          var step = order.repeat ? { day: 1, week: 7, month: 30, year: 365, weekday: 1 }[order.repeat.every] * (order.repeat.interval || 1) * 86400000 : 0;
-          var times = order.repeat ? Math.min(order.repeat.times || 12, 12) : 1;   // a year of them at most, in the demo
-          for (var number = 0; number < times; number += 1) {
+          var moments = demoTimes(first, order.repeat);   // twelve of them at most, in the demo
+          for (var number = 0; number < moments.length; number += 1) {
             data.events.push(timed(written({
               id: id, organizer: data.me.name, meeting: people.length + optional.length > 0, canceled: false, invited: false, mine: true,
               response: people.length + optional.length ? "organizer" : "", recurring: !!order.repeat, busy: "busy", required: people.join("; "),
               optional: optional.join("; "), reminder: 15
-            }), step * number));
+            }), moments[number].getTime() - first.getTime()));
           }
           return { ok: true, saved: true, told: people.length + optional.length > 0 };
         }
@@ -681,7 +722,7 @@
 
   // The public page is updated before the PC has moved to the same version, and a PC can stay behind.
   // What 0.9.0 added is then said to be on its way, instead of asked of a PC that does not know the question.
-  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0", NEEDS_PUSH = "0.14.0", NEEDS_REAL = "0.14.1";   // what came with a version asks for that one
+  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0", NEEDS_PUSH = "0.14.0", NEEDS_REAL = "0.14.1", NEEDS_LAST = "0.15.0";   // what came with a version asks for that one
   function pcBehind(needs) {
     if (DEMO || !pcVersion) return false;
     var has = pcVersion.split("."), wants = (needs || NEEDS).split(".");
@@ -1639,7 +1680,9 @@
     pickFrom("Categories", "Outlook's categories. Tick the ones this mail belongs to.", true, function () {
       var names = own.categories.slice();
       (item.categories || []).forEach(function (name) { if (names.indexOf(name) < 0) names.push(name); });
-      return names.map(function (name) { return { id: name, name: name, note: "", on: (item.categories || []).indexOf(name) >= 0 }; });
+      return names.map(function (name) {
+        return { id: name, name: name, note: "", on: (item.categories || []).indexOf(name) >= 0, dot: own.colours ? String(own.colours[name] || "") : undefined };
+      });
     }, function (ticked) {
       var names = ticked.map(function (one) { return one.name; });
       api.act({ what: "categorize", id: item.id, categories: names }).then(function () {
@@ -1649,11 +1692,22 @@
       }).catch(function (error) { toast((error.unsure ? "" : "Not changed. ") + error.message); });
     }, pcBehind(NEEDS_MORE) ? {} : { extra: { label: "New category", run: function () {
       askName("New category", "It is made in Outlook, for every mail.", "", "Its name", function (name) {
-        arrange({ what: "category", name: name }, "Category \u201c" + name + "\u201d made", function () { labelMail(item); });
+        var make = function (colour) {
+          var order = { what: "category", name: name };
+          if (colour !== undefined) order.colour = colour;
+          arrange(order, "Category \u201c" + name + "\u201d made", function () { labelMail(item); });
+        };
+        if (pcBehind(NEEDS_LAST)) { make(); return; }
+        pickFrom("Colour", "For \u201c" + name + "\u201d, in Outlook and here.", false, function () {
+          return COLOURS.map(function (colour) { return { id: colour[0], name: colour[1], note: "", dot: colour[0] }; });
+        }, function (chosen) { make(chosen.id); }, { load: function () { return Promise.resolve(); } });
       });
     } } });
   }
 
+  // the colours a category can be given here: the ones Outlook has that are told apart at a glance
+  var COLOURS = [["", "No colour"], ["red", "Red"], ["orange", "Orange"], ["yellow", "Yellow"], ["green", "Green"], ["teal", "Teal"],
+    ["blue", "Blue"], ["purple", "Purple"], ["gray", "Gray"]];
   // ---- your own folders and Outlook's categories: asked of the PC when first needed, then every ten minutes
   var OWN_FRESH = 600000;
   function askOwn() {
@@ -1663,6 +1717,7 @@
     return api.folders().then(function (got) {
       own.folders = (got.folders || []).filter(function (one) { return one && isOwnFolder(one.id); });
       own.categories = (got.categories || []).map(String);
+      own.colours = got.colours && typeof got.colours === "object" ? got.colours : null;   // a PC before 0.15.0 does not say
       own.known = true;
       drawOwnFolders();
       if (isOwnFolder(view.folder)) { $("folderName").textContent = folderName(view.folder); $("backLabel").textContent = folderName(view.folder); }
@@ -1728,6 +1783,11 @@
         if (several) { button.setAttribute("role", "checkbox"); button.setAttribute("aria-checked", String(!!one.on)); }
         var name = el("span", "ownName", one.name);
         if (one.note) name.appendChild(el("small", "", one.note));
+        if (one.dot !== undefined) {   // a category's colour; a ring for one that has none
+          var dot = el("span", "hue");
+          dot.setAttribute("data-colour", one.dot);
+          button.appendChild(dot);
+        }
         button.appendChild(name);
         if (several) button.appendChild(el("span", "tickBox"));
         button.onclick = function () {
@@ -2472,7 +2532,9 @@
     $("planPrivate").checked = !!(event && event["private"]);
     $("planPrivate").disabled = scope === "one";   // Outlook keeps this for the whole series
     planned["private"] = $("planPrivate").checked;
-    Array.prototype.forEach.call($("planRepeat").querySelectorAll("[data-needs]"), function (option) { option.hidden = option.disabled = !full; });
+    Array.prototype.forEach.call($("planRepeat").querySelectorAll("[data-needs]"), function (option) {
+      option.hidden = option.disabled = option.getAttribute("data-needs") === "last" ? pcBehind(NEEDS_LAST) : !full;
+    });
     $("planFrom").value = event && event.allDay ? "09:00" : hourOf(begins);
     $("planTo").value = event && event.allDay ? "09:30" : hourOf(ends);
     $("planAllDay").checked = !!(event && event.allDay);
@@ -2490,6 +2552,7 @@
     $("planRepeat").value = "";
     $("planTimes").value = "";
     $("planTimes").hidden = $("planTimesWord").hidden = true;
+    nameRepeats();
     // who is invited: listed for an entry of your own and changed here; of one time of a series it stays as the series has it
     $("withField").hidden = !!event && !planned.people;
     setChips($("withInput"), planned.people ? event.invitedPeople || [] : []);
@@ -2501,6 +2564,50 @@
     showPlanner(true);
     learnPeople();
     $("planSubject").focus();
+  }
+  // What the ways to repeat are called for the day picked ("on the second Tuesday"), and the days of the week
+  // for an entry that repeats weekly. `moved`: the day was changed, so the days pressed start over.
+  var WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];   // Monday first, numbered as the phone counts them (Sunday 0)
+  function nameRepeats(moved) {
+    var day = $("planDay").value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+    var date = dayStart(day);
+    var weekday = date.toLocaleDateString([], { weekday: "long" });
+    var nth = Math.floor((date.getDate() - 1) / 7);
+    var lastOne = date.getDate() + 7 > new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    $("planNth").textContent = "Every month: " + ["first", "second", "third", "fourth", "last"][nth] + " " + weekday;
+    $("planLast").textContent = "Every month: last " + weekday;
+    var behind = pcBehind(NEEDS_LAST);
+    $("planNth").hidden = $("planNth").disabled = behind;
+    $("planLast").hidden = $("planLast").disabled = behind || !lastOne || nth === 4;   // the fifth is the last already
+    if ($("planRepeat").selectedOptions[0] && $("planRepeat").selectedOptions[0].disabled) {
+      $("planRepeat").value = "";
+      $("planTimes").hidden = $("planTimesWord").hidden = true;
+    }
+    var weekly = /^week(:|$)/.test($("planRepeat").value) && !behind && !$("planRepeatField").hidden;
+    $("planDaysField").hidden = !weekly;
+    var box = $("planDays");
+    if (!box.firstChild) {
+      WEEKDAY_ORDER.forEach(function (number) {
+        var name = new Date(2024, 0, number === 0 ? 7 : number).toLocaleDateString([], { weekday: "short" });   // 1 January 2024 was a Monday
+        var button = el("button", "", name.slice(0, 2));
+        button.type = "button";
+        button.setAttribute("data-day", String(number));
+        button.setAttribute("aria-label", new Date(2024, 0, number === 0 ? 7 : number).toLocaleDateString([], { weekday: "long" }));
+        button.setAttribute("aria-pressed", "false");
+        button.onclick = function () { button.setAttribute("aria-pressed", String(button.getAttribute("aria-pressed") !== "true")); };
+        box.appendChild(button);
+      });
+    }
+    Array.prototype.forEach.call(box.children, function (button) {
+      var own = Number(button.getAttribute("data-day")) === date.getDay();
+      if (moved || own || !weekly) button.setAttribute("aria-pressed", String(own));
+      button.disabled = own;   // the day it starts on is always one of them
+    });
+  }
+  function weekdaysPicked() {
+    return Array.prototype.filter.call($("planDays").children, function (button) { return button.getAttribute("aria-pressed") === "true"; })
+      .map(function (button) { return Number(button.getAttribute("data-day")); });
   }
   function submitPlan() {
     var subject = $("planSubject").value.trim();
@@ -2527,8 +2634,14 @@
       var times = Number($("planTimes").value) || 0;
       if (times === 1 || times < 0 || times > 500) { showPlanError("It can repeat 2 to 500 times, or without an end."); $("planTimes").focus(); return; }
       var how = $("planRepeat").value.split(":");   // "week:2" is every second week
-      order.repeat = { every: how[0], times: times };
+      order.repeat = { every: how[0] === "monthLast" ? "monthNth" : how[0], times: times };
       if (how[1]) order.repeat.interval = Number(how[1]);
+      if (how[0] === "monthLast") order.repeat.last = true;
+      var on = weekdaysPicked();
+      if (how[0] === "week" && !$("planDaysField").hidden && on.length > 1) {   // on several days of the week
+        order.repeat.days = on;
+        order.repeat.day = dayStart(day).getDay();   // which of them it starts on, by this phone's clock
+      }
     }
     if ($("planAllDay").checked) {
       order.allDay = true;
@@ -2711,7 +2824,8 @@
   }
   function showThing(kind, full) {
     $("subject").textContent = full.title;
-    var facts = kind === "tasks" ? [full.done ? "Done" : "", dueText(full), full.important ? "High importance" : ""]
+    var facts = kind === "tasks" ? [full.done ? "Done" : "", full.start ? "Starts " + dayName(dayStart(full.start)) : "", dueText(full),
+      full.important ? "High importance" : "", full.remind ? "Reminder " + longTime(full.remind) : ""]
       : kind === "notes" ? [longTime(full.time)] : [full.job, full.company, full.address];
     $("tags").textContent = facts.filter(Boolean).join(" \u00b7 ");
     $("tags").hidden = !$("tags").textContent;
@@ -2798,6 +2912,12 @@
     $("thingName").placeholder = kind === "contacts" ? "First and last name" : "What is to be done";
     $("thingName").value = full && kind !== "notes" ? full.title : "";
     $("thingDue").value = full ? full.due || "" : "";
+    // the start day and the reminder: with a PC from 0.15.0 on
+    if (kind === "tasks") $("thingStartField").hidden = $("thingRemindField").hidden = pcBehind(NEEDS_LAST);
+    $("thingStart").value = full ? full.start || "" : "";
+    var reminds = full && full.remind ? new Date(full.remind) : null;
+    $("thingRemindDay").value = reminds ? dayOf(reminds) : "";
+    $("thingRemindAt").value = reminds ? hourOf(reminds) : "";
     $("thingImportant").checked = !!(full && full.important);
     $("thingCompany").value = full ? full.company || "" : "";
     $("thingJob").value = full ? full.job || "" : "";
@@ -2824,9 +2944,15 @@
       $("thingFoot").textContent = "What people who write to you are told while automatic replies are on.";
     }
     $("thingError").hidden = true;
+    dimUnset();
     showThinger(true);
     (kind === "notes" ? $("thingBody") : $("thingName")).focus();
   }
+  // a day or a time of a task that is not set is dimmed: an empty box may show today's date
+  function dimUnset() {
+    ["thingStart", "thingDue", "thingRemindDay", "thingRemindAt"].forEach(function (id) { $(id).classList.toggle("unset", !$(id).value); });
+  }
+  ["thingStart", "thingDue", "thingRemindDay", "thingRemindAt"].forEach(function (id) { $(id).oninput = $(id).onchange = dimUnset; });
   function submitThing() {
     var job = editing;
     var kind = job.kind;
@@ -2847,6 +2973,15 @@
     function refuse(text, field) { $("thingError").textContent = text; $("thingError").hidden = false; $(field).focus(); }
     if (kind === "notes" && !order.body.trim()) { refuse("Write the note first.", "thingBody"); return; }
     if (kind === "tasks" && !order.title) { refuse("Say what is to be done first.", "thingName"); return; }
+    if (kind === "tasks" && !$("thingStartField").hidden) {
+      order.start = $("thingStart").value;
+      if (order.start && !order.due) { refuse("A task that starts on a day is due on a day too. Give it a due day.", "thingDue"); return; }
+      if (order.start && order.start > order.due) { refuse("It is due before it starts.", "thingDue"); return; }
+      var remindDay = $("thingRemindDay").value, remindAt = $("thingRemindAt").value || "09:00";
+      if (!remindDay && $("thingRemindAt").value) { refuse("Pick the day of the reminder too.", "thingRemindDay"); return; }
+      var on = remindDay ? dayStart(remindDay) : null;
+      order.remind = on ? new Date(on.getFullYear(), on.getMonth(), on.getDate(), Number(remindAt.slice(0, 2)), Number(remindAt.slice(3, 5))).toISOString() : "";
+    }
     if (kind === "contacts" && !order.title) { refuse("Give it a name first.", "thingName"); return; }
     if (kind === "contacts" && order.email && !ADDRESS.test(order.email)) { refuse("That e-mail address is not complete.", "thingEmail"); return; }
     showThinger(false);
@@ -3278,6 +3413,7 @@
     }
     if ($("planEndDay").value < this.value) $("planEndDay").value = this.value;
     planned.day = this.value;
+    nameRepeats(true);
   };
   $("pickerCancel").onclick = closePicker;
   $("pickerDone").onclick = function () {
@@ -3328,7 +3464,10 @@
     this.setAttribute("aria-pressed", String(draft.receipt));
     rememberComposer();
   };
-  $("planRepeat").onchange = function () { $("planTimes").hidden = $("planTimesWord").hidden = !this.value; };
+  $("planRepeat").onchange = function () {
+    $("planTimes").hidden = $("planTimesWord").hidden = !this.value;
+    nameRepeats();
+  };
   $("picker").onclick = function (event) { if (event.target === $("picker")) closePicker(); };
   $("moreToggle").onclick = function () { showMore($("moreMenu").hidden); };
   $("important").onclick = function () {

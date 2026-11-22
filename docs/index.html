@@ -296,12 +296,17 @@
           <option value="week">Every week</option>
           <option value="week:2" data-needs="full">Every 2 weeks</option>
           <option value="month">Every month</option>
+          <option value="monthNth" data-needs="last" id="planNth">Every month: that weekday</option>
+          <option value="monthLast" data-needs="last" id="planLast">Every month: the last such weekday</option>
           <option value="year">Every year</option>
         </select>
         <label class="sr" for="planTimes">How many times</label>
         <input id="planTimes" type="number" inputmode="numeric" min="2" max="500" placeholder="no end" hidden>
         <span id="planTimesWord" hidden>times</span>
       </span>
+    </div>
+    <div class="field" id="planDaysField" hidden><span id="planDaysLabel">On</span>
+      <div class="days" id="planDays" role="group" aria-labelledby="planDaysLabel"></div>
     </div>
     <label class="field"><span>Where</span>
       <input id="planWhere" type="text" maxlength="255" autocomplete="off" placeholder="Room, address or link">
@@ -336,9 +341,19 @@
     <label class="field" data-kinds="tasks contacts"><span id="thingNameLabel">Task</span>
       <input id="thingName" type="text" maxlength="255" autocomplete="off">
     </label>
+    <label class="field" data-kinds="tasks" id="thingStartField"><span>Starts</span>
+      <input id="thingStart" type="date">
+    </label>
     <label class="field" data-kinds="tasks"><span>Due</span>
       <input id="thingDue" type="date">
     </label>
+    <div class="field hours2" data-kinds="tasks" id="thingRemindField"><label for="thingRemindDay">Remind</label>
+      <span class="pair">
+        <input id="thingRemindDay" type="date">
+        <label class="sr" for="thingRemindAt">Time of the reminder</label>
+        <input id="thingRemindAt" type="time">
+      </span>
+    </div>
     <label class="tick" data-kinds="tasks" for="thingImportant"><input id="thingImportant" type="checkbox"> High importance</label>
     <label class="field" data-kinds="contacts"><span>Company</span>
       <input id="thingCompany" type="text" maxlength="255" autocomplete="off">

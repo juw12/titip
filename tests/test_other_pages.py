@@ -90,8 +90,8 @@ class TheLists(unittest.TestCase):
         found = box._things("tasks", "", False)
         key = box._store_key("STORE")
         self.assertEqual(found, {"kind": "tasks", "more": False, "things": [
-            {"id": f"{key}.T1", "kind": "tasks", "title": "Send the drawing", "due": "2026-11-23", "done": False, "important": True},
-            {"id": f"{key}.T2", "kind": "tasks", "title": "(no subject)", "due": "", "done": False, "important": False},
+            {"id": f"{key}.T1", "kind": "tasks", "title": "Send the drawing", "due": "2026-11-23", "start": "", "done": False, "important": True},
+            {"id": f"{key}.T2", "kind": "tasks", "title": "(no subject)", "due": "", "start": "", "done": False, "important": False},
         ]})
         self.assertEqual(box._ns.items.asked, [("restrict", "[Complete] = False"), ("sort", "[DueDate]", False)])
         self.assertEqual(box._ns.folders, [mailbox.OL_TASKS])

@@ -357,6 +357,12 @@
    "in": ""
   }
  ],
+ "colours": {
+  "Customer": "blue",
+  "Supplier": "green",
+  "To read": "yellow",
+  "Waiting for answer": "red"
+ },
  "categories": [
   "Customer",
   "Supplier",

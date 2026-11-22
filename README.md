@@ -44,7 +44,9 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   brought it, and the organizer is told as if you had answered in Outlook.
 - **New entry** on the calendar makes an appointment, or with people in it a meeting, and Outlook
   invites them. It can **repeat** every day, working day, week, second week, month or year, a
-  number of times or without an end, and **remind** you from a week before down to the minute it
+  number of times or without an end. A weekly one can take place **on several days of the week**
+  (Tuesdays and Thursdays), a monthly one on the date or **on such a weekday** (the second
+  Tuesday, the last Friday). It can **remind** you from a week before down to the minute it
   starts. It can end on a later day than it starts, with its hours. **Show as** says how the time
   looks to others (busy, free, tentative, out of office, working elsewhere), and **Private** hides
   what it is. An entry of your own opens with **Change** and **Delete** (**Cancel the meeting**
@@ -73,7 +75,8 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   phone.
 - **Tasks**, **Notes** and **Contacts**, under the folder's name with the other folders: Outlook's
   own. The open tasks come by the day they are due, the done ones a tap away; **New task**,
-  **Done**, **Change**, **Delete**. A note is its text, and its first line is its name. A contact
+  **Done**, **Change**, **Delete**. A task can have a **start day** and a **reminder** at a day
+  and time of its own. A note is its text, and its first line is its name. A contact
   opens with the address to write to and the numbers to call: **Write a mail** starts one to that
   person, a tap on a number dials it, and the search finds a contact by name, company or address.
 - **Send later**, a button under the text: pick a day and a time, and the mail waits in Outlook's
@@ -87,7 +90,7 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   under the list of folders **Empty Deleted Items** removes everything in it. **Empty Junk** moves
   the junk to Deleted Items.
 - **More**, next to Delete: **Mark as unread**, **Flag**, **Move to a folder** (any folder of your own,
-  so also Archive), **Categories** (Outlook's own, ticked, and **New category**), **Always move mail
+  so also Archive), **Categories** (Outlook's own with their colours, ticked, and **New category** in a colour you pick), **Always move mail
   from this sender** (Outlook makes a rule). A flag and high importance show in the list.
 - Under the list of folders: **New folder** (inside the folder you are in), **Rename this folder**,
   **Take out this folder** (an empty one of your own only), and **Rules**: Outlook's rules, each
@@ -268,7 +271,7 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.14.1`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.15.0`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
 so it does not keep running an old page. The page for any network keeps its own files on the
 phone (the page, never mail), so its icon opens without a connection too and says that the phone
@@ -465,6 +468,13 @@ Titip opens a door from your network to your mailbox. Read this first.
   another mail program shows the words.
 - One time of a meeting that repeats is found by when it starts, the way one time of your own
   series is, and only that time is answered.
+- The days of the week an entry repeats on are handed over as the phone counts them, together
+  with the day it starts on. A PC whose clock has that moment on another day turns them all by
+  as much. The day it starts on is always one of them. "The last Friday" is taken only when the
+  day is the last one of its month; a fifth one is the last one, as Outlook has it.
+- A task's start day is set after its due day and both are read back: Outlook moves the one
+  when the other is set. If it does not keep both, Titip says so and saves nothing new. The
+  reminder is a day and a time, set, read back, and set again if Outlook shifted it.
 - A picture in the text is a PNG, a JPEG or a GIF. If the line that names it is taken out, it
   goes along as a plain file. A link is made only of an address that starts with http or https.
 - A row has to be pushed about a quarter of the screen before it counts; let go earlier and nothing
@@ -550,18 +560,23 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Text you type is sent as plain paragraphs. A draft sent unchanged keeps its formatting; a draft you
   edit on the phone goes as plain text.
 - Search looks at subject and sender (recipient in Sent), and at the text only when you tick it.
-- When a series takes place, and rooms, are changed in Outlook. An entry made to repeat on the
-  phone repeats on the day or date it starts on (not the last Friday of a month, not on two days of
-  a week). Another time for a meeting is suggested in words, not as Outlook's own proposal.
-  Outlook takes a declined meeting out of the calendar. An online meeting (Teams) is made in
+- When a series takes place is changed in Outlook: changing it throws away what was changed for
+  single times of it, and Outlook asks before it does that. A room is booked in Outlook. How an
+  entry repeats is said when it is made, not afterwards. Whether an organizer's mail program shows
+  another time you suggested as a proposal to accept is up to that program; the words are always
+  in the answer. Outlook takes a declined meeting out of the calendar. An online meeting (Teams) is made in
   Outlook: its link comes from an add-in Titip cannot drive.
 - Delete moves to Deleted Items. Only what is there already can be deleted for good.
 - A folder that holds mail or folders is not taken out from the phone, and Outlook's own folders are
-  never renamed or taken out. Categories have no colour chosen for them on the phone.
+  never renamed or taken out. A new category gets one of eight colours, or none. Outlook has 25:
+  one of its others is shown as the nearest of the eight. The colour of a category that is there,
+  and its name, are changed in Outlook.
 - Formatting is bold, italic, underlined, lists, a title line, a marked passage, links and
   pictures. No fonts, colours or tables: Outlook's own phone app has none either.
-- A task has a name, a due day, high importance and a text. Its start day, how it repeats and
-  whom it is assigned to are set in Outlook. A note has no colour. A contact has no picture.
+- A task has a name, a start day, a due day, a reminder, high importance and a text. How it
+  repeats and whom it is assigned to are set in Outlook. A task that starts on a day is due on a
+  day too: that is Outlook's rule. A note has no colour here: in today's Outlook a note's colour
+  is its category. A contact has no picture.
 - Automatic replies: the switch and the two texts. Whether people outside get an answer, and a
   time span, are set in Outlook; they are kept by the mail server, where a program on the PC
   cannot reach them.
@@ -587,7 +602,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.14.1 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.15.0 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

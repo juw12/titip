@@ -1,9 +1,11 @@
-"""Check what Titip 0.9.0 to 0.14.1 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0 to 0.15.0 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
-    python scripts/check_outlook.py --write    also makes calendar entries (one that repeats, one over two days), a folder, a draft
-                                               with a file, a task, a note and a contact, reads them back and
-                                               deletes them again (all but the calendar entries end in Deleted Items).
+    python scripts/check_outlook.py --write    also makes calendar entries (one that repeats, one over two days, one on two
+                                               days of the week, one on a weekday of the month), a folder, a draft
+                                               with a file, a task, a note, a contact and a category with a colour, reads them
+                                               back and deletes them again (all but the calendar entries and the category end
+                                               in Deleted Items).
                                                Where no automatic reply text is set and the replies are off, it writes
                                                one, reads it back and takes it out again
     python scripts/check_outlook.py --away     also switches the automatic replies (out of office) to the other
@@ -428,6 +430,63 @@ def main() -> int:
 
         attempt("a calendar entry over two days, private, every second week", entry_as_0_12_makes_it)
 
+        def entry_with_a_pattern(name, repeat, days_read, pattern_wanted, takes_place_on):
+            """Make an entry that repeats `repeat`, read back the pattern Outlook keeps and the days it shows, delete it."""
+            begins = (dt.datetime.now() + dt.timedelta(days=4)).replace(hour=3, minute=0, second=0, microsecond=0)
+            utc = lambda moment: moment.astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+            how = repeat(begins)
+            box.plan({"what": "save", "subject": name, "start": utc(begins), "end": utc(begins + dt.timedelta(minutes=30)), "repeat": how})
+            box._calendars.clear()
+            made = [event for event in box._do(box._calendar, 4, days_read, timeout=300)["events"] if event["subject"] == name]
+            try:
+                if not made:
+                    raise MailError("the entry is not on the day it was made for")
+
+                def pattern():
+                    series = box._item(made[0]["id"]).GetRecurrencePattern()
+                    read = []
+                    for field in ("RecurrenceType", "DayOfWeekMask", "Instance", "Occurrences"):
+                        try:
+                            read.append(int(getattr(series, field)))
+                        except Exception:
+                            read.append(0)  # a field this kind of pattern does not have
+                    return tuple(read)
+
+                kept = box._do(pattern, timeout=120)
+                days = sorted({(dt.date.fromisoformat(event["day"]) - begins.date()).days for event in made})
+            finally:
+                if made:
+                    box.plan({"what": "remove", "id": made[0]["id"], "scope": "series"})
+            wanted = pattern_wanted(begins)
+            if kept != wanted or days != takes_place_on:
+                raise MailError(f"Outlook keeps the pattern {kept} (wanted {wanted}) and shows it {days} days after its first day (wanted {takes_place_on})")
+            return kept
+
+        def on_two_days_of_the_week():
+            own = lambda begins: (begins.weekday() + 1) % 7  # noqa: E731  the day it starts on, Sunday 0
+            kept = entry_with_a_pattern(
+                "Titip check, two days of the week (deletes itself)",
+                lambda begins: {"every": "week", "days": [own(begins), (own(begins) + 2) % 7], "day": own(begins), "times": 4},
+                10, lambda begins: (1, (1 << own(begins)) | (1 << (own(begins) + 2) % 7), 0, 4), [0, 2, 7, 9])
+            return "made for two days of the week four times (Outlook's mask for the days: %d); it takes place on those four days; deleted" % kept[1]
+
+        attempt("a calendar entry on two days of the week", on_two_days_of_the_week)
+
+        def on_a_weekday_of_the_month():
+            import calendar as months
+
+            def nth(begins):
+                return 5 if begins.day + 7 > months.monthrange(begins.year, begins.month)[1] else (begins.day - 1) // 7 + 1
+
+            kept = entry_with_a_pattern(
+                "Titip check, a weekday of the month (deletes itself)",
+                lambda begins: {"every": "monthNth", "last": True, "times": 2},
+                1, lambda begins: (3, 1 << (begins.weekday() + 1) % 7, nth(begins), 2), [0])
+            return "made for the %s such weekday of each month, twice; Outlook keeps that pattern and the first time is on the day asked for; deleted" % (
+                {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "last"}[kept[2]])
+
+        attempt("a calendar entry on a weekday of the month", on_a_weekday_of_the_month)
+
         def draft_with_a_file():
             subject = "Titip check (deletes itself) %s" % dt.datetime.now().strftime("%H%M%S")
             box.send({"mode": "new", "action": "draft", "to": [], "subject": subject, "body": "Made by **scripts/check_outlook.py**.\n- one\n- two",
@@ -484,10 +543,19 @@ def main() -> int:
         def task():
             name = "Titip check task %s (deletes itself)" % stamp
             due = (dt.date.today() + dt.timedelta(days=3)).isoformat()
-            box.keep({"kind": "tasks", "what": "save", "title": name, "due": due, "important": True, "body": "Made by scripts/check_outlook.py."})
+            start = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+            remind = (dt.datetime.now() + dt.timedelta(days=1)).replace(hour=8, minute=30, second=0, microsecond=0)
+            reminds = remind.astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            box.keep({"kind": "tasks", "what": "save", "title": name, "due": due, "start": start, "remind": reminds, "important": True,
+                      "body": "Made by scripts/check_outlook.py."})
             made = one_of("tasks", name)
             try:
-                right = made["due"] == due and made["important"] and not made["done"]
+                full = box._do(box._thing, "tasks", made["id"], timeout=120)
+                right = made["due"] == due and made["important"] and not made["done"] and (full["start"], full["remind"]) == (start, reminds)
+                box.keep({"kind": "tasks", "what": "save", "id": made["id"], "title": name, "due": due, "start": "", "remind": "", "important": True,
+                          "body": "Made by scripts/check_outlook.py."})
+                bare = box._do(box._thing, "tasks", made["id"], timeout=120)
+                right = right and (bare["start"], bare["due"], bare["remind"]) == ("", due, "")
                 box.keep({"kind": "tasks", "what": "done", "id": made["id"]})
                 ticked = one_of("tasks", name, done=True)["done"]
                 box.keep({"kind": "tasks", "what": "undone", "id": made["id"]})
@@ -495,8 +563,9 @@ def main() -> int:
             finally:
                 box.keep({"kind": "tasks", "what": "remove", "id": made["id"]})
             if not (right and ticked and again):
-                raise MailError(f"due on the day asked for and important {right}, ticked off {ticked}, open again {again}")
-            return "made due in three days, read back on that day, ticked off, opened again, moved to Deleted Items"
+                raise MailError(f"due, starting and reminding as asked for, and both taken off again {right}, ticked off {ticked}, open again {again}")
+            return ("made due in three days, starting tomorrow, with a reminder; read back as made; start and reminder taken off again; "
+                    "ticked off, opened again, moved to Deleted Items")
 
         attempt("a task", task)
 
@@ -532,6 +601,28 @@ def main() -> int:
             return "made, found by its name, read back with address and number, changed, moved to Deleted Items"
 
         attempt("a contact", contact)
+
+        def category_with_a_colour():
+            name = "Titip check %s" % stamp
+
+            def take_out():
+                box._ns.Categories.Remove(name)
+
+            box.arrange({"what": "category", "name": name, "colour": "teal"})
+            try:
+                box._folder_list = None
+                colours = box._do(box._folders_now, timeout=300).get("colours", {})
+            finally:
+                box._do(take_out, timeout=120)
+                box._folder_list = None
+            if colours.get(name) != "teal":
+                raise MailError(f"made teal, Outlook says {colours.get(name)!r}")
+            still = name in box._do(box._folders_now, timeout=300)["categories"]
+            if still:
+                raise MailError("the category of the check is still in Outlook's list: take it out there")
+            return "made teal, read back as teal among %d categories with a colour to read, taken out of Outlook's list again" % len(colours)
+
+        attempt("a category with a colour", category_with_a_colour)
 
         def reply_text_written():
             before = box._do(box._away_now, timeout=120)
