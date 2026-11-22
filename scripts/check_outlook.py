@@ -1,11 +1,11 @@
-"""Check what Titip 0.9.0 to 0.12.0 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0 to 0.13.0 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
     python scripts/check_outlook.py --write    also makes calendar entries (one that repeats, one over two days), a folder, a draft
                                                with a file, a task, a note and a contact, reads them back and
                                                deletes them again (all but the calendar entries end in Deleted Items)
     python scripts/check_outlook.py --away     also switches the automatic replies (out of office) to the other
-                                               state and back at once. While they are on, Outlook answers whoever
+                                               state and back at once, and writes the text they have again. While they are on, Outlook answers whoever
                                                writes to you: that is why this is asked for by its own word.
 
 The unit tests run against a stand-in that does what Microsoft's documentation says Outlook does. This
@@ -279,6 +279,14 @@ def main() -> int:
 
     attempt("what Outlook's windows hold in the reading pane (a draft written there is taken out before Titip sends it)", windows)
 
+    def reply_text():
+        state = box._do(box._away_now, timeout=120)
+        if state["text"] is None:
+            return "this mailbox keeps no note for it: the phone offers the switch only"
+        return "the note Outlook keeps for it is read: %d characters" % len(state["text"])
+
+    attempt("what the automatic reply says", reply_text)
+
     away = attempt("the automatic replies",
                    lambda: {True: "on", False: "off", None: "this mailbox does not say"}[box._do(box._away, timeout=120)])
     if switch_away and away in ("on", "off"):
@@ -291,6 +299,15 @@ def main() -> int:
             return "switched %s and back to %s" % ("off" if was else "on", away)
 
         attempt("the switch for the automatic replies", switch)
+
+        def same_text_again():
+            text = box._do(box._away_now, timeout=120)["text"]
+            if not text:
+                return "no text is set, so none was written"
+            box.arrange({"what": "awayText", "text": text})  # the text it has, written again: nothing changes for anybody
+            return "the text it has was written again and read back the same"
+
+        attempt("what the automatic reply says can be written", same_text_again)
 
     if write:
         def entry_that_repeats():
@@ -396,6 +413,32 @@ def main() -> int:
             return "saved with its file and high importance, flagged %s, moved to Deleted Items" % flagged
 
         attempt("a draft with a file", draft_with_a_file)
+
+        def deleted_for_good():
+            subject = "Titip check for good (deletes itself) %s" % dt.datetime.now().strftime("%H%M%S")
+            box.send({"mode": "new", "action": "draft", "to": [], "subject": subject, "body": "Made by scripts/check_outlook.py.\n[picture: dot.png]",
+                      "files": [{"name": "dot.png", "data": bytes.fromhex(
+                          "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360606060000000050001a5f645400000000049454e44ae426082")}]})
+            drafts = [row for row in box._do(box._list, "drafts", 20, 0, "", timeout=120)["mail"] if row["subject"] == subject]
+            if len(drafts) != 1:
+                raise MailError(f"{len(drafts)} drafts found after saving one")
+            shown = "cid:" in (box._do(box._get, drafts[0]["id"], timeout=120).get("html") or "")
+            try:
+                box.act({"what": "erase", "id": drafts[0]["id"]})
+                raise RuntimeError("a draft that was not deleted before could be deleted for good")
+            except MailError:
+                pass
+            box.act({"what": "delete", "id": drafts[0]["id"]})
+            binned = [row for row in box._do(box._list, "deleted", 30, 0, "", timeout=120)["mail"] if row["subject"] == subject]
+            if len(binned) != 1:
+                raise MailError(f"{len(binned)} found in Deleted Items after deleting one")
+            box.act({"what": "erase", "id": binned[0]["id"]})
+            left = [row for row in box._do(box._list, "deleted", 30, 0, "", timeout=120)["mail"] if row["subject"] == subject]
+            if left:
+                raise MailError("it is still in Deleted Items after it was deleted for good")
+            return "a draft with a picture in its text (shown inside the text: %s), refused for good while in Drafts, deleted, then deleted for good" % shown
+
+        attempt("deleted for good, only out of Deleted Items", deleted_for_good)
 
         stamp = dt.datetime.now().strftime("%H%M%S")
 

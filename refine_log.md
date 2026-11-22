@@ -1195,3 +1195,68 @@ open was taken from the Limits in the README and from what Outlook's own phone a
 - 0.11.1 on the real Outlook, still.
 
 stop: run 17 ended with 0.12.0 merged to `main`; the PC moves to it by itself.
+
+## Run 18 (2026-11-22): what Run 17 left open, all but the push (0.13.0)
+
+Asked for: "continue fix the still open ... all finish then u can stop, if not then cannot stop".
+The list was the "Still open" of Run 17. Written on the Mac, which has no Outlook.
+
+### Changes kept
+
+- **Several mails at once.** Select several mails (under the search box, or a finger held on a
+  mail), then Delete, Read, Unread, Flag or Move. They are done one after the other.
+- **For good.** In Deleted Items a mail is deleted for good, singly or picked, and the countdown
+  says so. Empty Deleted Items and Empty Junk sit under the list of folders, there only.
+- **One time of a meeting that repeats** can be answered, found by its start like one time of
+  your own series.
+- **Suggest another time**: a tentative answer that says the day and the hours in words.
+- **What the automatic reply says** is read from the hidden note Outlook keeps for it in the
+  Inbox, shown, and can be changed; read back after it is written.
+- **In the text**: a title line, a marked passage, a link, and a picture that shows where a line
+  of the text names it (an attachment with a content id).
+- `scripts/check_outlook.py` reads the reply text; `--write` makes a draft with a picture in its
+  text, proves it cannot be deleted for good from Drafts, deletes it, then deletes it for good;
+  `--away` also writes the reply text it has again.
+
+### What cannot be done, and what was done instead
+
+- **Outlook's own "Propose New Time".** The object model has no call for it. The time is said in
+  the answer, in words. It was weighed to set the proposal's hidden fields by hand; a field set
+  wrong would show the organizer another time than the words say, so it was left.
+- **The text for people outside, and a time span, for automatic replies.** They are kept by the
+  mail server, not in the mailbox a program on the PC reaches.
+- **A Teams link.** It is made by an add-in inside Outlook's own window.
+- **Fonts, colours, tables.** Outlook's own phone app has none either; a title line and a marked
+  passage were added instead.
+
+### Found on the way
+
+- A finger held on a row re-drew the list under that finger, so the tap the browser makes of the
+  finger lifting could take the tick off again. The rows now stay the ones they are and are
+  ticked in place; the lift is not a tap.
+- The line with what can be done scrolled away with the list. It now stays under the bar.
+
+### Hard gates (code-checked)
+
+- 474 unit and server tests (458 before). New, against a stand-in Outlook: a link only of a web
+  address, and nothing typed becomes markup; a picture shown where its line is, a file that is no
+  picture left alone, two of one name each on their own line; for good only out of Deleted Items,
+  and Delete never for good by accident; a folder emptied from its end, 300 at a time, and no
+  other folder than Deleted Items and Junk ever; one time of a series answered and the series
+  not; the reply text read, written, read back, and a text that was not kept not reported as
+  changed; all of it through the phone's door.
+- 320 browser steps, all pass (290 before): mails ticked by tap and by a finger held, marked
+  together, deleted together behind Undo, deleted for good singly and picked, Deleted Items
+  emptied after being asked once more; the reply text shown, refused empty, changed; a title, a
+  link and a marked passage written by the keys and found in the mail that left; a picture's
+  line; another time suggested in words; this one time of a series answered.
+
+### Not verified
+
+- Nothing of 0.13.0 on a real Outlook. Most of all: that the server sends the text written into
+  the hidden note (some Exchange set-ups keep a copy of their own), that a picture with a content
+  id shows inside the text in the receiver's mail program, and that an answer for one time of a
+  series is taken as that.
+- 0.11.1 and 0.12.0 on the real Outlook, still: the ASUS has not answered yet.
+
+stop: run 18 ended with 0.13.0 merged to `main`; the push while the page is closed is Run 19.

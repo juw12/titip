@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.12.0";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.13.0";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = {
     inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar",
@@ -130,6 +130,7 @@
     calendars: function () { return request("/api/calendars"); },
     rules: function () { return request("/api/rules"); },
     arrange: function (order) { return request("/api/arrange", order); },
+    away: function () { return request("/api/away"); },
     event: function (id) { return request("/api/event?id=" + encodeURIComponent(id)); },
     act: function (order) { return request("/api/act", order); },
     plan: function (order) { return request("/api/plan", order); },
@@ -366,6 +367,15 @@
         }
         if (order.what === "category") { data.categories.push(order.name); return { ok: true, name: order.name }; }
         if (order.what === "away") { data.away = !!order.on; return { ok: true, away: data.away }; }
+        if (order.what === "awayText") { data.awayText = order.text; return { ok: true, text: order.text }; }
+        if (order.what === "empty") {
+          var inside = data.mail.filter(function (mail) { return mail.folder === order.folder; });
+          inside.forEach(function (mail) {
+            if (order.folder === "deleted") data.mail.splice(data.mail.indexOf(mail), 1);
+            else mail.folder = "deleted";
+          });
+          return { ok: true, emptied: inside.length, left: 0 };
+        }
         if (order.what === "rule") {
           data.rules.forEach(function (rule) { if (rule.name === order.name) rule.on = !!order.on; });
           return { ok: true, on: !!order.on };
@@ -406,11 +416,14 @@
         var mail = data.mail.filter(function (candidate) { return candidate.id === order.id; })[0];
         if (order.what !== "respond" && !mail) throw new Error("That message was moved or deleted. Refresh the list.");
         if (order.what === "delete") { mail.folder = "deleted"; return { ok: true, deleted: true }; }
+        if (order.what === "erase") { data.mail.splice(data.mail.indexOf(mail), 1); return { ok: true, erased: true }; }
         if (order.what === "move") { mail.folder = order.to; return { ok: true, moved: true }; }
         if (order.what === "read" || order.what === "unread") { mail.unread = order.what === "unread"; return { ok: true, unread: mail.unread }; }
         if (order.what === "flag" || order.what === "unflag") { mail.flagged = order.what === "flag"; return { ok: true, flagged: mail.flagged }; }
         if (order.what === "categorize") { mail.categories = order.categories.slice(); return { ok: true, categories: mail.categories }; }
-        var event = mail ? data.events[mail.invite] : (data.events || []).filter(function (candidate) { return candidate.id === order.id; })[0];
+        var event = mail ? data.events[mail.invite] : (data.events || []).filter(function (candidate) {   // of a series: the one time named
+          return candidate.id === order.id && (!order.occurrence || candidate.start.slice(0, 16) === String(order.occurrence).slice(0, 16));
+        })[0];
         if (!event) throw new Error("That is not an invitation.");
         event.response = { accept: "accepted", tentative: "tentative", decline: "declined" }[order.answer];
         return { ok: true, responded: order.answer, told: true };
@@ -423,6 +436,11 @@
       });
     },
     signature: function () { return demoLoad().then(function (data) { return data.signature || { "new": "", reply: "" }; }); },
+    away: function () {
+      return demoLoad().then(function (data) {
+        return { on: !!data.away, text: data.awayText === undefined ? "I am out of the office and will answer when I am back." : data.awayText };
+      });
+    },
     things: function (kind, query, done) {
       return demoLoad().then(function (data) {
         var needle = String(query || "").toLowerCase().trim();
@@ -634,6 +652,7 @@
     calendars: function () { return farRequest("calendars", {}); },
     rules: function () { return farRequest("rules", {}); },
     arrange: function (order) { return farRequest("arrange", order, true); },
+    away: function () { return farRequest("away", {}); },
     event: function (id) { return farRequest("event", { id: id }); },
     act: function (order) {   // like a send: never made twice. Marking as read happens behind a tap: tried once, quietly
       return order.what === "read" ? farRequest("act", order, false, 0, FAR_TRIES, true) : farRequest("act", order, true);
@@ -653,7 +672,7 @@
 
   // The public page is updated before the PC has moved to the same version, and a PC can stay behind.
   // What 0.9.0 added is then said to be on its way, instead of asked of a PC that does not know the question.
-  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0";   // what came with a version asks for that one
+  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0";   // what came with a version asks for that one
   function pcBehind(needs) {
     if (DEMO || !pcVersion) return false;
     var has = pcVersion.split("."), wants = (needs || NEEDS).split(".");
@@ -857,8 +876,19 @@
       subject.appendChild(document.createTextNode(mail.subject));
       row.appendChild(subject);
       row.appendChild(el("span", "preview", mail.preview));
+      if (picked) {
+        row.setAttribute("aria-pressed", String(!!picked[mail.id]));
+        if (picked[mail.id]) subject.insertBefore(el("span", "sr", "Selected. "), subject.firstChild);
+      }
       row.onclick = function () {
-        if (Date.now() - swiped < 500) return;   // the finger that pushed the row aside did not tap it
+        if (Date.now() - swiped < 500) return;   // the finger that pushed the row aside, or held it, did not tap it
+        if (picked) {   // several are being picked: a tap ticks this one, or takes the tick off
+          if (picked[mail.id]) delete picked[mail.id];
+          else picked[mail.id] = true;
+          showPick();
+          renderRows();
+          return;
+        }
         location.hash = "#/" + view.folder + "/" + mail.id;
       };
       item.appendChild(row);
@@ -1175,6 +1205,27 @@
     $("answers").hidden = !asked;
     $("answerNote").hidden = !asked || pcBehind(NEEDS_FULL);
     $("answerNote").value = "";
+    $("suggestOpen").hidden = !asked || pcBehind(NEEDS_FULL) || !event.start;
+    $("suggest").hidden = true;
+    $("suggestOpen").onclick = function () {
+      $("suggest").hidden = !$("suggest").hidden;
+      if ($("suggest").hidden) return;
+      $("suggestDay").value = dayOf(new Date(event.start));
+      $("suggestFrom").value = hourOf(new Date(event.start));
+      $("suggestTo").value = hourOf(new Date(event.end));
+    };
+    $("suggestSend").onclick = function () {
+      var day = $("suggestDay").value, from = $("suggestFrom").value, to = $("suggestTo").value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{2}:\d{2}/.test(from) || !/^\d{2}:\d{2}/.test(to)) { toast("Pick a day and the hours first."); return; }
+      var first = dayStart(day);
+      var begins = new Date(first.getFullYear(), first.getMonth(), first.getDate(), Number(from.slice(0, 2)), Number(from.slice(3, 5)));
+      var ends = new Date(first.getFullYear(), first.getMonth(), first.getDate(), Number(to.slice(0, 2)), Number(to.slice(3, 5)));
+      // in words, in the answer the organizer reads: Outlook's object model has no call for a proposal of its own kind
+      var words = "I suggest another time: " + begins.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: "numeric" }) +
+        ", " + clock(begins.toISOString()) + " to " + clock(ends.toISOString()) + ".";
+      $("answerNote").value = words + ($("answerNote").value.trim() ? " " + $("answerNote").value.trim() : "");
+      respond(id, "tentative", event);
+    };
     Array.prototype.forEach.call($("answers").querySelectorAll("button"), function (button) {
       var answer = button.getAttribute("data-answer");
       var given = { accept: "accepted", tentative: "tentative", decline: "declined" }[answer] === event.response;
@@ -1182,9 +1233,15 @@
       button.onclick = function () { respond(id, answer, event); };
     });
   }
-  function respond(id, answer, event) {
+  function respond(id, answer, event, scope) {
+    // a meeting that repeats, answered from the calendar: this one time, or all of them?
+    if (!scope && view.folder === "calendar" && event.recurring && event.start && !pcBehind(NEEDS_OPEN)) {
+      whichOnes("Answer", event, function (which) { respond(id, answer, event, which); });
+      return;
+    }
     var showing = view.id;
     var order = { what: "respond", id: id, answer: answer };
+    if (scope === "one") order.occurrence = event.start;
     var note = $("answerNote").hidden ? "" : $("answerNote").value.trim();
     if (note) order.note = note;   // a few words the organizer reads with the answer
     later(ANSWERING[answer], function () {
@@ -1341,8 +1398,8 @@
       $("doRule").hidden = pcBehind(NEEDS_MORE) || !item.from || view.folder === "sent";
       $("doRule").onclick = function () { showMore(false); ruleFor(item, view.folder); };
       // Delete moves it to Deleted Items; what is there already is only removed for good in Outlook
-      $("remove").hidden = view.folder === "deleted" || pcBehind();
-      $("remove").textContent = view.folder === "drafts" ? "Discard draft" : "Delete";
+      $("remove").hidden = pcBehind() || (view.folder === "deleted" && pcBehind(NEEDS_OPEN));
+      $("remove").textContent = view.folder === "drafts" ? "Discard draft" : view.folder === "deleted" ? "Delete for good" : "Delete";
       $("remove").onclick = function () { removeMail(item, view.folder); };
       var files = $("files");
       files.textContent = "";
@@ -1440,7 +1497,7 @@
   $("from").onclick = showPerson;
   $("from").onkeydown = function (event) { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showPerson(); } };
   // ---- a row pushed aside with a finger: to the left it is deleted (behind Undo), to the right marked read or unread
-  var swipe = null, swiped = 0, SWIPE_FAR = 96;
+  var swipe = null, swiped = 0, held = 0, holding = false, SWIPE_FAR = 96;
   function toggleRead(mail, folder) {
     var unread = mail.unread && opened.indexOf(mail.id) < 0;
     api.act({ what: unread ? "read" : "unread", id: mail.id }).then(function (result) {
@@ -1458,7 +1515,18 @@
     swipe = null;
     if (!row || event.touches.length !== 1 || PAGES[view.folder] || view.folder === "calendar" || pcBehind()) return;
     var mail = view.rows[Array.prototype.indexOf.call($("rows").querySelectorAll(".row"), row)];
-    if (!mail) return;
+    clearTimeout(held);
+    if (!mail || picked) return;   // while mails are being picked a row is tapped, not pushed
+    held = setTimeout(function () {
+      if (!swipe || swipe.on) return;
+      swipe = null;
+      holding = true;   // the finger is still down: when it lifts, that is not a tap on the row
+      picked = {};
+      picked[mail.id] = true;
+      showPick();
+      // the rows stay the ones they are (the finger is on one of them): they are ticked in place
+      Array.prototype.forEach.call($("rows").querySelectorAll(".row"), function (one) { one.setAttribute("aria-pressed", String(one === row)); });
+    }, 550);
     swipe = {
       row: row, mail: mail, x: event.touches[0].clientX, y: event.touches[0].clientY, dx: 0, on: false,
       remove: view.folder !== "deleted", read: view.folder === "inbox" || isOwnFolder(view.folder)
@@ -1468,6 +1536,7 @@
     if (!swipe) return;
     var dx = event.touches[0].clientX - swipe.x, dy = event.touches[0].clientY - swipe.y;
     if (!swipe.on) {
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearTimeout(held);   // it moves: not a finger held still
       if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) { swipe = null; return; }   // the list is being scrolled
       if (Math.abs(dx) < 14) return;
       swipe.on = true;
@@ -1489,6 +1558,8 @@
     if (event.cancelable) event.preventDefault();   // the list stays where it is while a row is pushed aside
   }, { passive: false });
   function endSwipe(event) {
+    clearTimeout(held);
+    if (holding) { holding = false; swiped = Date.now(); }
     var done = swipe;
     swipe = null;
     if (!done || !done.on) return;
@@ -1683,10 +1754,11 @@
 
   // To Deleted Items, three seconds from now. A draft goes the same way; a mail in the Outbox does not leave.
   function removeMail(item, folder) {
-    later("Deleting", function () {
+    var good = folder === "deleted";   // deleted before: this time it is gone for good, and the countdown says so
+    later(good ? "Deleting for good" : "Deleting", function () {
       toast("Deleting\u2026", "", null, true);
-      api.act({ what: "delete", id: item.id }).then(function () {
-        toast(folder === "outbox" ? "Deleted. It will not be sent." : folder === "drafts" ? "Draft moved to Deleted" : "Moved to Deleted");
+      api.act({ what: good ? "erase" : "delete", id: item.id }).then(function () {
+        toast(good ? "Deleted for good" : folder === "outbox" ? "Deleted. It will not be sent." : folder === "drafts" ? "Draft moved to Deleted" : "Moved to Deleted");
         view.rows = view.rows.filter(function (mail) { return mail.id !== item.id; });
         if (view.id === item.id) location.hash = "#/" + view.folder;
         else if (view.folder === folder) renderRows();
@@ -2132,6 +2204,8 @@
     $("laterFlip").hidden = pcBehind(NEEDS_PAGES);
     showLater(!!draft.later);
     $("receipt").hidden = $("formatBar").hidden = pcBehind(NEEDS_MORE);
+    $("picture").hidden = pcBehind(NEEDS_OPEN);
+    Array.prototype.forEach.call(document.querySelectorAll("#formatBar [data-needs]"), function (key) { key.hidden = pcBehind(NEEDS_OPEN); });
     $("formatNote").hidden = !draft.marks;
     drawFiles();
     showComposeError(saved && saved.lostFiles ? (saved.lostFiles === 1 ? "The file you attached was" : "The " + saved.lostFiles + " files you attached were") +
@@ -2238,7 +2312,7 @@
       if (!leaves || leaves.getTime() < Date.now() + 60000) { showComposeError("Pick a day and a time that are still to come, or press Send later again to send it now."); $("laterDay").focus(); return; }
       payload.later = leaves.toISOString();
     }
-    if (draft.marks && /\*\*|__|\*\S|^\s*- /m.test(values.body)) payload.format = "marks";   // only when a mark is still in the text
+    if (draft.marks && /\*\*|__|==|\*\S|\]\(https?:|^\s*- |^# /m.test(values.body)) payload.format = "marks";   // only when a mark is still in the text
     var dropped = values.carried.filter(function (file) { return file.off; });
     if (dropped.length) payload.drop = dropped.map(function (file) { return { index: file.index, name: file.name }; });
     rememberComposer();
@@ -2291,6 +2365,7 @@
     var id = parts.slice(1).join("/");
     var folderChanged = folder !== view.folder || !view.rows.length && !view.loading;
     if (folder !== view.folder) {
+      picked = null;
       view.query = "";
       view.show = "";
       showShows();
@@ -2311,6 +2386,7 @@
     $("searchToggle").hidden = folder === "calendar";   // the calendar is looked through by day, not searched
     $("deep").parentNode.hidden = !!PAGES[folder];
     showShows();
+    showPick();
     $("q").placeholder = PAGES[folder] ? "Search " + FOLDERS[folder].toLowerCase() : "Search subject or person";
     showThingBar();
     $("refresh").setAttribute("aria-label", folder === "calendar" ? "Read the calendar again" : "Check for new mail");
@@ -2329,6 +2405,8 @@
     if (!on) return;
     $("folderDo").hidden = pcBehind(NEEDS_MORE);
     $("folderRename").hidden = $("folderGone").hidden = !isOwnFolder(view.folder);
+    $("emptyOpen").hidden = (view.folder !== "deleted" && view.folder !== "junk") || pcBehind(NEEDS_OPEN);
+    $("emptyOpen").textContent = view.folder === "junk" ? "Empty Junk" : "Empty Deleted Items";
     drawOwnFolders();
     if (!own.known && !pcBehind()) { $("ownNote").textContent = "Asking your PC for your folders\u2026"; $("ownNote").hidden = false; }
     askOwn().catch(function () { $("ownNote").textContent = "Your own folders could not be read just now."; $("ownNote").hidden = false; });
@@ -2686,7 +2764,7 @@
       }).catch(function (error) { toast((error.unsure ? "" : "Not deleted. ") + error.message); });
     });
   }
-  var NAMES = { tasks: "task", notes: "note", contacts: "contact" };
+  var NAMES = { tasks: "task", notes: "note", contacts: "contact", away: "automatic reply" };
   var editing = null;   // the task, note or contact in the form: {kind, id}
   function showThinger(on) {
     $("thinger").hidden = !on;
@@ -2711,7 +2789,9 @@
     $("thingPhone").value = full ? full.work || "" : "";
     $("thingBody").value = full ? full.body || "" : "";
     $("thingBody").placeholder = kind === "notes" ? "Write the note. Its first line is its title." : "Notes";
-    $("thingFoot").textContent = "Kept in Outlook's " + FOLDERS[kind].toLowerCase() + " on your PC.";
+    $("thingFoot").textContent = kind === "away" ? "What colleagues who write to you are told while automatic replies are on."
+      : "Kept in Outlook's " + FOLDERS[kind].toLowerCase() + " on your PC.";
+    if (kind === "away") $("thingBody").placeholder = "I am out of the office until\u2026";
     $("thingError").hidden = true;
     showThinger(true);
     (kind === "notes" ? $("thingBody") : $("thingName")).focus();
@@ -2719,6 +2799,13 @@
   function submitThing() {
     var job = editing;
     var kind = job.kind;
+    if (kind === "away") {
+      var told = $("thingBody").value.trim();
+      if (!told) { $("thingError").textContent = "Write what people are to be told first."; $("thingError").hidden = false; $("thingBody").focus(); return; }
+      showThinger(false);
+      arrange({ what: "awayText", text: told }, "The automatic reply says the new text");
+      return;
+    }
     var order = {
       kind: kind, what: "save", id: job.id, title: $("thingName").value.trim(), body: $("thingBody").value, due: $("thingDue").value,
       important: $("thingImportant").checked, company: $("thingCompany").value.trim(), job: $("thingJob").value.trim(),
@@ -2771,10 +2858,121 @@
     arrange({ what: "away", on: on }, on ? "Automatic replies are on" : "Automatic replies are off", function () { showAway(on); refreshCounts(); });
   }
   function pickAway() {
-    pickFrom("Automatic replies", "They are " + (away ? "on" : "off") + ". The text people get is the one set in Outlook.", false, function () {
-      return [{ id: away ? "off" : "on", name: away ? "Switch off" : "Switch on", note: away ? "" : "People who write to you get your out-of-office answer" }];
-    }, function (picked) { switchAway(picked.id === "on"); }, { load: function () { return Promise.resolve(); } });
+    var known = null;
+    pickFrom("Automatic replies", "They are " + (away ? "on" : "off") + ". The text people get is the one set in Outlook.", false, function (got) {
+      known = got;
+      if (got.on === true || got.on === false) showAway(got.on);
+      var rows = [{ id: away ? "off" : "on", name: away ? "Switch off" : "Switch on", note: away ? "" : "People who write to you get your out-of-office answer" }];
+      if (got.text !== null && got.text !== undefined) {   // the PC could read what colleagues are told: it is shown, and can be changed
+        $("pickerNote").textContent = "They are " + (away ? "on" : "off") + ". " + (got.text ? "People in your organization are told: \u201c" +
+          (got.text.length > 240 ? got.text.slice(0, 240) + "\u2026" : got.text) + "\u201d" : "No text is set for them yet.");
+        rows.push({ id: "text", name: "Change the text", note: "What people in your organization are told. For people outside, and for dates, use Outlook." });
+      }
+      return rows;
+    }, function (chosen) {
+      if (chosen.id === "text") { openThinger("away", { id: "", body: known.text || "" }); return; }
+      switchAway(chosen.id === "on");
+    }, { load: function () { return pcBehind(NEEDS_OPEN) ? Promise.resolve({ on: away, text: null }) : api.away().catch(function () { return { on: away, text: null }; }); } });
   }
+  // ---- everything in Deleted Items, for good; everything in Junk, to Deleted Items
+  $("emptyOpen").onclick = function () {
+    var folder = view.folder, good = folder === "deleted";
+    showFolders(false);
+    pickFrom(good ? "Empty Deleted Items" : "Empty Junk", good ? "Everything in Deleted Items is deleted for good. This cannot be undone."
+      : "Everything in Junk is moved to Deleted Items.", false, function () {
+      return [{ id: "go", name: good ? "Delete everything for good" : "Move everything to Deleted Items", note: "" }];
+    }, function () {
+      toast("Emptying\u2026", "", null, true);
+      api.arrange({ what: "empty", folder: folder }).then(function (result) {
+        toast(result.left ? result.emptied + " gone, " + result.left + " still there. Empty it again for the rest."
+          : result.emptied + (good ? " deleted for good" : " moved to Deleted"));
+        if (view.folder === folder) { view.rows = []; load(false); }
+        refreshCounts();
+      }).catch(function (error) { toast((error.unsure ? "" : "Not emptied. ") + error.message); });
+    }, { load: function () { return Promise.resolve(); } });
+  };
+  // ---- several mails at once: ticked in the list, then deleted, marked, flagged or moved together
+  var picked = null;   // the ids ticked, while mails are being picked; null otherwise
+  function showPick() {
+    var on = !!picked && !PAGES[view.folder] && view.folder !== "calendar";
+    if (!on) picked = null;
+    $("pickBar").hidden = !on;
+    $("pickOpen").hidden = !!PAGES[view.folder] || view.folder === "calendar" || pcBehind();
+    $("pickOpen").textContent = on ? "Stop selecting" : "Select several mails";
+    if (!on) return;
+    var count = Object.keys(picked).length, marks = view.folder === "inbox" || isOwnFolder(view.folder);
+    $("pickSay").textContent = count ? count + " selected" : "Tap the mails to select";
+    $("pickDelete").textContent = view.folder === "deleted" ? "Delete for good" : "Delete";
+    $("pickDelete").hidden = view.folder === "deleted" && pcBehind(NEEDS_OPEN);
+    $("pickRead").hidden = $("pickUnread").hidden = !marks;
+    $("pickFlag").hidden = $("pickMove").hidden = view.folder === "outbox" || view.folder === "drafts";
+    ["pickDelete", "pickRead", "pickUnread", "pickFlag", "pickMove"].forEach(function (id) { $(id).disabled = !count; });
+  }
+  function startPick(id) {
+    picked = {};
+    if (id) picked[id] = true;
+    showPick();
+    renderRows();
+  }
+  function stopPick() {
+    picked = null;
+    showPick();
+    renderRows();
+  }
+  // one after the other, so Outlook is asked for one thing at a time; what failed is counted and said
+  function bulk(order, doing, done) {
+    var ids = Object.keys(picked || {}), folder = view.folder, failed = 0, why = "";
+    toast(doing + "\u2026", "", null, true);
+    stopPick();
+    ids.reduce(function (chain, id) {
+      return chain.then(function () {
+        return api.act(order(id)).catch(function (error) { failed += 1; why = error.message; });
+      });
+    }, Promise.resolve()).then(function () {
+      toast(failed ? (ids.length - failed) + " of " + ids.length + " done. " + why : done(ids.length));
+      opened = opened.filter(function (id) { return ids.indexOf(id) < 0; });
+      store.set("titip.opened", JSON.stringify(opened));
+      if (view.folder === folder) { view.rows = []; load(false); }
+      refreshCounts();
+    });
+  }
+  function mails(count) { return count + (count === 1 ? " mail" : " mails"); }
+  $("pickOpen").onclick = function () { if (picked) stopPick(); else startPick(""); };
+  $("pickDone").onclick = stopPick;
+  $("pickDelete").onclick = function () {
+    var count = Object.keys(picked || {}).length, good = view.folder === "deleted", keep = picked;
+    later(good ? "Deleting " + mails(count) + " for good" : "Deleting " + mails(count), function () {
+      picked = keep;
+      bulk(function (id) { return { what: good ? "erase" : "delete", id: id }; }, "Deleting",
+        function (done) { return mails(done) + (good ? " deleted for good" : " moved to Deleted"); });
+    });
+  };
+  $("pickRead").onclick = function () {
+    bulk(function (id) { return { what: "read", id: id }; }, "Marking", function (done) { return mails(done) + " marked as read"; });
+  };
+  $("pickUnread").onclick = function () {
+    bulk(function (id) { return { what: "unread", id: id }; }, "Marking", function (done) { return mails(done) + " marked as unread"; });
+  };
+  $("pickFlag").onclick = function () {
+    bulk(function (id) { return { what: "flag", id: id }; }, "Flagging", function (done) { return mails(done) + " flagged"; });
+  };
+  $("pickMove").onclick = function () {
+    var folder = view.folder, count = Object.keys(picked || {}).length, keep = picked;
+    pickFrom("Move " + mails(count) + " to", "", false, function () {
+      var places = [];
+      if (folder !== "inbox") places.push({ id: "inbox", name: "Inbox", note: "" });
+      own.folders.forEach(function (one) {
+        if (one.id !== folder) places.push({ id: one.id, name: one.name, note: [one.file, one["in"]].filter(Boolean).join(" / ") });
+      });
+      if (folder !== "junk") places.push({ id: "junk", name: "Junk", note: "" });
+      return places;
+    }, function (place) {
+      later("Moving " + mails(count) + " to " + place.name, function () {
+        picked = keep;
+        bulk(function (id) { return { what: "move", id: id, to: place.id }; }, "Moving", function (done) { return mails(done) + " moved to " + place.name; });
+      });
+    });
+  };
 
   // ---- reminders on this phone: while Titip is open, an entry that is due says so here and rings
   var REMIND_EVERY = 30000, REMIND_READ = 1800000;
@@ -2893,9 +3091,14 @@
   function mark(sign) {
     var box = $("bodyInput");
     var from = box.selectionStart, to = box.selectionEnd, text = box.value;
-    if (sign === "- ") {
+    if (sign === "link") {   // [the words](https://...), with the cursor where the address goes
+      var words = text.slice(from, to) || "link";
+      box.value = text.slice(0, from) + "[" + words + "](https://)" + text.slice(to);
+      var at = from + words.length + 11;
+      box.setSelectionRange(at, at);
+    } else if (sign === "- " || sign === "# ") {
       var first = text.lastIndexOf("\n", from - 1) + 1;
-      var lines = text.slice(first, to).split("\n").map(function (line) { return /^\s*- /.test(line) ? line : "- " + line; }).join("\n");
+      var lines = text.slice(first, to).split("\n").map(function (line) { return line.indexOf(sign) === 0 || (sign === "- " && /^\s*- /.test(line)) ? line : sign + line; }).join("\n");
       box.value = text.slice(0, first) + lines + text.slice(to);
       box.setSelectionRange(first + lines.length, first + lines.length);
     } else {
@@ -3025,6 +3228,20 @@
     $("fileInput").click();
   };
   $("fileInput").onchange = function () { addFiles(this.files); this.value = ""; };
+  // a picture that shows inside the text: it goes along as a file, and a line in the text says where it is shown
+  $("picture").onclick = function () { $("pictureInput").click(); };
+  $("pictureInput").onchange = function () {
+    var before = attached.length;
+    addFiles(this.files);
+    this.value = "";
+    var lines = attached.slice(before).map(function (entry) { return "[picture: " + entry.name + "]"; });
+    if (!lines.length) return;
+    var box = $("bodyInput"), at = box.selectionStart, text = box.value;
+    var put = (at > 0 && text.charAt(at - 1) !== "\n" ? "\n" : "") + lines.join("\n") + "\n";
+    box.value = text.slice(0, at) + put + text.slice(at);
+    box.setSelectionRange(at + put.length, at + put.length);
+    rememberComposer();
+  };
   $("bccToggle").onclick = function () { showBcc(true); $("bccInput").focus(); };
   $("viewToggle").onclick = function () { view.formatted = !view.formatted; showBody(); };
   $("discard").onclick = function () { closeComposer(true); };

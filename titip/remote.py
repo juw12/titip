@@ -51,7 +51,7 @@ MAX_REPLY = 8_000_000
 ALLOWED_ORDERS = ("switch", "mode", "check", "send", "drop")
 ASK_ROUTES = (
     "state", "mail", "item", "attachment", "send", "people", "upload", "calendar", "event", "act", "plan", "folders", "signature",
-    "calendars", "rules", "arrange", "invite", "things", "thing", "keep", "person",
+    "calendars", "rules", "arrange", "invite", "things", "thing", "keep", "person", "away",
 )
 ONCE_ROUTES = ("send", "act", "plan", "arrange", "keep")  # what changes something: never carried out for an ask from before this start
 ASK_MAX_AGE_S = 120
