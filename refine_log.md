@@ -1389,3 +1389,69 @@ with Tilik, instead of asking for a look at a real one.
   looked at there after the merge.
 
 stop: run 20 ended with 0.14.1 on `main`.
+
+## Run 21 (2026-11-22): what was left of the limits that a program can reach (0.15.0)
+
+Asked for: still "keep fixing it till all done". After Run 20 the list of limits held four things
+Outlook lets a program do and Titip did not: a task's start day and reminder, a colour for a
+category, an entry on several days of a week, and an entry on such a weekday of a month. The
+rest of that list is what a program on the PC cannot reach, and the README now says of each why.
+
+### What the real Outlook said (on 0.14.1, after it updated itself)
+
+- Reading only: every line ok again, with the two lines 0.14.1 added: an unsent mail takes the
+  four fields of Outlook's own proposal and reads them back as set, and both notes for the
+  automatic reply are read (both empty).
+- A reply written in the reading pane. The check pressed Reply on a mail that was read, and the
+  answer opened in the pane and was saved as a draft. Then it asked Outlook to delete that draft
+  the plain way, expecting a refusal. This Outlook did not refuse: it deleted the draft and kept
+  the reply in the pane, with nothing behind it, and Reply could not be pressed again. For some
+  minutes after that Outlook answered nothing (two runs found it busy), then it did again; no
+  dialog was open and no draft was left. So the refusal 0.11.1 was written for does not always
+  come, and what comes instead is worse. Titip never deletes under the pane: it has the window
+  let go first. The check does not do it any more either; it now only tries the three ways.
+
+### Changes kept
+
+- A task has a **start day** and a **reminder** (a day and a time). The start is set after the
+  due day and both are read back, because Outlook moves the one when the other is set. A page
+  from before leaves both as they are.
+- A new category is asked for its **colour**: none, or one of eight. Every category is listed
+  with its colour; Outlook's other 17 are shown as the nearest of the eight.
+- An entry that repeats weekly asks **on which days**; one that repeats monthly can be on the
+  date or **on such a weekday** (the second Tuesday), and on the last one where the day is the
+  last. The days are turned when the PC's clock has the start on another day than the phone's.
+- The invented mailbox works out when a pattern takes place (it added 30 days for a month and
+  put working days on weekends).
+- Found by Tilik and by looking at its pictures, and put right: the hours of an entry, how often
+  it repeats and the time of a reminder were typed in 12 px, where an iPhone zooms the page in
+  (16 px now); on a 320 px phone the second time of an entry was cut off (it goes on a second
+  line); More was 39 px wide; the days of the week were 42 px wide (they take two lines where
+  seven do not fit at 48); a day that is not set is dimmed, since one browser shows today's date
+  in an empty box.
+
+### Hard gates (code-checked)
+
+- 535 unit and server tests (508 before): the start day and reminder set, read back, left alone
+  by an older page, taken off, and said when Outlook does not keep them; the colour as Outlook's
+  number and every one of its 26 as one the phone knows; the days as Outlook's mask, the day it
+  starts on always among them, a phone a day ahead; the nth weekday and the last; when a pattern
+  takes place.
+- 352 browser steps, all pass (334 before).
+- Tilik on 11 phones, light and dark: the task sheet and the colours, no fault. The sheet for an
+  entry was looked at in pictures at 320, 360 and 393 px (Tilik's steps cannot pick from a
+  list), and measured: every field 16 px, every day at least 48 px wide, nothing wider than the
+  screen.
+
+### Not verified
+
+- 0.15.0 on the real Outlook: `check_outlook.py --write` makes an entry on two days of the week
+  and one on a weekday of the month and reads Outlook's pattern back, a task with a start and a
+  reminder, a category in teal. It runs there once this version is on that PC.
+- Which of the three ways makes the real Outlook let go of a reply in the pane, and Titip's own
+  delete of one. The check that does not delete under the pane is written and waits its turn.
+- Every second week on several days: which Sunday goes with which Tuesday is Outlook's (it
+  depends on the day its week starts on). The invented mailbox takes Monday.
+
+stop: run 21 ended with 0.15.0 on `main`. What is left in the list of limits is what a program
+on the PC cannot reach, and says so.

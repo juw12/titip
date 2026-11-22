@@ -9,6 +9,7 @@ Both expose the same calls: state, list, get, attachment, send, people, lookup, 
 
 from __future__ import annotations
 
+import calendar
 import collections
 import datetime as dt
 import hashlib
@@ -369,6 +370,8 @@ def clean_arrange_request(payload: dict) -> dict:
                 "outside": None if outside is None else str(outside).replace("\r\n", "\n").strip()[:AWAY_TEXT_MOST]}
     if what in ("folder", "rename", "category") and (not request["name"] or re.search(r'[\\/;,]', request["name"])):
         raise MailError("Give it a name, without \\ / ; or a comma.")
+    if what == "category":  # None: the colour Outlook gives a new category by itself
+        request["colour"] = payload.get("colour") if isinstance(payload.get("colour"), str) and payload.get("colour") in COLOURS else None
     if what == "folder" and request["in"] not in ("", "inbox") and not FOLDER_ID.fullmatch(request["in"]):
         raise MailError("Unknown folder.")
     if what in ("rename", "unfolder") and not FOLDER_ID.fullmatch(request["id"]):
@@ -460,12 +463,85 @@ def clean_keep_request(payload: dict) -> dict:
             request["due"] = dt.datetime.strptime(str(payload.get("due")), "%Y-%m-%d").date()
         except ValueError:
             raise MailError("That day could not be read.")
+    if kind == "tasks" and "start" in payload:  # a page from before 0.15.0 does not say: the start day stays as it is
+        try:
+            request["start"] = dt.datetime.strptime(str(payload["start"]), "%Y-%m-%d").date() if payload["start"] else None
+        except ValueError:
+            raise MailError("That day could not be read.")
+        if request["start"] and not request["due"]:
+            raise MailError("A task that starts on a day is due on a day too. Give it a due day.")
+        if request["start"] and request["start"] > request["due"]:
+            raise MailError("It is due before it starts.")
+    if kind == "tasks" and "remind" in payload:  # None: no reminder
+        try:
+            request["remind"] = local_time(payload["remind"]) if payload["remind"] else None
+        except (TypeError, ValueError):
+            raise MailError("The time of the reminder could not be read.")
     if request["email"] and not re.fullmatch(r"[^@\s<>;,]+@[^@\s<>;,]+", request["email"]):
         raise MailError("That e-mail address is not complete.")
     return request
 
 
-REPEATS = {"day": 0, "week": 1, "month": 2, "year": 5, "weekday": 1}  # Outlook's numbers for how an entry repeats
+REPEATS = {"day": 0, "week": 1, "month": 2, "year": 5, "weekday": 1, "monthNth": 3}  # Outlook's numbers for how an entry repeats
+# The colours a category can be given on the phone, as Outlook numbers them. Outlook has 25; each of its
+# others is shown as the one of these it is nearest to.
+COLOURS = {"": 0, "red": 1, "orange": 2, "yellow": 4, "green": 5, "teal": 6, "blue": 8, "purple": 9, "gray": 13}
+COLOUR_NEAREST = {3: "orange", 7: "green", 10: "red", 11: "gray", 12: "gray", 14: "gray", 15: "gray", 16: "red", 17: "orange",
+                  18: "orange", 19: "yellow", 20: "green", 21: "teal", 22: "green", 23: "blue", 24: "purple", 25: "red"}
+
+
+def colour_name(number) -> str:
+    """Outlook's number for a category's colour as one of the names the phone knows; "" for none."""
+    try:
+        number = int(number)
+    except (TypeError, ValueError):
+        return ""
+    return next((name for name, own in COLOURS.items() if own == number), COLOUR_NEAREST.get(number, ""))
+
+
+def takes_place(start: dt.datetime, repeat: dict | None, most: int) -> list[dt.datetime]:
+    """When an entry that repeats takes place, the first `most` times: what Outlook works out from the
+    pattern Titip hands it. The invented mailbox shows these; the real Outlook is not asked through here."""
+    if not repeat:
+        return [start]
+    every, interval = repeat["every"], repeat.get("interval", 1)
+    wanted = min(repeat["times"] or most, most)
+    found: list[dt.datetime] = []
+    if every in ("day", "weekday", "week"):
+        days = {(bit - 1) % 7 for bit in range(7) if repeat.get("mask", 0) >> bit & 1} if every == "week" else set()  # Monday 0
+        if every == "weekday":
+            days = {0, 1, 2, 3, 4}
+        monday = start - dt.timedelta(days=start.weekday())
+        moment = start
+        while len(found) < wanted and (moment - start).days < 366 * 12:
+            week = (moment - dt.timedelta(days=moment.weekday()) - monday).days // 7
+            if every == "day":
+                fits = (moment - start).days % interval == 0
+            elif days:
+                fits = moment.weekday() in days and week % interval == 0
+            else:
+                fits = (moment - start).days % (7 * interval) == 0
+            if fits:
+                found.append(moment)
+            moment += dt.timedelta(days=1)
+        return found
+    months = 12 if every == "year" else interval
+    number = 0
+    while len(found) < wanted and number < 600:
+        month = start.month - 1 + number * months
+        year, month = start.year + month // 12, month % 12 + 1
+        number += 1
+        last = calendar.monthrange(year, month)[1]
+        if every == "monthNth":
+            same = [day for day in range(1, last + 1) if dt.date(year, month, day).weekday() == start.weekday()]
+            nth = repeat.get("nth", 1)
+            day = same[-1] if nth >= 5 or nth > len(same) else same[nth - 1]
+        elif start.day > last:
+            continue  # the 31st: a month without one has none (Outlook takes its last day; the invented one leaves it out)
+        else:
+            day = start.day
+        found.append(start.replace(year=year, month=month, day=day))
+    return found
 WEEKDAYS = 62  # Monday to Friday, as Outlook counts the days of the week (Sunday is 1, Saturday 64)
 REPEAT_INTERVAL_MOST = 99  # every so many days, weeks or months
 NOTE_MOST = 2000  # characters of a note that goes along with an answer to an invitation
@@ -525,6 +601,14 @@ def clean_plan_request(payload: dict) -> dict:
             "every": repeat["every"], "times": max(0, min(times, REPEAT_MOST)),  # 0: it goes on
             "interval": max(1, min(interval, REPEAT_INTERVAL_MOST)),
         }
+        if repeat["every"] == "week" and isinstance(repeat.get("days"), list):
+            # the days of the week it takes place on, as the phone counts them (Sunday 0), and which of them the
+            # phone's own start is: the PC's clock may have that moment on the day before or after
+            days = {day for day in repeat["days"] if type(day) is int and 0 <= day <= 6}
+            request["repeat"]["days"] = sorted(days)
+            request["repeat"]["day"] = repeat.get("day") if type(repeat.get("day")) is int and 0 <= repeat["day"] <= 6 else None
+        if repeat["every"] == "monthNth":
+            request["repeat"]["last"] = repeat.get("last") is True  # the last such day of the month, not the fourth
     request["subject"] = " ".join(str(payload.get("subject") or "").split())[:255]
     request["location"] = " ".join(str(payload.get("location") or "").split())[:255]
     request["body"] = str(payload.get("body") or "")[:MAX_BODY]
@@ -549,6 +633,16 @@ def clean_plan_request(payload: dict) -> dict:
         raise MailError("It ends before it starts.")
     if request["end"] - request["start"] > dt.timedelta(days=CALENDAR_LONGEST_DAYS):
         raise MailError(f"An entry made on the phone can be {CALENDAR_LONGEST_DAYS} days long at most.")
+    how = request["repeat"]
+    if how and how.get("days"):
+        own = (request["start"].weekday() + 1) % 7  # the day it starts on by this PC's clock, Sunday 0
+        turn = (own - how["day"]) % 7 if how.get("day") is not None else 0
+        days = {(day + turn) % 7 for day in how["days"]} | {own}  # the day it starts on is always one of them
+        how["mask"] = sum(1 << day for day in days) if len(days) > 1 else 0  # as Outlook counts: Sunday 1, Monday 2, Saturday 64
+    if how and how["every"] == "monthNth":
+        start = request["start"]
+        how["nth"] = 5 if (how.get("last") and start.day + 7 > calendar.monthrange(start.year, start.month)[1]) else (start.day - 1) // 7 + 1
+        how["mask"] = 1 << (start.weekday() + 1) % 7
     return request
 
 
@@ -2512,6 +2606,10 @@ class OutlookMailbox:
                 pattern.RecurrenceType = REPEATS[request["repeat"]["every"]]
                 if request["repeat"]["every"] == "weekday":
                     pattern.DayOfWeekMask = WEEKDAYS
+                elif request["repeat"].get("mask"):  # on several days of the week, or on such a day of the month
+                    pattern.DayOfWeekMask = request["repeat"]["mask"]
+                if request["repeat"]["every"] == "monthNth":
+                    pattern.Instance = request["repeat"]["nth"]  # the first to the fourth, 5: the last
                 if request["repeat"].get("interval", 1) > 1:
                     pattern.Interval = request["repeat"]["interval"]
                 if request["repeat"]["times"]:
@@ -2632,15 +2730,19 @@ class OutlookMailbox:
                 raise
             except Exception:  # a data file that is offline or locked: the others are still listed
                 continue
-        categories = []
+        categories, colours = [], {}
         try:
             for category in self._ns.Categories:
                 if len(categories) >= CATEGORIES_SHOWN:
                     break
                 categories.append(str(category.Name))
+                try:
+                    colours[categories[-1]] = colour_name(category.Color)
+                except Exception:
+                    pass  # a category without a colour to read is listed by its name alone
         except Exception:
             pass
-        return {"folders": found, "categories": categories, "cut": len(found) >= FOLDERS_SHOWN}
+        return {"folders": found, "categories": categories, "colours": colours, "cut": len(found) >= FOLDERS_SHOWN}
 
     def rules(self) -> dict:
         """Outlook's rules for your mailbox, in the order they run, each on or off."""
@@ -2708,8 +2810,11 @@ class OutlookMailbox:
             for category in self._ns.Categories:
                 if str(category.Name).lower() == request["name"].lower():
                     raise MailError(f"There is a category \u201c{category.Name}\u201d already.")
-            self._ns.Categories.Add(request["name"])
-            return {"ok": True, "name": request["name"]}
+            if request.get("colour") is None:
+                self._ns.Categories.Add(request["name"])
+            else:
+                self._ns.Categories.Add(request["name"], COLOURS[request["colour"]])
+            return {"ok": True, "name": request["name"], **({"colour": request["colour"]} if request.get("colour") is not None else {})}
         if what == "empty":
             folder = self._ns.GetDefaultFolder(OL_FOLDER[request["folder"]])
             gone = 0
@@ -2810,6 +2915,7 @@ class OutlookMailbox:
         row = {"id": f"{store_key}.{item.EntryID}", "kind": kind}
         if kind == "tasks":
             row.update(title=str(getattr(item, "Subject", "") or "(no subject)"), due=self._day(getattr(item, "DueDate", None)),
+                       start=self._day(getattr(item, "StartDate", None)),
                        done=bool(getattr(item, "Complete", False)), important=getattr(item, "Importance", 1) == 2)
         elif kind == "notes":
             text = str(getattr(item, "Body", "") or "")
@@ -2887,6 +2993,8 @@ class OutlookMailbox:
     def _thing(self, kind: str, thing_id: str) -> dict:
         item = self._of_kind(kind, thing_id)
         row = {**self._thing_row(kind, item, thing_id.partition(".")[0]), "id": thing_id, "body": (getattr(item, "Body", "") or "")[:MAX_BODY]}
+        if kind == "tasks":  # when Outlook reminds of it, as UTC; "" when it does not
+            row["remind"] = self._moment(getattr(item, "ReminderTime", None)) if bool(getattr(item, "ReminderSet", False)) else ""
         if kind == "contacts":
             emails = [str(getattr(item, f"Email{number}Address", "") or "") for number in (1, 2, 3)]
             phones = [(label, str(getattr(item, name, "") or "")) for label, name in (
@@ -2948,6 +3056,21 @@ class OutlookMailbox:
                     item.Subject = request["title"]
                     item.Importance = 2 if request["important"] else 1
                     self._set_day(item, "DueDate", request["due"])
+                    if "start" in request:
+                        # after the due day: Outlook moves the one when the other is set, and takes the start
+                        # away with the due day. Both are read back as they are in the end.
+                        self._set_day(item, "StartDate", request["start"])
+                        if self._day(getattr(item, "DueDate", None)) != (request["due"].isoformat() if request["due"] else ""):
+                            self._set_day(item, "DueDate", request["due"])
+                        if self._day(getattr(item, "StartDate", None)) != (request["start"].isoformat() if request["start"] else ""):
+                            raise MailError("Outlook did not keep the start day next to that due day. Set them in Outlook itself.")
+                    if "remind" in request:
+                        item.ReminderSet = request["remind"] is not None
+                        if request["remind"] is not None:
+                            try:
+                                self._set_time(item, "ReminderTime", request["remind"])
+                            except MailError:
+                                raise MailError("Outlook did not take the time of the reminder. Set it in Outlook itself.")
                 else:
                     item.FullName = request["title"]
                     item.CompanyName = request["company"]
@@ -3145,6 +3268,7 @@ class DemoMailbox:
         self.book = data.get("book", [])  # the invented company directory
         self.own_folders = data.get("folders", [])
         self.categories = data.get("categories", [])
+        self.colours = {name: colour for name, colour in data.get("colours", {}).items() if colour in COLOURS}
         self.signatures = data.get("signature", {"new": "", "reply": ""})
         self.addresses = {one["name"]: one["address"] for one in self.people_known + self.book + [self.me]}
         now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
@@ -3194,7 +3318,7 @@ class DemoMailbox:
         self.pages = {"tasks": [], "notes": [], "contacts": []}  # the invented tasks, notes and contacts
         for index, task in enumerate(data.get("tasks", [])):
             due = (dt.date.today() + dt.timedelta(days=task["dueInDays"])).isoformat() if "dueInDays" in task else ""
-            self.pages["tasks"].append({"id": f"demo.{index + 0x7A00:016X}", "kind": "tasks", "title": task["title"], "due": due,
+            self.pages["tasks"].append({"id": f"demo.{index + 0x7A00:016X}", "kind": "tasks", "title": task["title"], "due": due, "start": "", "remind": "",
                                         "done": bool(task.get("done")), "important": bool(task.get("important")), "body": task.get("body", "")})
         for index, note in enumerate(data.get("notes", [])):
             when = now - dt.timedelta(minutes=note.get("minutesAgo", 0))
@@ -3419,7 +3543,7 @@ class DemoMailbox:
             first, _, rest = one["body"].strip().partition("\n")
             return {"id": one["id"], "kind": "notes", "title": first.strip()[:120] or "(empty note)", "preview": " ".join(rest.split())[:180], "time": one["time"]}
         if one["kind"] == "tasks":
-            return {name: one[name] for name in ("id", "kind", "title", "due", "done", "important")}
+            return {name: one.get(name, "") for name in ("id", "kind", "title", "due", "start", "done", "important")}
         return {"id": one["id"], "kind": "contacts", "title": one["title"], "company": one["company"], "email": one["email"], "phone": one["mobile"] or one["work"]}
 
     def things(self, kind: str, query: str = "", done: bool = False) -> dict:
@@ -3449,6 +3573,8 @@ class DemoMailbox:
         with self.lock:
             one = self._page_one(kind, thing_id)
             full = {**self._page_row(one), "body": one["body"]}
+            if kind == "tasks":
+                full["remind"] = one.get("remind", "")
             if kind == "contacts":
                 phones = [("Mobile", one["mobile"]), ("Work", one["work"])]
                 full.update(emails=[one["email"]] if one["email"] else [], job=one["job"], mobile=one["mobile"], work=one["work"], address=one["address"],
@@ -3475,6 +3601,12 @@ class DemoMailbox:
                 one["time"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             elif kind == "tasks":
                 one.update(title=request["title"], due=request["due"].isoformat() if request["due"] else "", important=request["important"])
+                if "start" in request:
+                    one["start"] = request["start"].isoformat() if request["start"] else ""
+                elif not request["due"]:
+                    one["start"] = ""  # Outlook takes the start away with the due day
+                if "remind" in request:
+                    one["remind"] = request["remind"].astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if request["remind"] else ""
             else:
                 one.update(title=request["title"], company=request["company"], job=request["job"], email=request["email"],
                            mobile=request["mobile"], work=request["phone"])
@@ -3486,7 +3618,7 @@ class DemoMailbox:
                 {**folder, "file": "", "unread": sum(1 for mail in self.mail if mail["folder"] == folder["id"] and mail["unread"])}
                 for folder in self.own_folders
             ]
-        return {"folders": found, "categories": list(self.categories), "cut": False}
+        return {"folders": found, "categories": list(self.categories), "colours": dict(self.colours), "cut": False}
 
     def signature(self) -> dict:
         return dict(self.signatures)
@@ -3536,9 +3668,8 @@ class DemoMailbox:
                     "optional": "; ".join(request["optional"]), "reminder": 15, **fresh, **when,
                 }
                 self.events.append(first)
-                step = {"day": 1, "week": 7, "month": 30, "year": 365, "weekday": 1}.get(repeat["every"], 0) * repeat["interval"] if repeat else 0
-                for number in range(1, min(repeat["times"] or 12, 12) if repeat else 0):  # a year of them at most, in the demo
-                    shift = dt.timedelta(days=step * number)
+                for moment in takes_place(request["start"], repeat, 12)[1:]:  # twelve of them at most, in the demo
+                    shift = moment - request["start"]
                     self.events.append({
                         **first, "start": utc(request["start"] + shift), "end": utc(request["end"] + shift),
                         "day": (request["start"] + shift).date().isoformat(), "lastDay": (last + shift).date().isoformat(),
@@ -3593,7 +3724,8 @@ class DemoMailbox:
                 if any(name.lower() == request["name"].lower() for name in self.categories):
                     raise MailError(f"There is a category \u201c{request['name']}\u201d already.")
                 self.categories.append(request["name"])
-                return {"ok": True, "name": request["name"]}
+                self.colours[request["name"]] = request.get("colour") or ""
+                return {"ok": True, "name": request["name"], **({"colour": request["colour"]} if request.get("colour") is not None else {})}
             if what == "away":
                 self.away_on = request["on"]
                 return {"ok": True, "away": self.away_on}

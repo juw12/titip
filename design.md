@@ -68,6 +68,11 @@ the system face.
   48 px, which is what Android asks for and more than the 44 an iPhone does (a recipient's label is
   32 px to look at and 44 to tap). A name in a line of text that can be pressed keeps the line one
   line high and is 48 px to the finger.
+- The days of the week are seven equal buttons in one line, Monday first, two letters each, the
+  ones picked pressed like an answer to an invitation. The day the entry starts on is pressed and
+  cannot be let go.
+- A category's colour is a 12 px dot before its name; one without a colour has a ring. Eight
+  colours, picked to be told apart on both grounds, never the only sign: the name is next to it.
 - Two boxes of text on one sheet each have their name over them, small and in mono like a field's
   label, with a line between them. One box alone needs none: the sheet's title says what it is.
 - A shadow only under what floats: the New mail button, the notice, the list of names, and the

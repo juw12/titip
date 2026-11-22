@@ -282,7 +282,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 }
 .readerTop { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: var(--tap); }
 .readerDo { margin-left: auto; display: flex; gap: var(--s4); }
-.readerDo .link { padding: 0; }
+.readerDo .link { padding: 0; min-width: var(--tap); }   /* "More" is four letters: still a finger wide */
 .link.danger { color: var(--stamp); }
 .reader { position: relative; }
 .tags { padding: var(--s2) 0; border-bottom: 1px solid var(--line); color: var(--ink-2); font: 500 12px/1.6 var(--mono); letter-spacing: 0.02em; }
@@ -311,6 +311,22 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .suggest input { min-height: var(--tap); padding: 0 var(--s2); background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); }
 .suggest button { min-height: var(--tap); padding: 0 var(--s3); background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); font-weight: 600; }
 /* the list narrowed to what is unread or flagged: three words under the search box, the one in use pressed */
+/* the days of the week an entry repeats on: each a finger wide, so on a narrow phone they take two lines */
+.days { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--tap), 1fr)); gap: var(--s1); padding: var(--s1) 0; min-width: 0; }
+.days button { min-width: 0; min-height: var(--tap); padding: 0; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: 13px; font-weight: 500; }
+.days button[aria-pressed="true"] { background: var(--pick); border-color: var(--accent); font-weight: 700; }
+.days button:disabled { opacity: 1; color: var(--ink); }   /* the day it starts on: always one of them */
+.hue { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--dot, transparent); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.hue[data-colour]:not([data-colour=""]) { box-shadow: none; }
+.hue[data-colour="red"] { --dot: #d13438; }
+.hue[data-colour="orange"] { --dot: #e8740c; }
+.hue[data-colour="yellow"] { --dot: #e3b505; }
+.hue[data-colour="green"] { --dot: #2f9e44; }
+.hue[data-colour="teal"] { --dot: #0c8f8f; }
+.hue[data-colour="blue"] { --dot: #2f6fd1; }
+.hue[data-colour="purple"] { --dot: #7c4dbc; }
+.hue[data-colour="gray"] { --dot: #7a7a7a; }
+.hue + .ownName { flex: 1; }   /* the name stays next to its colour, not at the other edge */
 .shows { display: flex; gap: var(--s2); margin-top: var(--s2); }
 .shows button { flex: 1; min-height: var(--tap); background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius); font-weight: 500; }
 .shows button[aria-pressed="true"] { background: var(--pick); border-color: var(--accent); }
@@ -434,7 +450,16 @@ button:disabled { opacity: 0.55; cursor: default; }
 .field select {
   width: 100%; min-height: var(--tap); padding: var(--s2) 0; background: none; border: 0; color: inherit; font: inherit;
 }
-.hours2 .pair select { width: auto; flex: 1 1 auto; }
+.hours2 .pair select { width: 0; min-width: 0; flex: 1 1 0; text-overflow: ellipsis; }   /* as wide as is left, however long its longest choice */
+.hours2 .pair > span { flex: none; white-space: nowrap; }
+/* what is typed or picked there is 16 px like every field: an iPhone zooms the page in on a smaller one */
+.hours2 .pair input, .hours2 .pair select { font: 16px/1.3 var(--ui); letter-spacing: 0; text-transform: none; color: var(--ink); }
+/* a day and a time, or two times, that do not fit one line on a narrow phone go on two: never cut off */
+.hours2 .pair { flex-wrap: wrap; row-gap: 0; }
+.hours2 .pair input[type="time"] { flex: 0 1 auto; min-width: 104px; }
+.hours2 .pair input[type="date"] { flex: 0 1 auto; min-width: 150px; }
+.hours2 > :first-child { align-self: start; line-height: var(--tap); }   /* the name stays next to the first line */
+#planRepeatField .pair select { flex: 1 1 100%; width: 100%; }   /* how it repeats has the line to itself; how many times goes under it */
 .hours2 .pair input[type="number"] { width: 84px; flex: none; }
 .field :disabled { color: var(--muted); }
 .composeFoot button[aria-pressed="true"] { background: var(--pick); border-color: var(--line-strong); }
@@ -443,6 +468,8 @@ button:disabled { opacity: 0.55; cursor: default; }
 .hours2 .pair { display: flex; align-items: center; gap: var(--s3); color: var(--muted); }
 .hours2 .pair input { width: auto; flex: 0 1 auto; }
 .field input[type="date"], .field input[type="time"] { font-variant-numeric: tabular-nums; }
+/* a day or a time that is not set: some browsers show today's date in an empty box, so it is dimmed to say it is not one */
+.field input.unset:not(:focus), .hours2 .pair input.unset:not(:focus) { color: var(--muted); }
 #planner .tick { border-bottom: 1px solid var(--line); }
 /* a list to pick from: folders to move a mail to, categories to tick */
 .picker { position: fixed; inset: 0; z-index: 12; display: flex; align-items: flex-end; justify-content: center; background: rgb(0 0 0 / 0.32); }
