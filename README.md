@@ -17,7 +17,7 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - **Android:** [`Titip-android.apk`](https://github.com/juw12/titip/releases/download/android/Titip-android.apk): open the file on the phone and allow your browser to install apps once.
 - **iPhone:** open https://juw12.github.io/titip/ in Safari, tap Share, then **Add to Home Screen**.
 
-The Windows, Mac and Android apps are the web app in its own window ([`desktop/`](desktop/README.md), [`android/`](android/README.md)) and change with it. Each build is opened on GitHub's machines before it is published: on Windows and on a Mac the page loads, the app starts and can store data; on an Android emulator it installs, opens and stays up. They are not code-signed or notarised, and no real phone or PC has run them yet.
+The Windows, Mac and Android apps open Titip's web page in a window of its own ([`desktop/`](desktop/README.md), [`android/`](android/README.md)) and change with it. That page is a demo with invented mail; your own mail is served by Titip on your PC. Each build is opened on GitHub's machines before it is published: on Windows and on a Mac the page loads, the app starts and can store data; on an Android emulator it installs, opens and stays up. They are not code-signed or notarised, and no real phone or PC has run them yet.
 
 ## What it does
 
