@@ -1,9 +1,11 @@
-"""Check what Titip 0.9.0 to 0.14.0 added against the real Outlook on this PC.
+"""Check what Titip 0.9.0 to 0.14.1 added against the real Outlook on this PC.
 
     python scripts/check_outlook.py            reads only: nothing is sent, saved, moved or deleted
     python scripts/check_outlook.py --write    also makes calendar entries (one that repeats, one over two days), a folder, a draft
                                                with a file, a task, a note and a contact, reads them back and
-                                               deletes them again (all but the calendar entries end in Deleted Items)
+                                               deletes them again (all but the calendar entries end in Deleted Items).
+                                               Where no automatic reply text is set and the replies are off, it writes
+                                               one, reads it back and takes it out again
     python scripts/check_outlook.py --away     also switches the automatic replies (out of office) to the other
                                                state and back at once, and writes the text they have again. While they are on, Outlook answers whoever
                                                writes to you: that is why this is asked for by its own word.
@@ -261,6 +263,23 @@ def main() -> int:
 
     attempt("a mail that leaves later", leaves_later)
 
+    def another_time():
+        start = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=3)).replace(hour=2, minute=30, second=0, microsecond=0, tzinfo=None)
+
+        def make():
+            mail = box._app.CreateItem(0)
+            try:
+                return OutlookMailbox._propose(mail, start, start + dt.timedelta(minutes=45))
+            finally:
+                mail.Close(OL_DISCARD)
+
+        if not box._do(make, timeout=120):
+            return ("this Outlook does not take the fields of a proposed time (or reads them back as another moment): "
+                    "an answer that suggests another time says it in words only")
+        return "an unsent mail takes the fields Outlook's own Propose New Time writes, and reads them back as set; it was thrown away"
+
+    attempt("another time suggested the way Outlook writes it", another_time)
+
     def windows():
         def look():
             explorers = box._app.Explorers
@@ -294,7 +313,10 @@ def main() -> int:
         state = box._do(box._away_now, timeout=120)
         if state["text"] is None:
             return "this mailbox keeps no note for it: the phone offers the switch only"
-        return "the note Outlook keeps for it is read: %d characters" % len(state["text"])
+        if state["outside"] is None:
+            return "the note Outlook keeps for it is read: %d characters; none is kept for people outside" % len(state["text"])
+        return "the notes Outlook keeps for it are read: %d characters for colleagues, %d for people outside" % (
+            len(state["text"]), len(state["outside"]))
 
     attempt("what the automatic reply says", reply_text)
 
@@ -510,6 +532,40 @@ def main() -> int:
             return "made, found by its name, read back with address and number, changed, moved to Deleted Items"
 
         attempt("a contact", contact)
+
+        def reply_text_written():
+            before = box._do(box._away_now, timeout=120)
+            if before["text"] is None:
+                return "this mailbox keeps no note for it: nothing to write"
+            if before["on"] is not False:
+                return "the automatic replies are on (or do not say): the text people get now was left alone"
+            if before["text"] or before["outside"]:
+                return "a text is set: it was left alone, so that nothing of it is lost"
+            both = before["outside"] is not None
+
+            def put_back():
+                for outside in ((False, True) if both else (False,)):
+                    note = box._away_note(outside)
+                    note.Body = ""
+                    note.Save()
+
+            try:
+                order = {"what": "awayText", "text": "Titip check (taken out again at once)"}
+                if both:
+                    order["outside"] = "Titip check, outside (taken out again at once)"
+                box.arrange(order)
+                kept = box._do(box._away_now, timeout=120)
+                if kept["text"] != order["text"] or (both and kept["outside"] != order["outside"]):
+                    raise MailError("the text read back is not the text written")
+            finally:
+                box._do(put_back, timeout=120)
+            after = box._do(box._away_now, timeout=120)
+            if after["text"] or after["outside"]:
+                raise MailError("the text of the check is still there: take it out in Outlook, File, Automatic Replies")
+            return "no text was set and the replies are off: a text was written for colleagues%s, read back, and taken out again" % (
+                " and one for people outside" if both else "")
+
+        attempt("what the automatic reply says, written", reply_text_written)
 
     print()
     print("FAILED: " + "; ".join(problems) if problems else "PASS")

@@ -375,7 +375,8 @@ class OverTheWire(test_server.ServerCase):
         reply, data = self.phone("GET", "/sw.js", cookie=self.token)
         self.assertEqual((reply.status, reply.getheader("Content-Type")), (200, "text/javascript; charset=utf-8"))
         self.assertIn(b"showNotification", data)
-        self.assertNotIn(b"fetch", data, "it answers no request: the app loads as it does without it")
+        self.assertIn(b'url.pathname.indexOf("/api/") >= 0', data, "no answer of the PC ever goes through it")
+        self.assertLess(data.index(b"fetch(request)"), data.index(b"cache.match(kept)"), "the network first; a kept copy only when it fails")
 
 
 if __name__ == "__main__":

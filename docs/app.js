@@ -4,7 +4,7 @@
   "use strict";
 
   var $ = function (id) { return document.getElementById(id); };
-  var VERSION = "0.14.0";   // shown under the list: a Home Screen icon can keep running an old page for days
+  var VERSION = "0.14.1";   // shown under the list: a Home Screen icon can keep running an old page for days
   var LOADED = Date.now();
   var FOLDERS = {
     inbox: "Inbox", sent: "Sent", drafts: "Drafts", outbox: "Outbox", deleted: "Deleted", junk: "Junk", calendar: "Calendar",
@@ -369,7 +369,11 @@
         }
         if (order.what === "category") { data.categories.push(order.name); return { ok: true, name: order.name }; }
         if (order.what === "away") { data.away = !!order.on; return { ok: true, away: data.away }; }
-        if (order.what === "awayText") { data.awayText = order.text; return { ok: true, text: order.text }; }
+        if (order.what === "awayText") {
+          data.awayText = order.text;
+          if (typeof order.outside === "string") data.awayOutside = order.outside;
+          return { ok: true, text: order.text, outside: data.awayOutside || "" };
+        }
         if (order.what === "empty") {
           var inside = data.mail.filter(function (mail) { return mail.folder === order.folder; });
           inside.forEach(function (mail) {
@@ -440,7 +444,8 @@
     signature: function () { return demoLoad().then(function (data) { return data.signature || { "new": "", reply: "" }; }); },
     away: function () {
       return demoLoad().then(function (data) {
-        return { on: !!data.away, text: data.awayText === undefined ? "I am out of the office and will answer when I am back." : data.awayText };
+        return { on: !!data.away, text: data.awayText === undefined ? "I am out of the office and will answer when I am back." : data.awayText,
+          outside: data.awayOutside || "" };
       });
     },
     things: function (kind, query, done) {
@@ -676,7 +681,7 @@
 
   // The public page is updated before the PC has moved to the same version, and a PC can stay behind.
   // What 0.9.0 added is then said to be on its way, instead of asked of a PC that does not know the question.
-  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0", NEEDS_PUSH = "0.14.0";   // what came with a version asks for that one
+  var NEEDS = "0.9.0", NEEDS_MORE = "0.10.0", NEEDS_PAGES = "0.11.0", NEEDS_FULL = "0.12.0", NEEDS_OPEN = "0.13.0", NEEDS_PUSH = "0.14.0", NEEDS_REAL = "0.14.1";   // what came with a version asks for that one
   function pcBehind(needs) {
     if (DEMO || !pcVersion) return false;
     var has = pcVersion.split("."), wants = (needs || NEEDS).split(".");
@@ -1228,7 +1233,8 @@
       var words = "I suggest another time: " + begins.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: "numeric" }) +
         ", " + clock(begins.toISOString()) + " to " + clock(ends.toISOString()) + ".";
       $("answerNote").value = words + ($("answerNote").value.trim() ? " " + $("answerNote").value.trim() : "");
-      respond(id, "tentative", event);
+      // and in the fields Outlook's own proposal uses, so the organizer's Outlook can take the time over (0.14.1; an older PC sends the words)
+      respond(id, "tentative", event, "", { start: begins.toISOString(), end: ends.toISOString() });
     };
     Array.prototype.forEach.call($("answers").querySelectorAll("button"), function (button) {
       var answer = button.getAttribute("data-answer");
@@ -1237,14 +1243,16 @@
       button.onclick = function () { respond(id, answer, event); };
     });
   }
-  function respond(id, answer, event, scope) {
+  // `another` is another time ({start, end}) that goes with a tentative answer
+  function respond(id, answer, event, scope, another) {
     // a meeting that repeats, answered from the calendar: this one time, or all of them?
     if (!scope && view.folder === "calendar" && event.recurring && event.start && !pcBehind(NEEDS_OPEN)) {
-      whichOnes("Answer", event, function (which) { respond(id, answer, event, which); });
+      whichOnes("Answer", event, function (which) { respond(id, answer, event, which, another); });
       return;
     }
     var showing = view.id;
     var order = { what: "respond", id: id, answer: answer };
+    if (another && answer === "tentative" && !pcBehind(NEEDS_REAL)) order.propose = another;
     if (scope === "one") order.occurrence = event.start;
     var note = $("answerNote").hidden ? "" : $("answerNote").value.trim();
     if (note) order.note = note;   // a few words the organizer reads with the answer
@@ -1479,6 +1487,9 @@
   function setWho(person) {
     who = person && !pcBehind(NEEDS_FULL) ? person : null;
     $("from").classList.toggle("tap", !!who);
+    // a name is a button only while there is something to show for it
+    if (who) { $("from").setAttribute("role", "button"); $("from").setAttribute("tabindex", "0"); }
+    else { $("from").removeAttribute("role"); $("from").removeAttribute("tabindex"); }
   }
   function showPerson() {
     if (!who) return;
@@ -2797,7 +2808,21 @@
     $("thingBody").placeholder = kind === "notes" ? "Write the note. Its first line is its title." : "Notes";
     $("thingFoot").textContent = kind === "away" ? "What colleagues who write to you are told while automatic replies are on."
       : "Kept in Outlook's " + FOLDERS[kind].toLowerCase() + " on your PC.";
-    if (kind === "away") $("thingBody").placeholder = "I am out of the office until\u2026";
+    if (kind === "away") {
+      $("thingBody").placeholder = "For colleagues: I am out of the office until\u2026";
+      // the text for people outside: offered when the PC could read it (0.14.1 and later)
+      $("thingOutsideField").hidden = !full || full.outside === null || full.outside === undefined || pcBehind(NEEDS_REAL);
+      $("thingOutside").value = full && full.outside ? full.outside : "";
+    }
+    // two boxes one over the other need their names over them; one box alone says what it is in its footnote
+    var two = kind === "away" && !$("thingOutsideField").hidden;
+    $("thingBodyField").className = two ? "field grow named" : "field grow";
+    $("thingBodyLabel").className = two ? "" : "sr";
+    $("thingBodyLabel").textContent = two ? "People in your organization are told" : "Text";
+    if (two) {
+      $("thingBody").placeholder = "I am out of the office until\u2026";
+      $("thingFoot").textContent = "What people who write to you are told while automatic replies are on.";
+    }
     $("thingError").hidden = true;
     showThinger(true);
     (kind === "notes" ? $("thingBody") : $("thingName")).focus();
@@ -2809,7 +2834,9 @@
       var told = $("thingBody").value.trim();
       if (!told) { $("thingError").textContent = "Write what people are to be told first."; $("thingError").hidden = false; $("thingBody").focus(); return; }
       showThinger(false);
-      arrange({ what: "awayText", text: told }, "The automatic reply says the new text");
+      var order = { what: "awayText", text: told };
+      if (!$("thingOutsideField").hidden) order.outside = $("thingOutside").value.trim();
+      arrange(order, "The automatic reply says the new text");
       return;
     }
     var order = {
@@ -2872,11 +2899,13 @@
       if (got.text !== null && got.text !== undefined) {   // the PC could read what colleagues are told: it is shown, and can be changed
         $("pickerNote").textContent = "They are " + (away ? "on" : "off") + ". " + (got.text ? "People in your organization are told: \u201c" +
           (got.text.length > 240 ? got.text.slice(0, 240) + "\u2026" : got.text) + "\u201d" : "No text is set for them yet.");
-        rows.push({ id: "text", name: "Change the text", note: "What people in your organization are told. For people outside, and for dates, use Outlook." });
+        var both = got.outside !== null && got.outside !== undefined && !pcBehind(NEEDS_REAL);
+        rows.push({ id: "text", name: "Change the text", note: both ? "What people are told, in your organization and outside it. Whether people outside get an answer, and dates, are set in Outlook."
+          : "What people in your organization are told. For people outside, and for dates, use Outlook." });
       }
       return rows;
     }, function (chosen) {
-      if (chosen.id === "text") { openThinger("away", { id: "", body: known.text || "" }); return; }
+      if (chosen.id === "text") { openThinger("away", { id: "", body: known.text || "", outside: known.outside }); return; }
       switchAway(chosen.id === "on");
     }, { load: function () { return pcBehind(NEEDS_OPEN) ? Promise.resolve({ on: away, text: null }) : api.away().catch(function () { return { on: away, text: null }; }); } });
   }
@@ -2968,7 +2997,8 @@
       }
     });
     // kept signed up: the worker is looked for again each time the page opens, so a new one replaces the old
-    if (store.get("titip.push") === "1") navigator.serviceWorker.register("sw.js").catch(function () { /* said when the sheet is opened */ });
+    // On the page for any network the worker also keeps the app's own files, so the icon opens without a network.
+    if (HOSTED || store.get("titip.push") === "1") navigator.serviceWorker.register("sw.js").catch(function () { /* said when the sheet is opened */ });
   }
   // ---- everything in Deleted Items, for good; everything in Junk, to Deleted Items
   $("emptyOpen").onclick = function () {

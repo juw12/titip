@@ -65,7 +65,11 @@ the system face.
 ## Space and shape
 
 - Spacing steps 4, 8, 12, 16, 24, 32. Radius 6 on everything that is not a round initial. Tap targets
-  48 px (44 minimum, a recipient's label is 32 px to look at and 44 to tap).
+  48 px, which is what Android asks for and more than the 44 an iPhone does (a recipient's label is
+  32 px to look at and 44 to tap). A name in a line of text that can be pressed keeps the line one
+  line high and is 48 px to the finger.
+- Two boxes of text on one sheet each have their name over them, small and in mono like a field's
+  label, with a line between them. One box alone needs none: the sheet's title says what it is.
 - A shadow only under what floats: the New mail button, the notice, the list of names, and the
   composer on a wide screen.
 

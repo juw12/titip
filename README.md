@@ -53,8 +53,8 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
   this one, or the whole series.
 - An invitation can be answered **with a note**: a line over the three answers, which the
   organizer reads in the answer. **Suggest another time** answers tentative and says the day and
-  the hours you would rather have. Of a meeting that repeats you are asked: answer this one time,
-  or the whole series.
+  the hours you would rather have, in words and in the fields Outlook's own "Propose New Time"
+  writes. Of a meeting that repeats you are asked: answer this one time, or the whole series.
 - **Select several mails** (under the search box, or hold a finger on a mail): tick them, then
   **Delete**, **Read**, **Unread**, **Flag** or **Move** them together.
 - **Push a row aside** in a list of mail: to the left it is deleted (behind Undo, as always), to
@@ -79,8 +79,9 @@ and Outlook on that PC sends it exactly as if you had typed it at your desk.
 - **Send later**, a button under the text: pick a day and a time, and the mail waits in Outlook's
   Outbox until then. It can still be stopped there.
 - **Automatic replies** (out of office), under the list of folders: the switch, on or off, what
-  the reply says, and **Change the text**. While they are on, one line over every list says so,
-  with **Switch off** next to it.
+  the reply says, and **Change the text**: one box for people in your organization, one for
+  people outside it. While they are on, one line over every list says so, with **Switch off**
+  next to it.
 - **Delete** moves a message to Deleted Items. A draft is discarded the same way, and a mail deleted
   from the Outbox does not leave. In Deleted Items, **Delete for good** removes a mail for good, and
   under the list of folders **Empty Deleted Items** removes everything in it. **Empty Junk** moves
@@ -267,9 +268,12 @@ last sealed state from the relay, which costs one request and asks the PC nothin
 
 A request that gets no reply is made again for a few seconds before any of this is shown, and one
 that hangs for 10 seconds is dropped and made again: a phone that just woke up often hands the page
-a dead connection first. Under the list the page names its version (`Titip 0.14.0`). A Home Screen
+a dead connection first. Under the list the page names its version (`Titip 0.14.1`). A Home Screen
 icon that has been open for more than 12 hours reloads itself the next time you come back to it,
-so it does not keep running an old page.
+so it does not keep running an old page. The page for any network keeps its own files on the
+phone (the page, never mail), so its icon opens without a connection too and says that the phone
+is offline, where a browser would show an error page. With a connection it always takes the
+newest files.
 
 ## Updates
 
@@ -446,12 +450,19 @@ Titip opens a door from your network to your mailbox. Read this first.
 - Nothing leaves a folder for good in one step: only what is in Deleted Items already is deleted
   for good, and the countdown before it says "for good". Emptying takes 300 at a time and says how
   many are still there. It empties the Deleted Items of your mailbox, not those of other data files.
-- What the automatic reply says is read from, and written to, the hidden note Outlook keeps for
-  it in the Inbox (the one for people in your organization), and read back after it is written.
-  The text for people outside and a time span are set in Outlook. This is not tried on a real
-  Exchange yet: after the first change, look in Outlook once that it shows your text.
-- Another time for a meeting is said in words in a tentative answer. Outlook's own "Propose New
-  Time" form cannot be made by a program, so the organizer reads the time and moves the meeting.
+- What the automatic reply says is read from, and written to, the two hidden notes Outlook keeps
+  for it in the Inbox (one for people in your organization, one for people outside), and read back
+  after it is written. The one for people outside is written only when you changed it. The texts
+  are plain: a text with formatting set in Outlook loses the formatting when the phone changes it.
+  Whether people outside get an answer at all, and a time span, are set in Outlook. Reading the
+  notes is tried on a real Exchange mailbox. That the reply people get is the text written from
+  the phone is not: after the first change, look in Outlook once that it shows your text.
+- Another time for a meeting is always said in words in the tentative answer. Outlook's own
+  "Propose New Time" cannot be called by a program, so Titip also writes the four fields that
+  form fills in (the start, the end, the length, and that it is a proposal), each read back. If
+  Outlook does not take one of them, all four are taken out and the answer leaves with the words
+  alone. An organizer whose Outlook reads the fields sees the time as a proposal to accept;
+  another mail program shows the words.
 - One time of a meeting that repeats is found by when it starts, the way one time of your own
   series is, and only that time is answered.
 - A picture in the text is a PNG, a JPEG or a GIF. If the line that names it is taken out, it
@@ -471,10 +482,14 @@ Titip opens a door from your network to your mailbox. Read this first.
   leaves the next time Outlook runs. It can wait 60 days at most. The time is set, read back, and
   set again if Outlook shifted it; a time Outlook does not take stops the mail instead of sending
   it now.
-- The switch for automatic replies is the switch only. The text people get, whom outside the
-  company it goes to, and from when to when, are what was last set in Outlook. An Exchange mailbox
-  says whether they are on; for another kind of mailbox the phone does not offer the switch. After
-  switching, Titip reads the state back, and says so if Outlook took the switch and nothing changed.
+- The switch for automatic replies switches them on or off. Whom outside the company they go
+  to, and from when to when, are what was last set in Outlook. An Exchange mailbox says whether
+  they are on; for another kind of mailbox the phone does not offer the switch. After switching,
+  Titip reads the state back, and says so if Outlook took the switch and nothing changed.
+- The files the page keeps on the phone are its own (the page, its script, its looks, its icons),
+  kept by a worker in the background, and only for the page for any network. Nothing that came
+  from your PC is kept: no list, no mail, no answer. Every load asks the network first and falls
+  back to the kept file only when there is no answer.
 - Notifications reach a closed page through the push service of the phone's maker: Apple's for
   an iPhone, Google's for Android and Chrome. The phone signs up there and hands your PC an address
   and a key. For each notice your PC seals who wrote and what about for that one phone (RFC 8291)
@@ -547,9 +562,9 @@ Titip opens a door from your network to your mailbox. Read this first.
   pictures. No fonts, colours or tables: Outlook's own phone app has none either.
 - A task has a name, a due day, high importance and a text. Its start day, how it repeats and
   whom it is assigned to are set in Outlook. A note has no colour. A contact has no picture.
-- Automatic replies: the switch and the text for colleagues. The text for people outside and a
-  time span are set in Outlook; they are kept by the mail server, where a program on the PC cannot
-  reach them.
+- Automatic replies: the switch and the two texts. Whether people outside get an answer, and a
+  time span, are set in Outlook; they are kept by the mail server, where a program on the PC
+  cannot reach them.
 - It is laid out like Outlook's phone app but is not it. Notifications come only while the PC is
   on and Outlook is open, up to a minute and a half after the mail, and only to the page for any
   network.
@@ -572,7 +587,7 @@ Titip opens a door from your network to your mailbox. Read this first.
 python -m unittest discover -s tests -t .     # unit and server tests, no Outlook needed (the relay tests need Node)
 python scripts/e2e.py                         # real browser against the demo mailbox (needs playwright)
 python scripts/sync_docs.py                   # copy titip/web into docs/ for the public demo
-python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.14.0 added, against the real Outlook, reading only
+python scripts/check_outlook.py               # on the PC: what 0.9.0 to 0.14.1 added, against the real Outlook, reading only
 ```
 
 The pairing code is adapted from [Cairn](https://github.com/juw12/cairn) by the same author.

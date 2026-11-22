@@ -334,6 +334,12 @@ NEWS_KEPT = 400  # mails and reminders remembered as told
 EMPTY_MOST = 300  # mails deleted for good in one go when a folder is emptied; the phone asks again for the rest
 AWAY_TEXT_MOST = 4000
 OOF_TEMPLATE = "IPM.Note.Rules.OofTemplate.Microsoft"  # the hidden note in the Inbox that holds the automatic reply for colleagues
+OOF_OUTSIDE = "IPM.Note.Rules.ExternalOofTemplate.Microsoft"  # and the one for people outside the organization
+# Another time proposed for a meeting, as Outlook itself writes it into its answer (MS-OXOCAL: the answer's
+# PidLidAppointmentProposedStartWhole, ...EndWhole, ...Duration and PidLidAppointmentCounterProposal).
+APPOINTMENT = "http://schemas.microsoft.com/mapi/id/{00062002-0000-0000-C000-000000000046}/"
+P_PROPOSED_START, P_PROPOSED_END = APPOINTMENT + "82500040", APPOINTMENT + "82510040"
+P_PROPOSED_MINUTES, P_PROPOSED = APPOINTMENT + "82560003", APPOINTMENT + "8257000B"
 P_CONTENT_ID = PROP + "0x3712001F"  # PR_ATTACH_CONTENT_ID: what a picture inside the text is called by
 PICTURES = (".png", ".jpg", ".jpeg", ".gif")
 NAME_MOST = 80  # letters of a folder's or a category's name
@@ -358,7 +364,9 @@ def clean_arrange_request(payload: dict) -> dict:
         text = str(payload.get("text") or "").replace("\r\n", "\n").strip()
         if not text:
             raise MailError("Write what people are to be told first.")
-        return {**request, "text": text[:AWAY_TEXT_MOST]}
+        outside = payload.get("outside")  # None: the text for people outside stays as it is
+        return {**request, "text": text[:AWAY_TEXT_MOST],
+                "outside": None if outside is None else str(outside).replace("\r\n", "\n").strip()[:AWAY_TEXT_MOST]}
     if what in ("folder", "rename", "category") and (not request["name"] or re.search(r'[\\/;,]', request["name"])):
         raise MailError("Give it a name, without \\ / ; or a comma.")
     if what == "folder" and request["in"] not in ("", "inbox") and not FOLDER_ID.fullmatch(request["in"]):
@@ -383,7 +391,16 @@ def clean_act_request(payload: dict) -> dict:
         "to": str(payload.get("to") or ""), "categories": [],
         "note": str(payload.get("note") or "").strip()[:NOTE_MOST],  # a few words for the organizer, with the answer
         "occurrence": None,  # of a meeting that repeats: the one time that is answered, by when it starts
+        "propose": None,  # another time suggested with the answer: (start, end), both UTC
     }
+    if what == "respond" and isinstance(payload.get("propose"), dict):
+        try:
+            start, end = (dt.datetime.strptime(str(payload["propose"].get(name))[:16], "%Y-%m-%dT%H:%M") for name in ("start", "end"))
+        except (TypeError, ValueError):
+            raise MailError("That day or time could not be read.")
+        if not dt.timedelta(0) < end - start <= dt.timedelta(days=CALENDAR_LONGEST_DAYS):
+            raise MailError("The time you suggest ends before it starts.")
+        request["propose"] = (start, end)
     if what == "respond" and payload.get("occurrence"):
         try:
             request["occurrence"] = local_time(payload.get("occurrence"))
@@ -1256,9 +1273,10 @@ class OutlookMailbox:
             "away": self._away(),
         }
 
-    def _away_note(self):
-        """The hidden note in the Inbox that holds what colleagues are told automatically (2: found by its class)."""
-        return self._ns.GetDefaultFolder(OL_INBOX).GetStorage(OOF_TEMPLATE, 2)
+    def _away_note(self, outside: bool = False):
+        """The hidden note in the Inbox that holds what colleagues are told automatically, or the one for
+        people outside the organization (2: found by its class)."""
+        return self._ns.GetDefaultFolder(OL_INBOX).GetStorage(OOF_OUTSIDE if outside else OOF_TEMPLATE, 2)
 
     def away(self) -> dict:
         """Are automatic replies on, and what do they say? Asked when the phone opens that sheet."""
@@ -1272,7 +1290,14 @@ class OutlookMailbox:
             if getattr(error, "hresult", None) in RPC_BUSY:
                 raise
             text = None  # this mailbox keeps no such note (not an Exchange one)
-        return {"on": self._away(), "text": text}
+        outside = None
+        if text is not None:
+            try:
+                outside = str(self._away_note(True).Body or "").replace("\r\n", "\n").strip()
+            except Exception as error:
+                if getattr(error, "hresult", None) in RPC_BUSY:
+                    raise
+        return {"on": self._away(), "text": text, "outside": outside}
 
     def _away(self) -> bool | None:
         """Are automatic replies (out of office) on? None when this mailbox does not say (not an Exchange one)."""
@@ -2707,7 +2732,14 @@ class OutlookMailbox:
             note.Save()
             if " ".join(str(self._away_note().Body or "").split()) != " ".join(request["text"].split()):
                 raise MailError("Outlook did not keep the text. Set it in Outlook itself.")
-            return {"ok": True, "text": request["text"]}
+            if request.get("outside") is not None:
+                other = self._away_note(True)
+                if " ".join(str(other.Body or "").split()) != " ".join(request["outside"].split()):
+                    other.Body = request["outside"]
+                    other.Save()
+                    if " ".join(str(self._away_note(True).Body or "").split()) != " ".join(request["outside"].split()):
+                        raise MailError("Outlook kept the text for colleagues, but not the one for people outside. Set that one in Outlook itself.")
+            return {"ok": True, "text": request["text"], **({"outside": request["outside"]} if request.get("outside") is not None else {})}
         if what == "away":
             # The switch only. The text of the reply, and whom it goes to, is what is set in Outlook.
             try:
@@ -3045,8 +3077,50 @@ class OutlookMailbox:
             return {"ok": True, "responded": request["answer"], "told": False}
         if request["note"]:
             answer.Body = request["note"]  # what the organizer reads in the answer
+        proposed = bool(request["propose"]) and self._propose(answer, *request["propose"])
         answer.Send()
-        return {"ok": True, "responded": request["answer"], "told": True}
+        return {"ok": True, "responded": request["answer"], "told": True, **({"proposed": proposed} if request["propose"] else {})}
+
+    @staticmethod
+    def _propose(answer, start: dt.datetime, end: dt.datetime) -> bool:
+        """Write another time into an answer the way Outlook's own "Propose New Time" does, so the organizer's
+        Outlook can show it as a proposal and take it over with one press. `start` and `end` are UTC.
+
+        The object model has no call for it; the four fields are set one by one, each read back. A field
+        Outlook does not take, or reads back as another moment, takes the whole proposal out again: the
+        answer then leaves with the time in words only, and never with a time the words do not say.
+        """
+        accessor = answer.PropertyAccessor
+
+        def put(name: str, wanted: dt.datetime) -> None:
+            def read() -> dt.datetime:
+                value = accessor.GetProperty(name)
+                return dt.datetime(value.year, value.month, value.day, value.hour, value.minute)
+
+            accessor.SetProperty(name, wanted.replace(tzinfo=dt.timezone.utc))
+            got = read()
+            if got != wanted:  # taken as if written on another clock: set again by that much less
+                accessor.SetProperty(name, (wanted - (got - wanted)).replace(tzinfo=dt.timezone.utc))
+                if read() != wanted:
+                    raise ValueError(name)
+
+        try:
+            put(P_PROPOSED_START, start)
+            put(P_PROPOSED_END, end)
+            accessor.SetProperty(P_PROPOSED_MINUTES, int((end - start).total_seconds() // 60))
+            accessor.SetProperty(P_PROPOSED, True)
+            if not bool(accessor.GetProperty(P_PROPOSED)):
+                raise ValueError(P_PROPOSED)
+            return True
+        except Exception as error:
+            if getattr(error, "hresult", None) in RPC_BUSY:
+                raise
+            for name in (P_PROPOSED, P_PROPOSED_MINUTES, P_PROPOSED_END, P_PROPOSED_START):
+                try:
+                    accessor.DeleteProperty(name)
+                except Exception:
+                    pass
+            return False
 
     def _in_the_bin(self, item) -> bool:
         try:
@@ -3116,6 +3190,7 @@ class DemoMailbox:
         self.rule_list = [dict(rule) for rule in data.get("rules", [])]
         self.away_on = False
         self.away_text = "I am out of the office and will answer when I am back."
+        self.away_outside = ""
         self.pages = {"tasks": [], "notes": [], "contacts": []}  # the invented tasks, notes and contacts
         for index, task in enumerate(data.get("tasks", [])):
             due = (dt.date.today() + dt.timedelta(days=task["dueInDays"])).isoformat() if "dueInDays" in task else ""
@@ -3241,7 +3316,7 @@ class DemoMailbox:
         return {"people": [dict(person) for person in self.people_known]}
 
     def away(self) -> dict:
-        return {"on": self.away_on, "text": self.away_text}
+        return {"on": self.away_on, "text": self.away_text, "outside": self.away_outside}
 
     def news(self) -> list[dict]:
         """Nothing arrives in an invented mailbox by itself; a test puts what is new into `arrived`."""
@@ -3524,7 +3599,9 @@ class DemoMailbox:
                 return {"ok": True, "away": self.away_on}
             if what == "awayText":
                 self.away_text = request["text"]
-                return {"ok": True, "text": self.away_text}
+                if request["outside"] is not None:
+                    self.away_outside = request["outside"]
+                return {"ok": True, "text": self.away_text, **({"outside": request["outside"]} if request["outside"] is not None else {})}
             if what == "empty":
                 inside = [mail for mail in self.mail if mail["folder"] == request["folder"]]
                 for mail in inside[:EMPTY_MOST]:

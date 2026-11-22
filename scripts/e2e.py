@@ -1294,6 +1294,8 @@ def main() -> None:
             rows.first.click()
             page.wait_for_selector("#actions button:has-text('Reply')")
             check("tap" in (page.get_attribute("#from", "class") or ""), "the sender's name can be tapped")
+            check(page.locator("#from").bounding_box()["height"] >= 48 and page.get_attribute("#from", "role") == "button",
+                  f"and is a finger high to press ({page.locator('#from').bounding_box()['height']:.0f} px)")
             page.click("#from")
             expect(page.locator("#pickerList .pickOne")).to_have_count(2, timeout=15000)
             check(page.inner_text("#pickerTitle") == "Mateo Silva" and "Mechanical engineer" in page.inner_text("#pickerNote")
@@ -1553,19 +1555,30 @@ def main() -> None:
             expect(page.locator("#thinger")).to_be_visible()
             check(page.inner_text("#thingTitleBar") == "Change the automatic reply" and "out of the office" in page.input_value("#thingBody")
                   and page.locator("#thingName").is_hidden(), "Change the text opens what they say now")
+            check(page.locator("#thingOutside").is_visible() and page.input_value("#thingOutside") == "" and overflow(page) <= 0,
+                  "and has a second box for what people outside the organization are told")
+            check(page.locator("#thingBodyLabel").is_visible() and page.inner_text("#thingBodyLabel").lower() == "people in your organization are told"
+                  and "outside" in page.inner_text("#thingOutsideField").lower(), "each box has its name over it")
+            check(page.locator("#thingSave").bounding_box()["height"] >= 48, "Save is a finger high")
             page.fill("#thingBody", "")
             page.click("#thingSave")
             check("Write what people are to be told first" in page.inner_text("#thingError"), "an empty reply is not saved")
             page.fill("#thingBody", "Back on 1 December.\nFor the lab, call Jonas.")
+            page.fill("#thingOutside", "I am away until 1 December.")
+            page.screenshot(path=SHOTS / "phone-away-text.png")
             posted.clear()
             page.click("#thingSave")
             expect(page.locator("#toastText")).to_have_text("The automatic reply says the new text", timeout=30000)
-            check(next(body for name, body in posted if name == "arrange") == {"what": "awayText", "text": "Back on 1 December.\nFor the lab, call Jonas."},
-                  "the PC is handed the new text")
+            check(next(body for name, body in posted if name == "arrange") == {"what": "awayText", "text": "Back on 1 December.\nFor the lab, call Jonas.",
+                                                                               "outside": "I am away until 1 December."},
+                  "the PC is handed both new texts")
             page.click("#folderPick")
             page.click("#awayOpen")
             expect(page.locator("#pickerNote")).to_contain_text("Back on 1 December.", timeout=15000)
-            page.click("#pickerCancel")
+            page.locator("#pickerList .pickOne:has-text('Change the text')").click()
+            expect(page.locator("#thinger")).to_be_visible()
+            check(page.input_value("#thingOutside") == "I am away until 1 December.", "what people outside are told is kept, and shown the next time")
+            page.click("#thingCancel")
 
             page.click("#write")
             page.locator("#toInput").press_sequentially("pri")
@@ -1620,6 +1633,10 @@ def main() -> None:
             suggestion = next(body for name, body in posted if name == "act")
             check(suggestion["answer"] == "tentative" and suggestion["note"].startswith("I suggest another time: ") and "3:00" in suggestion["note"]
                   and "5:00" in suggestion["note"], f"the answer is tentative and says the time in words ({suggestion['note']})")
+            asked_day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400))
+            local = lambda clock: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.mktime(time.strptime(asked_day + " " + clock, "%Y-%m-%d %H:%M"))))  # noqa: E731
+            check(suggestion.get("propose") == {"start": local("15:00"), "end": local("17:00")},
+                  f"and carries the time itself, for Outlook's own proposal fields ({suggestion.get('propose')})")
             page.click("#back")
             page.locator(".row.event:has-text('One to one with Mateo')").first.click()
             page.wait_for_selector("#answers button[data-answer=accept]")
@@ -2046,6 +2063,28 @@ def main() -> None:
             away.wait_for_selector(".row", timeout=40000)
             check(away.url == public + "/", "on a phone that is not an iPhone the Home Screen page goes straight on to the mail app")
             away.close()
+
+            # ---- no network at all (0.14.1): the worker kept the page's own files, so the icon still opens
+            pages = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(QuietPages, directory=str(ROOT / "docs")))
+            threading.Thread(target=pages.serve_forever, daemon=True).start()
+            kept_at = f"http://127.0.0.1:{pages.server_address[1]}"
+            cut = context.new_page()
+            cut.on("pageerror", lambda error: errors.append("cut: " + str(error)))
+            cut.goto(kept_at + "/?demo")
+            cut.wait_for_selector(".row .subject")
+            cut.evaluate("navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready)")
+            cut.wait_for_function(
+                "caches.open('titip-shell-1').then(cache => cache.keys()).then(keys => keys.length >= 15)", timeout=20000)
+            kept = cut.evaluate("caches.open('titip-shell-1').then(cache => cache.keys()).then(keys => keys.map(key => new URL(key.url).pathname))")
+            check("/" in kept and "/app.js" in kept and "/styles.css" in kept and not [name for name in kept if "/api/" in name],
+                  f"the worker keeps the page's own files, {len(kept)} of them, and nothing a PC answered")
+            pages.shutdown()
+            pages.server_close()   # nothing answers at that address any more
+            cut.reload()
+            cut.wait_for_selector(".row .subject", timeout=20000)
+            check(cut.inner_text("#build") == "Titip " + titip_version and cut.locator(".row").count() >= 6,
+                  "with the network gone the page still opens, from the files it kept")
+            cut.close()
 
             # ---- the iPhone Home Screen: an icon there has its own storage, so the key rides in the address of home.html.
             # Each browser context below has its own storage, the way Safari and an icon have on a real iPhone.
