@@ -178,6 +178,10 @@ What it can never do is fixed in code, not in a prompt:
 Choose **Show me first** and nothing leaves without you. Your own answering rules go in
 `autopilot_profile.md` in Titip's folder (`~/.titip`); without it a careful default is used.
 
+Who wrote is written down too: `autopilot.json` in the same folder keeps, under `wrote`, the address of
+each sender whose mail Autopilot read and the time of the last one, whatever it did with the mail.
+Another program on the same PC can read that to tell that somebody answered.
+
 How it works: Titip opens a narrow Chrome window at the edge of the screen, reads the mail through
 Windows' accessibility interface and closes the window. It stores no Google password and uses no Google API.
 The text of a mail is given to [OpenCode](https://opencode.ai) on your PC with every tool switched

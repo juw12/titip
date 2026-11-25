@@ -185,6 +185,16 @@ class Loop(unittest.TestCase):
         self.assertEqual(self.kinds()[-2:], ["left", "left"])
         self.assertEqual(self.box.unread_again, ["m1", "m2"])
 
+    def test_who_wrote_is_written_down_whatever_was_done_with_the_mail(self):
+        self.box.put("m1", "Tomas Lind", "Tomas@Lind.example", "Your template", "Is it free?")
+        self.box.put("m2", "Field Notes", "newsletter@fieldnotes.example", "Issue 48", "Paper sizes")
+        self.box.put("m3", "Nadia", "nadia@mail.example", "Note to self", "Buy stamps")
+        self.pilot.check()
+        self.assertEqual(self.kinds()[-3:], ["sent", "left", "left"])
+        wrote = {"tomas@lind.example": int(self.now), "newsletter@fieldnotes.example": int(self.now)}
+        self.assertEqual(self.pilot.state["wrote"], wrote)  # an answered and a left mail, not your own note
+        self.assertEqual(self.make(answer()).state["wrote"], wrote)  # still there after a restart
+
     def test_left_mail_stays_read_when_you_chose_so_and_what_waits_for_you_does_not(self):
         self.assertFalse(self.pilot.snapshot()["leftRead"])
         self.assertTrue(self.pilot.command("left", read=True)["leftRead"])
