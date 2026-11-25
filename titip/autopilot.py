@@ -15,6 +15,10 @@ you is marked unread again in Gmail, so it still looks new; only mail it answere
 the setting "leftRead" (command left, read=True) the mail it leaves alone stays read as well: then
 only what waits for you, or is looked at again, is unread.
 
+The state also says who wrote: "wrote" maps the address of every sender whose mail was read to the
+time of the last one, whatever was done with that mail. Another program on this PC can read it to
+tell that somebody answered, a follow-up that should no longer go out for one.
+
 A mail it could not judge (the model did not answer, or the sender's address was not on the page) is
 read again at the next check, MAX_TRIES times in all, before it is kept for you with that reason.
 """
@@ -81,7 +85,7 @@ class Autopilot:
         state = {
             "on": False, "mode": "auto", "accounts": [0], "seen": {}, "held": [], "events": [],
             "sent": {}, "answered": {}, "lastCheck": 0, "mailboxes": {}, "started": {}, "tries": {},
-            "leftRead": False,
+            "leftRead": False, "wrote": {},
         }
         try:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
@@ -285,6 +289,12 @@ class Autopilot:
         if mail.address.lower() == mailbox.lower():
             self._leave()
             return self._note("left", "Your own message, nothing to answer.", mailbox, mail.sender, mail.subject)
+        if mail.address:
+            with self._lock:
+                wrote = self.state["wrote"]
+                wrote[mail.address.lower()] = int(self.clock())
+                for address in sorted(wrote, key=wrote.get)[:-MAX_SEEN]:
+                    del wrote[address]
         self._set_busy(f"Thinking about a mail from {mail.sender or mail.address}")
         decision = brain.decide(mail, self.profile(), self.ask)
         if self._try_again(row.key, decision):
